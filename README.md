@@ -2,7 +2,7 @@
 
 **MetalRender** is a custom rendering backend for Minecraft.  
 It uses **Apple Metal** to replace Sodium's backend rendering to offer faster frames on Mac!
-It is still currently in ALpha, no results are promised.
+It is still currently in ALpha, no results are promised. 
 
 ---
 
@@ -22,6 +22,16 @@ It is still currently in ALpha, no results are promised.
 - Checks your hardware before starting  
 - Turns off safely if Metal is not supported  
 
+---
+
+# Notes
+- Only works on Metal (macOS)
+- Will still load on other GPUs but won't offer any additional benefits or changes
+- Shaders are not yet supported yet, they might be added in the future
+- This should be compatible with most other mods, if it isn't please add a Issue
+  
+
+  
 ---
 
 ## Install
