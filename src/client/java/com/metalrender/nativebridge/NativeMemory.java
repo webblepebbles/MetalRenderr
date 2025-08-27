@@ -15,4 +15,4 @@ public final class NativeMemory {
         buf.order(ByteOrder.nativeOrder());
         return buf;
     }
-}w
+}

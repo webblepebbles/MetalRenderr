@@ -1,0 +1,13 @@
+# gradle
+.gradle/
+build/
+out/
+classes/
+loom-cache/
+buildOutputCleanup/
+vcs-1/
+# idea
+.idea/
+*.iml
+*.ipr
+*.iws
