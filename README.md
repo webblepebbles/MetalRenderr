@@ -9,12 +9,11 @@ It is still currently in ALpha, no results are promised.
 ## Dependencies
 
 | Dependency | Necessity | Where to get |
-|----------|----------|----------|
-| Sodium | Necessary | [Modrinth]([https://www.example.com](https://modrinth.com/mod/sodium))|
-| Fabric | Necessary | [Fabric's offical page]([https://fabricmc.net/use/installer/])|
-| Fabric API | Necessary | [Modrinth]([https://modrinth.com/mod/fabric-api]))|
-| Ramen noodles |Necessary for survival| Find it yourself|
----
+|---|---|---|
+| Sodium | Necessary | [Modrinth](https://modrinth.com/mod/sodium) |
+| Fabric | Necessary | [Fabric's official page](https://fabricmc.net/use/installer/) |
+| Fabric API | Necessary | [Modrinth](https://modrinth.com/mod/fabric-api) |
+| Ramen noodles | Necessary for survival | Find it yourself |
 
 ## Features
 
