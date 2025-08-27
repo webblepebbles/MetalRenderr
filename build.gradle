@@ -1,0 +1,45 @@
+plugins {
+    id 'fabric-loom' version '1.11-SNAPSHOT'
+    id 'maven-publish'
+}
+
+group = "com.metalrender"
+version = "0.1"
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+}
+repositories {
+    maven {
+        name = "Fabric"
+        url = "https://maven.fabricmc.net/"
+    }
+    mavenCentral()
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+    }
+}
+dependencies {
+    minecraft "com.mojang:minecraft:1.21.8"
+    mappings "net.fabricmc:yarn:1.21.8+build.1:v2"
+    modImplementation "net.fabricmc:fabric-loader:0.17.2"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:0.132.0+1.21.8"
+    modRuntimeOnly "maven.modrinth:sodium:mc1.21.6-0.6.13-fabric"
+}
+
+
+loom {
+    splitEnvironmentSourceSets()
+
+    runs {
+        client {
+            client()
+            source sourceSets.client
+        }
+    }
+}
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 21
+}
