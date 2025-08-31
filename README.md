@@ -48,6 +48,6 @@ It is still currently in ALpha, no results are promised.
 ## Build (For Developers)
 
 ```bash
-git clone https://github.com/yourusername/metalrender.git
+git clone https://github.com/webblepebbles/metalrender.git
 cd metalrender
 ./gradlew build
