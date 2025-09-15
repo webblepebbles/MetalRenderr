@@ -1,0 +1,82 @@
+[09:38:17] [main/WARN] (FabricLoader/Knot) Class path entries reference missing files: /Volumes/Stuff/Projects/MetalRenderr/build/resources/client, /Volumes/Stuff/Projects/MetalRenderr/build/classes/java/main - the game may not load properly!
+[09:38:17] [main/INFO] (FabricLoader/GameProvider) Loading Minecraft 1.21.8 with Fabric Loader 0.17.2
+[09:38:17] [main/INFO] (FabricLoader) Loading 51 mods:
+	- fabric-api 0.132.0+1.21.8
+	- fabric-api-base 0.5.0+cd8c0daa2c
+	- fabric-api-lookup-api-v1 1.6.101+946bf4c32c
+	- fabric-biome-api-v1 16.0.11+946bf4c32c
+	- fabric-block-api-v1 1.1.3+946bf4c32c
+	- fabric-block-view-api-v2 1.0.31+946bf4c32c
+	- fabric-client-gametest-api-v1 4.2.5+8a98c3fc2c
+	- fabric-command-api-v2 2.3.1+52fff9ec2c
+	- fabric-content-registries-v0 10.0.19+946bf4c32c
+	- fabric-convention-tags-v1 2.1.41+7f945d5b2c
+	- fabric-convention-tags-v2 2.15.6+eb5df52f2c
+	- fabric-crash-report-info-v1 0.3.15+946bf4c32c
+	- fabric-data-attachment-api-v1 1.8.12+38b5f74e2c
+	- fabric-data-generation-api-v1 23.2.6+0b1ef9762c
+	- fabric-dimensions-v1 4.0.19+946bf4c32c
+	- fabric-entity-events-v1 2.1.2+c9e472732c
+	- fabric-events-interaction-v0 4.0.24+946bf4c32c
+	- fabric-game-rule-api-v1 1.0.73+c64c9c5b2c
+	- fabric-gametest-api-v1 3.1.10+39ce47f52c
+	- fabric-item-api-v1 11.5.0+02ce13f42c
+	- fabric-item-group-api-v1 4.2.14+c5f9bbc12c
+	- fabric-key-binding-api-v1 1.0.65+946bf4c32c
+	- fabric-lifecycle-events-v1 2.6.4+db4dfd852c
+	- fabric-loot-api-v2 3.0.56+3f89f5a52c
+	- fabric-loot-api-v3 2.0.3+946bf4c32c
+	- fabric-message-api-v1 6.1.2+946bf4c32c
+	- fabric-model-loading-api-v1 5.2.6+946bf4c32c
+	- fabric-networking-api-v1 5.0.2+946bf4c32c
+	- fabric-object-builder-api-v1 21.1.8+946bf4c32c
+	- fabric-particles-v1 4.1.8+946bf4c32c
+	- fabric-recipe-api-v1 8.1.15+946bf4c32c
+	- fabric-registry-sync-v0 6.1.28+946bf4c32c
+	- fabric-renderer-api-v1 7.0.3+208eed172c
+	- fabric-renderer-indigo 4.0.3+946bf4c32c
+	- fabric-rendering-fluids-v1 3.1.31+fa6cb72b2c
+	- fabric-rendering-v1 12.5.0+fbe231d52c
+	- fabric-resource-conditions-api-v1 5.0.25+98e6d6db2c
+	- fabric-resource-loader-v0 3.1.12+020423442c
+	- fabric-screen-api-v1 2.1.1+277ecf7d2c
+	- fabric-screen-handler-api-v1 1.3.137+946bf4c32c
+	- fabric-serialization-api-v1 1.0.0+fc0e5aba2c
+	- fabric-sound-api-v1 1.0.42+946bf4c32c
+	- fabric-tag-api-v1 1.2.2+946bf4c32c
+	- fabric-transfer-api-v1 6.0.6+946bf4c32c
+	- fabric-transitive-access-wideners-v1 6.4.1+ac3e15d12c
+	- fabricloader 0.17.2
+	- java 21
+	- metalrender 0.1
+	- minecraft 1.21.8
+	- mixinextras 0.5.0
+	- sodium 0.6.13+mc1.21.6
+[09:38:17] [main/INFO] (FabricLoader/Mixin) SpongePowered MIXIN Subsystem Version=0.8.7 Source=file:/Users/papercut/.gradle/caches/modules-2/files-2.1/net.fabricmc/sponge-mixin/0.16.3+mixin.0.8.7/3e535042688d1265447e52ad86950b7d9678a5fa/sponge-mixin-0.16.3+mixin.0.8.7.jar Service=Knot/Fabric Env=CLIENT
+[09:38:17] [main/INFO] (FabricLoader/Mixin) Loaded Fabric development mappings for mixin remapper!
+[09:38:17] [main/INFO] (FabricLoader/Mixin) Compatibility level set to JAVA_21
+[09:38:17] [main/INFO] (Sodium) Loaded configuration file for Sodium: 43 options available, 0 override(s) found
+[09:38:18] [main/INFO] (Sodium-GraphicsAdapterProbe) Searching for graphics cards...
+[09:38:18] [main/INFO] (FabricLoader/MixinExtras|Service) Initializing MixinExtras via com.llamalad7.mixinextras.service.MixinExtrasServiceImpl(version=0.5.0).
+[09:38:19] [Datafixer Bootstrap/INFO] (Minecraft) 269 Datafixer optimizations took 310 milliseconds
+[09:38:24] [Render thread/INFO] (Minecraft) Environment: Environment[sessionHost=https://sessionserver.mojang.com, servicesHost=https://api.minecraftservices.com, name=PROD]
+[09:38:24] [Render thread/INFO] (Minecraft) Setting user: Player373
+[09:38:24] [Render thread/INFO] (Indigo) [Indigo] Different rendering plugin detected; not applying Indigo.
+[09:38:24] [Render thread/INFO] (MetalLogger) [MetalRender] starting MetalRenderClient
+[09:38:24] [Render thread/INFO] (MetalLogger) [MetalRender] Mesh shaders added via config
+[09:38:24] [Render thread/ERROR] (MetalLogger) [MetalRender] MeshShaderBackend: missing MinecraftClient or Window
+[09:38:24] [Render thread/WARN] (MetalLogger) [MetalRender] Mesh shaders are not avaliable, using MetalRendererBackend
+[09:38:25] [Render thread/ERROR] (MetalLogger) [MetalRender] Failed to initialize MetalRendererBackend!
+[09:38:25] [Render thread/INFO] (Minecraft) Backend library: LWJGL version 3.3.3-snapshot
+[09:38:25] [Render thread/WARN] (Minecraft) Failed to get system info for Render Extensions
+java.lang.IllegalStateException: Can't getDevice() before it was initialized
+	at knot/com.mojang.blaze3d.systems.RenderSystem.getDevice(RenderSystem.java:410) ~[minecraft-clientOnly-11916ee8d2-1.21.8-net.fabricmc.yarn.1_21_8.1.21.8+build.1-v2.jar:?]
+	at knot/net.minecraft.client.MinecraftClient.method_68671(MinecraftClient.java:2461) ~[minecraft-clientOnly-11916ee8d2-1.21.8-net.fabricmc.yarn.1_21_8.1.21.8+build.1-v2.jar:?]
+	at knot/net.minecraft.util.SystemDetails.addSection(SystemDetails.java:70) [minecraft-common-11916ee8d2-1.21.8-net.fabricmc.yarn.1_21_8.1.21.8+build.1-v2.jar:?]
+	at knot/net.minecraft.client.MinecraftClient.addSystemDetailsToCrashReport(MinecraftClient.java:2461) [minecraft-clientOnly-11916ee8d2-1.21.8-net.fabricmc.yarn.1_21_8.1.21.8+build.1-v2.jar:?]
+	at knot/net.minecraft.client.MinecraftClient.addSystemDetailsToCrashReport(MinecraftClient.java:2431) [minecraft-clientOnly-11916ee8d2-1.21.8-net.fabricmc.yarn.1_21_8.1.21.8+build.1-v2.jar:?]
+	at knot/net.minecraft.client.main.Main.main(Main.java:258) [minecraft-clientOnly-11916ee8d2-1.21.8-net.fabricmc.yarn.1_21_8.1.21.8+build.1-v2.jar:?]
+	at net.fabricmc.loader.impl.game.minecraft.MinecraftGameProvider.launch(MinecraftGameProvider.java:506) [fabric-loader-0.17.2.jar:?]
+	at net.fabricmc.loader.impl.launch.knot.Knot.launch(Knot.java:72) [fabric-loader-0.17.2.jar:?]
+	at net.fabricmc.loader.impl.launch.knot.KnotClient.main(KnotClient.java:23) [fabric-loader-0.17.2.jar:?]
+	at net.fabricmc.devlaunchinjector.Main.main(Main.java:86) [dev-launch-injector-0.2.1+build.8.jar:?]

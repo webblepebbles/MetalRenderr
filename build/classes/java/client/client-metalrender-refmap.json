@@ -1,0 +1,20 @@
+{
+  "mappings": {
+    "com/metalrender/sodium/mixins/SodiumRendererMixin": {
+      "<init>": "Lnet/caffeinemc/mods/sodium/client/render/SodiumWorldRenderer;<init>(Lnet/minecraft/class_310;)V",
+      "drawChunkLayer": "Lnet/caffeinemc/mods/sodium/client/render/SodiumWorldRenderer;drawChunkLayer(Lnet/minecraft/class_11531;Lnet/caffeinemc/mods/sodium/client/render/chunk/ChunkRenderMatrices;DDD)V",
+      "setLevel": "Lnet/caffeinemc/mods/sodium/client/render/SodiumWorldRenderer;setLevel(Lnet/minecraft/class_638;)V",
+      "setupTerrain": "Lnet/caffeinemc/mods/sodium/client/render/SodiumWorldRenderer;setupTerrain(Lnet/minecraft/class_4184;Lnet/caffeinemc/mods/sodium/client/render/viewport/Viewport;Lnet/caffeinemc/mods/sodium/client/util/FogParameters;ZZLnet/caffeinemc/mods/sodium/client/render/chunk/ChunkRenderMatrices;)V"
+    }
+  },
+  "data": {
+    "named:intermediary": {
+      "com/metalrender/sodium/mixins/SodiumRendererMixin": {
+        "<init>": "Lnet/caffeinemc/mods/sodium/client/render/SodiumWorldRenderer;<init>(Lnet/minecraft/class_310;)V",
+        "drawChunkLayer": "Lnet/caffeinemc/mods/sodium/client/render/SodiumWorldRenderer;drawChunkLayer(Lnet/minecraft/class_11531;Lnet/caffeinemc/mods/sodium/client/render/chunk/ChunkRenderMatrices;DDD)V",
+        "setLevel": "Lnet/caffeinemc/mods/sodium/client/render/SodiumWorldRenderer;setLevel(Lnet/minecraft/class_638;)V",
+        "setupTerrain": "Lnet/caffeinemc/mods/sodium/client/render/SodiumWorldRenderer;setupTerrain(Lnet/minecraft/class_4184;Lnet/caffeinemc/mods/sodium/client/render/viewport/Viewport;Lnet/caffeinemc/mods/sodium/client/util/FogParameters;ZZLnet/caffeinemc/mods/sodium/client/render/chunk/ChunkRenderMatrices;)V"
+      }
+    }
+  }
+}

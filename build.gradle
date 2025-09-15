@@ -1,0 +1,64 @@
+plugins {
+    id 'fabric-loom' version '1.11-SNAPSHOT'
+    id 'maven-publish'
+}
+
+group = "com.metalrender"
+version = "0.1"
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+}
+repositories {
+    maven {
+        name = "Fabric"
+        url = "https://maven.fabricmc.net/"
+    }
+    mavenCentral()
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+    }
+        maven {
+            name = "LWJGL"
+            url = "https://repo.lwjgl.org/"
+        }
+}
+dependencies {
+    minecraft "com.mojang:minecraft:1.21.8"
+    mappings "net.fabricmc:yarn:1.21.8+build.1:v2"
+    modImplementation "net.fabricmc:fabric-loader:0.17.2"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:0.132.0+1.21.8"
+    modImplementation "maven.modrinth:sodium:mc1.21.6-0.6.13-fabric"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:0.132.0+1.21.8"
+    modImplementation "org.lwjgl:lwjgl:3.3.3"
+    modImplementation "org.lwjgl:lwjgl-glfw:3.3.3"
+    modImplementation "org.lwjgl:lwjgl:3.3.3:natives-macos"
+    modImplementation "org.lwjgl:lwjgl-glfw:3.3.3:natives-macos"
+    modImplementation 'org.joml:joml:1.10.5'
+}
+
+
+loom {
+    splitEnvironmentSourceSets()
+
+    runs {
+        client {
+            client()
+            source sourceSets.client
+        }
+    }
+}
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 21
+}
+    jar {
+        from('src/main/native') {
+            include 'metalrender.h', 'metalrender.mm'
+            into 'native'
+        }
+    }
+
+
+//testing testing

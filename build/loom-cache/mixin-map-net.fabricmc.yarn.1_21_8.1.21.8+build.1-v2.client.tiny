@@ -1,0 +1,2 @@
+v1	named	intermediary
+FIELD	com/metalrender/sodium/mixins/SodiumRendererMixin	Lnet/minecraft/client/MinecraftClient;	client	client
