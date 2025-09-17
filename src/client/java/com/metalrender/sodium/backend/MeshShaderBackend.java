@@ -144,7 +144,7 @@ public final class MeshShaderBackend {
             if (!ok) {
             }
         } catch (Throwable t) {
-            MetalLogger.error("MeshShaderBackend: startMeshFrame error");
+            MetalLogger.error("MeshShaderBackend: error");
         }
     }
     public void queueDrawChunkLayer(BlockPos pos, int layer) {
@@ -172,7 +172,7 @@ public final class MeshShaderBackend {
         try {
             MeshShaderNative.endMeshFrame(deviceHandle);
         } catch (Throwable t) {
-            MetalLogger.error("MeshShaderBackend: endMeshFrame error");
+            MetalLogger.error("MeshShaderBackend: error");
         }
     }
     public boolean isMeshEnabled() {

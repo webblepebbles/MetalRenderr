@@ -11,3 +11,10 @@ out/
 *.class
 *.jar
 gradle/
+.DS_Store
+.vscode/
+/.gradle/
+build/
+out/
+.gradle/8.14.1/
+.gradle/loom-cache/
