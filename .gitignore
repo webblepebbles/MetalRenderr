@@ -1,20 +1,45 @@
-.gradle/
-run/
-build/
-out/
-*.iml
-.idea/
-*.ipr
-*.iws
 .DS_Store
-*.log
+# Gradle/Java build
+/build/
+/.gradle/
+/.gradle/**
+
+# Loom / Gradle caches (local build artifacts)
+/devlibs/
+/build/
+/generated/
+/tmp/
+
+# Native binaries and libs
+*.dylib
+*.so
+*.dll
+
+# Java artifacts
 *.class
 *.jar
-gradle/
+
+# IDE/editor files
+/.idea/
+*.iml
+*.ipr
+*.iws
+/.vscode/
+
+# macOS
 .DS_Store
-.vscode/
-/.gradle/
-build/
-out/
-.gradle/8.14.1/
-.gradle/loom-cache/
+
+# Logs and runtime files
+/run/
+*.log
+run/logs/
+
+# NPM / other
+/node_modules/
+
+# Stash / temporary compile files
+/build/tmp/
+/build/loom-cache/
+
+# Keep this repository clean from local-specific or generated files
+# If you intentionally track any files listed above, remove the corresponding line.
