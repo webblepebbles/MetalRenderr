@@ -7,12 +7,7 @@ import java.nio.ByteBuffer;
 
 @Environment(EnvType.CLIENT)
 public final class MeshShaderNative {
-    static {
-        try {
-            System.loadLibrary("metalrender");
-        } catch (Throwable t) {
-        }
-    }
+    
 
     public static native long initMeshDevice(long nsWindow, boolean srgb);
     public static native boolean supportsMeshShaders(long deviceHandle);

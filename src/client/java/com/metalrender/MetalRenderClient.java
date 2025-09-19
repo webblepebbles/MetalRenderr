@@ -7,6 +7,8 @@ import com.metalrender.util.MetalLogger;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Environment(EnvType.CLIENT)
 public class MetalRenderClient implements ClientModInitializer{
@@ -16,31 +18,42 @@ public class MetalRenderClient implements ClientModInitializer{
 
     @Override
     public void onInitializeClient() {
-        MetalLogger.info("starting MetalRenderClient");
-
-        String osName = System.getProperty("os.name").toLowerCase();
-        if (!osName.contains("mac")) {
-            MetalLogger.warn("MetalRender: Your computer does not support Metal.");
+        MetalLogger.info("scheduling MetalRender client initialization after window is ready");
         
-            return;
-        }
-
-        MetalRenderConfig cfg = MetalRenderConfig.get();
-        if (cfg.getAdvancedMetalFeatures().isMeshShadersEnabled()) {
-            MetalLogger.info("Mesh shaders added via config");
-            meshBackend = new MeshShaderBackend();
-            if (meshBackend.initIfNeeded() && meshBackend.isMeshEnabled()) {
-                usingMesh = true;
-                MetalLogger.info("MeshShaderBackend active");
-            } else {
-                MetalLogger.warn("Mesh shaders are not avaliable, using MetalRendererBackend");
-                meshBackend = null;
-                initFallback();
+        AtomicBoolean initialized = new AtomicBoolean(false);
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            try {
+                if (initialized.get()) return;
+                long ctx = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+                if (ctx == 0L) return;
+                initialized.set(true);
+                MetalLogger.info("starting MetalRenderClient (deferred)");
+                String osName = System.getProperty("os.name").toLowerCase();
+                if (!osName.contains("mac")) {
+                    MetalLogger.warn("MetalRender: Your computer does not support Metal.");
+                    return;
+                }
+                MetalRenderConfig cfg = MetalRenderConfig.get();
+                if (cfg.getAdvancedMetalFeatures().isMeshShadersEnabled()) {
+                    MetalLogger.info("Mesh shaders added via config");
+                    meshBackend = new MeshShaderBackend();
+                    if (meshBackend.initIfNeeded() && meshBackend.isMeshEnabled()) {
+                        usingMesh = true;
+                        MetalLogger.info("MeshShaderBackend active");
+                    } else {
+                        MetalLogger.warn("Mesh shaders are not available, using MetalRendererBackend");
+                        meshBackend = null;
+                        initFallback();
+                    }
+                } else {
+                    initFallback();
+                }
+            } catch (Throwable t) {
             }
-        } else {
-            initFallback();
-        }
+        });
     }
+
+    
 
     private void initFallback() {
         fallbackBackend = new MetalRendererBackend();

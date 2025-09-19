@@ -8,17 +8,16 @@ import java.nio.ByteBuffer;
 
 @Environment(EnvType.CLIENT)
 public final class MetalBackend {
-    static {
-        try {
-            System.loadLibrary("metalrender");
-        } catch (Throwable t) {
-        }
-    }
+    
 
     public static long init(long windowHandle, boolean someFlag) {
+       
+        if (!NativeBridge.load()) {
+            return 0L;
+        }
         if (!MetalHardwareChecker.isCompatible()) {
             MinecraftClient.getInstance().execute(() -> MetalHardwareChecker.showIncompatibleScreen());
-            return 0;
+            return 0L;
         }
         return initNative(windowHandle, someFlag);
     }

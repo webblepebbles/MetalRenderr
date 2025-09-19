@@ -22,11 +22,7 @@ import java.util.HashSet;
 
 @Environment(EnvType.CLIENT)
 public final class MetalRendererBackend {
-    static {
-        try {
-            System.loadLibrary("metalrender");
-        } catch (Throwable ignored) {}
-    }
+    
 
     private final MinecraftClient client;
     private long handle = 0L;

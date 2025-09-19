@@ -3,6 +3,7 @@ package com.metalrender.sodium.backend;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import com.metalrender.nativebridge.MeshShaderNative;
+import com.metalrender.nativebridge.NativeBridge;
 import com.metalrender.config.MetalRenderConfig;
 import com.metalrender.util.MetalLogger;
 import net.minecraft.client.MinecraftClient;
@@ -50,10 +51,12 @@ public final class MeshShaderBackend {
             MetalLogger.error("MeshShaderBackend: missing MinecraftClient or Window");
             return false;
         }
-        long glfwWindow = client.getWindow().getHandle();
-        long nsWindow = org.lwjgl.glfw.GLFWNativeCocoa.glfwGetCocoaWindow(glfwWindow);
-        boolean srgb = true;
-        deviceHandle = MeshShaderNative.initMeshDevice(nsWindow, srgb);
+  
+    if (!NativeBridge.load()) return false;
+    long glfwWindow = client.getWindow().getHandle();
+    long nsWindow = org.lwjgl.glfw.GLFWNativeCocoa.glfwGetCocoaWindow(glfwWindow);
+    boolean srgb = true;
+    deviceHandle = MeshShaderNative.initMeshDevice(nsWindow, srgb);
         if (deviceHandle == 0L) {
             MetalLogger.error("MeshShaderBackend: initMeshDevice returned 0");
             return false;
