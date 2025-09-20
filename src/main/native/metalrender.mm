@@ -3,6 +3,23 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 
+
+static inline bool metal_debug_enabled_mr() {
+    const char* e = getenv("METALRENDER_DEBUG");
+    return (e && e[0] != '\0');
+}
+static inline void METAL_LOG_DEBUG_MR(const char* fmt, ...) {
+    if (!metal_debug_enabled_mr()) return;
+    va_list ap; va_start(ap, fmt);
+    fprintf(stderr, "[metalrender DEBUG] "); vfprintf(stderr, fmt, ap); fprintf(stderr, "\n");
+    va_end(ap);
+}
+static inline void METAL_LOG_ERROR_MR(const char* fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    fprintf(stderr, "[metalrender ERROR] "); vfprintf(stderr, fmt, ap); fprintf(stderr, "\n");
+    va_end(ap);
+}
+
 static id<MTLDevice> device = nil;
 static id<MTLCommandQueue> commandQueue = nil;
 static CAMetalLayer *metalLayer = nil;
@@ -11,11 +28,20 @@ static NSWindow *minecraftWindow = nil;
 extern "C" {
 
 JNIEXPORT jboolean JNICALL Java_com_metalrender_nativebridge_MetalRendererBackend_nIsAvailable(JNIEnv *, jobject) {
-    return MTLCreateSystemDefaultDevice() != nil ? JNI_TRUE : JNI_FALSE;
+
+    id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
+    if (dev) {
+        dev = nil;
+        METAL_LOG_DEBUG_MR("nIsAvailable: device present");
+        return JNI_TRUE;
+    }
+    return JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalRendererBackend_nInit(JNIEnv *, jobject) {
     device = MTLCreateSystemDefaultDevice();
+    if (!device) return;
+    METAL_LOG_DEBUG_MR("nInit: device created");
     commandQueue = [device newCommandQueue];
     dispatch_async(dispatch_get_main_queue(), ^{
         for (NSWindow *win in [NSApp windows]) {
@@ -24,7 +50,7 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalRendererBackend_nI
                 break;
             }
         }
-        if (minecraftWindow) {
+            if (minecraftWindow) {
             NSView *contentView = [minecraftWindow contentView];
             metalLayer = [CAMetalLayer layer];
             metalLayer.device = device;
@@ -34,6 +60,7 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalRendererBackend_nI
             metalLayer.frame = contentView.layer.frame;
             [contentView setWantsLayer:YES];
             [contentView setLayer:metalLayer];
+                METAL_LOG_DEBUG_MR("nInit: attached CAMetalLayer to Minecraft window");
         }
     });
 }

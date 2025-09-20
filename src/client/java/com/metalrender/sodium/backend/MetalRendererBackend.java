@@ -9,14 +9,15 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.util.Window;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.client.render.Camera;
+import net.minecraft.client.render.Frustum;
+import net.minecraft.util.math.Box;
+import org.joml.Matrix4f;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.block.BlockState;
 import net.minecraft.util.math.Direction;
 import java.nio.ByteBuffer;
 import java.nio.ShortBuffer;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Set;
 import java.util.HashSet;
 
@@ -29,7 +30,7 @@ public final class MetalRendererBackend {
     private boolean initialized = false;
     private long startNanos = 0L;
     
-    private final Map<BlockPos, Long> chunkMeshHandles = new HashMap<>();
+
     private final Set<BlockPos> meshedChunks = new HashSet<>();
 
     public MetalRendererBackend(MinecraftClient client) {
@@ -45,6 +46,9 @@ public final class MetalRendererBackend {
         if (initialized) return true;
         try {
             long ctx = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+            if (ctx == 0L) {
+                return false;
+            }
             long nsWindow = org.lwjgl.glfw.GLFWNativeCocoa.glfwGetCocoaWindow(ctx);
             boolean srgb = true;
             handle = MetalBackend.init(nsWindow, srgb);
@@ -73,12 +77,11 @@ public final class MetalRendererBackend {
                 int chunkX = (playerPos.getX() >> 4) + cx;
                 int chunkZ = (playerPos.getZ() >> 4) + cz;
                 BlockPos chunkPos = new BlockPos(chunkX, 0, chunkZ);
-                if (isChunkInView(chunkPos, camera)) {
-                    WorldChunk chunk = world.getChunk(chunkX, chunkZ);
-                    if (chunk != null && !meshedChunks.contains(chunkPos)) {
-                        uploadChunkMesh(chunk, chunkPos);
-                        meshedChunks.add(chunkPos);
-                    }
+                if (!isChunkInView(chunkPos, camera)) continue;
+                WorldChunk chunk = world.getChunk(chunkX, chunkZ);
+                if (chunk != null && !meshedChunks.contains(chunkPos)) {
+                    uploadChunkMesh(chunk, chunkPos);
+                    meshedChunks.add(chunkPos);
                 }
             }
         }
@@ -93,6 +96,7 @@ public final class MetalRendererBackend {
         double dz = camZ - chunkCenterZ;
         return (dx * dx + dz * dz) < (128 * 128);
     }
+
 
     private void uploadChunkMesh(WorldChunk chunk, BlockPos chunkPos) {
     int minY = chunk.getBottomY();
@@ -141,8 +145,21 @@ public final class MetalRendererBackend {
             buf.putInt(colors.get(i));
         }
         buf.rewind();
-    MetalBackend.uploadStaticMesh(handle, buf, vertexCount, stride);
-    chunkMeshHandles.put(chunkPos, handle); 
+    
+        com.metalrender.sodium.backend.MeshShaderBackend mesh = com.metalrender.MetalRenderClient.getMeshBackend();
+        if (mesh != null) {
+            try {
+        
+                if (mesh.initIfNeeded() && mesh.isMeshEnabled()) {
+                    mesh.uploadChunkMeshAsync(chunkPos, buf, vertexCount, stride, null, 0, 0);
+                    meshedChunks.add(chunkPos);
+                    return;
+                }
+            } catch (Throwable t) {
+            }
+        }
+        MetalBackend.uploadStaticMesh(handle, buf, vertexCount, stride);
+        meshedChunks.add(chunkPos);
     }
 
     private boolean isBlockSurrounded(WorldChunk chunk, BlockPos pos) {
@@ -209,10 +226,11 @@ public final class MetalRendererBackend {
 
     public void removeChunkMesh(WorldChunk chunk) {
         BlockPos chunkPos = new BlockPos(chunk.getPos().x, 0, chunk.getPos().z);
-        Long meshHandle = chunkMeshHandles.remove(chunkPos);
         meshedChunks.remove(chunkPos);
-        if (meshHandle != null) {
-            MetalBackend.destroy(meshHandle);
+        com.metalrender.sodium.backend.MeshShaderBackend mesh = com.metalrender.MetalRenderClient.getMeshBackend();
+        if (mesh != null) {
+            try { mesh.removeChunkMesh(chunkPos); } catch (Throwable t) { }
+            return;
         }
     }
 
@@ -260,10 +278,10 @@ public final class MetalRendererBackend {
 
     public void destroy() {
         if (!initialized) return;
-        for (Long meshHandle : chunkMeshHandles.values()) {
-            MetalBackend.destroy(meshHandle);
+        com.metalrender.sodium.backend.MeshShaderBackend mesh = com.metalrender.MetalRenderClient.getMeshBackend();
+        if (mesh != null) {
+            try { mesh.destroy(); } catch (Throwable t) { }
         }
-        chunkMeshHandles.clear();
         meshedChunks.clear();
         MetalBackend.destroy(handle);
         handle = 0L;

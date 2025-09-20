@@ -26,6 +26,7 @@ import java.nio.ByteBuffer;
 public class SodiumRendererMixin {
     @Shadow private MinecraftClient client;
     private MetalRendererBackend metalBackend;
+    private volatile boolean meshFrameEnded = false;
     @Inject(method = "<init>", at = @At("RETURN"))
     private void onConstruct(MinecraftClient client, CallbackInfo ci) {
         try {
@@ -47,6 +48,12 @@ public class SodiumRendererMixin {
             float fov = (client.options != null && client.options.getFov() != null) ? (float) client.options.getFov().getValue() : 70f;
             metalBackend.onSetupTerrain(fov);
         }
+       
+        meshFrameEnded = false;
+        MeshShaderBackend meshBackend = com.metalrender.MetalRenderClient.getMeshBackend();
+        if (meshBackend != null && meshBackend.isMeshEnabled()) {
+            try { meshBackend.beginFrame(); } catch (Throwable ignored) {}
+        }
     }
 
     @Inject(method = "drawChunkLayer", at = @At("HEAD"), cancellable = true)
@@ -58,7 +65,13 @@ public class SodiumRendererMixin {
         }
         MeshShaderBackend meshBackend = com.metalrender.MetalRenderClient.getMeshBackend();
         if (meshBackend != null && meshBackend.isMeshEnabled()) {
-            meshBackend.processDrawQueue();
+            try {
+                meshBackend.processDrawQueue();
+            } catch (Throwable ignored) {}
+            if (!meshFrameEnded) {
+                meshFrameEnded = true;
+                try { meshBackend.endFrame(); } catch (Throwable ignored) {}
+            }
         }
     }
 
