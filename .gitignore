@@ -1,45 +1,26 @@
 .DS_Store
-# Gradle/Java build
 /build/
 /.gradle/
 /.gradle/**
-
-# Loom / Gradle caches (local build artifacts)
 /devlibs/
 /build/
 /generated/
 /tmp/
-
-# Native binaries and libs
-*.dylib
 *.so
 *.dll
-
-# Java artifacts
 *.class
 *.jar
-
-# IDE/editor files
 /.idea/
 *.iml
 *.ipr
 *.iws
 /.vscode/
-
-# macOS
 .DS_Store
-
-# Logs and runtime files
 /run/
 *.log
 run/logs/
-
-# NPM / other
 /node_modules/
-
-# Stash / temporary compile files
 /build/tmp/
 /build/loom-cache/
-
-# Keep this repository clean from local-specific or generated files
-# If you intentionally track any files listed above, remove the corresponding line.
+#.gz
+#.log
