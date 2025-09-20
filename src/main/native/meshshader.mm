@@ -6,6 +6,24 @@
 #include <mutex>
 #include <stdlib.h>
 
+
+#define STRINGIFY(x) #x
+static inline bool metal_debug_enabled() {
+    const char* e = getenv("METALRENDER_DEBUG");
+    return (e && e[0] != '\0');
+}
+static inline void METAL_LOG_DEBUG(const char* fmt, ...) {
+    if (!metal_debug_enabled()) return;
+    va_list ap; va_start(ap, fmt);
+    fprintf(stderr, "[metalrender DEBUG] "); vfprintf(stderr, fmt, ap); fprintf(stderr, "\n");
+    va_end(ap);
+}
+static inline void METAL_LOG_ERROR(const char* fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    fprintf(stderr, "[metalrender ERROR] "); vfprintf(stderr, fmt, ap); fprintf(stderr, "\n");
+    va_end(ap);
+}
+
 static std::mutex g_mutex;
 
 static id<MTLDevice> gDevice = nil;
@@ -44,8 +62,14 @@ extern "C" {
 JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_initMeshDevice(JNIEnv* env, jclass cls, jlong nsWindowPtr, jboolean srgb) {
     @autoreleasepool {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (!gDevice) gDevice = MTLCreateSystemDefaultDevice();
-        if (!gDevice) return (jlong)0;
+       
+            gDevice = MTLCreateSystemDefaultDevice();
+            if (!gDevice) {
+                METAL_LOG_ERROR("initMeshDevice: MTLCreateSystemDefaultDevice failed");
+                return (jlong)0;
+            }
+            METAL_LOG_DEBUG("initMeshDevice: device created");
+        }
         if (!gCommandQueue) gCommandQueue = [gDevice newCommandQueue];
         id<MTLDevice> dev = gDevice;
         CFRetain((__bridge CFTypeRef)dev);
@@ -56,10 +80,10 @@ JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_initM
 JNIEXPORT jboolean JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_supportsMeshShaders(JNIEnv* env, jclass cls, jlong deviceHandle) {
     @autoreleasepool {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (deviceHandle == 0) return JNI_FALSE;
-        id<MTLDevice> dev = (__bridge id<MTLDevice>)(void*)deviceHandle;
-        if (!dev) return JNI_FALSE;
-        id<MTLLibrary> lib = [dev newDefaultLibrary];
+    if (deviceHandle == 0) return JNI_FALSE;
+    id<MTLDevice> dev = (__bridge id<MTLDevice>)(void*)deviceHandle;
+    if (!dev) return JNI_FALSE;
+    id<MTLLibrary> lib = [dev newDefaultLibrary];
         if (!lib) return JNI_FALSE;
         id<MTLFunction> f = [lib newFunctionWithName:@"mesh_main"];
         if (!f) return JNI_FALSE;
@@ -73,11 +97,11 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_initMe
         if (deviceHandle == 0) return;
         id<MTLDevice> dev = (__bridge id<MTLDevice>)(void*)deviceHandle;
         if (!dev) return;
-        if (!gLibrary) gLibrary = [dev newDefaultLibrary];
-        if (!gLibrary) return;
+    if (!gLibrary) gLibrary = [dev newDefaultLibrary];
+    if (!gLibrary) { METAL_LOG_ERROR("initMeshPipeline: unable to load default library"); return; }
         id<MTLFunction> v = [gLibrary newFunctionWithName:@"mesh_main"];
         id<MTLFunction> f = [gLibrary newFunctionWithName:@"fragment_main"];
-        if (!v || !f) return;
+    if (!v || !f) { METAL_LOG_ERROR("initMeshPipeline: missing shader functions"); return; }
         MTLRenderPipelineDescriptor* desc = [[MTLRenderPipelineDescriptor alloc] init];
         desc.vertexFunction = v;
         desc.fragmentFunction = f;
@@ -94,7 +118,7 @@ JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_creat
 {
     @autoreleasepool {
         std::lock_guard<std::mutex> lock(g_mutex);
-        if (deviceHandle == 0) return (jlong)0;
+    if (deviceHandle == 0) return (jlong)0;
         id<MTLDevice> dev = (__bridge id<MTLDevice>)(void*)deviceHandle;
         if (!dev) return (jlong)0;
         if (!vertexBuf) return (jlong)0;
@@ -102,11 +126,11 @@ JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_creat
         if (!vptr) return (jlong)0;
         size_t vsize = (size_t)vertexCount * (size_t)vertexStride;
         id<MTLBuffer> vbuf = [dev newBufferWithBytes:vptr length:vsize options:MTLResourceStorageModeShared];
-        if (!vbuf) return (jlong)0;
+    if (!vbuf) { METAL_LOG_ERROR("createNativeChunkMesh: vertex buffer allocation failed"); return (jlong)0; }
         id<MTLBuffer> ibuf = nil;
         if (indexBuf) {
             void* iptr = (*env)->GetDirectBufferAddress(env, indexBuf);
-            if (!iptr) return (jlong)0;
+            if (!iptr) { METAL_LOG_ERROR("createNativeChunkMesh: index buffer direct address null"); return (jlong)0; }
             size_t isize = (size_t)indexCount * (indexType == 1 ? 4 : 2);
             ibuf = [dev newBufferWithBytes:iptr length:isize options:MTLResourceStorageModeShared];
             if (!ibuf) return (jlong)0;
@@ -117,6 +141,60 @@ JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_creat
         mesh->indexCount = (uint32_t)indexCount;
         mesh->indexType = (uint32_t)indexType;
         mesh->vertexCount = (uint32_t)vertexCount;
+        METAL_LOG_DEBUG("createNativeChunkMesh: created mesh %p (vcount=%d, icount=%d)", mesh, vertexCount, indexCount);
+        return (jlong)(intptr_t)mesh;
+    }
+}
+
+JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_updateNativeChunkMesh
+  (JNIEnv* env, jclass cls, jlong existingHandle, jlong deviceHandle, jobject vertexBuf, jint vertexCount, jint vertexStride,
+   jobject indexBuf, jint indexCount, jint indexType)
+{
+    @autoreleasepool {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (deviceHandle == 0) return (jlong)0;
+        id<MTLDevice> dev = (__bridge id<MTLDevice>)(void*)deviceHandle;
+        if (!dev) return (jlong)0;
+        if (!vertexBuf) return (jlong)0;
+        void* vptr = (*env)->GetDirectBufferAddress(env, vertexBuf);
+        if (!vptr) return (jlong)0;
+        size_t vsize = (size_t)vertexCount * (size_t)vertexStride;
+
+        NativeChunkMesh* existing = nullptr;
+        if (existingHandle != 0) existing = (NativeChunkMesh*)(intptr_t)existingHandle;
+
+    
+        id<MTLBuffer> newVBuf = [dev newBufferWithBytes:vptr length:vsize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> newIBuf = nil;
+        if (indexBuf) {
+            void* iptr = (*env)->GetDirectBufferAddress(env, indexBuf);
+            if (!iptr) {
+                if (newVBuf) newVBuf = nil;
+                return (jlong)0;
+            }
+            size_t isize = (size_t)indexCount * (indexType == 1 ? 4 : 2);
+            newIBuf = [dev newBufferWithBytes:iptr length:isize options:MTLResourceStorageModeShared];
+        if (!newIBuf) { if (newVBuf) newVBuf = nil; METAL_LOG_ERROR("updateNativeChunkMesh: index buffer allocation failed"); return (jlong)0; }
+        }
+
+        if (existing)
+            existing->vertexBuffer = newVBuf;
+            existing->indexBuffer = newIBuf;
+            existing->indexCount = (uint32_t)indexCount;
+            existing->indexType = (uint32_t)indexType;
+            existing->vertexCount = (uint32_t)vertexCount;
+            METAL_LOG_DEBUG("updateNativeChunkMesh: updated existing mesh %p", existing);
+            return (jlong)(intptr_t)existing;
+        }
+
+   
+        NativeChunkMesh* mesh = (NativeChunkMesh*) malloc(sizeof(NativeChunkMesh));
+        mesh->vertexBuffer = newVBuf;
+        mesh->indexBuffer = newIBuf;
+        mesh->indexCount = (uint32_t)indexCount;
+        mesh->indexType = (uint32_t)indexType;
+        mesh->vertexCount = (uint32_t)vertexCount;
+        METAL_LOG_DEBUG("updateNativeChunkMesh: created new mesh %p", mesh);
         return (jlong)(intptr_t)mesh;
     }
 }

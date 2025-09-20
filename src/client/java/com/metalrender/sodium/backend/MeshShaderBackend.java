@@ -10,8 +10,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.math.BlockPos;
 
 import java.nio.ByteBuffer;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.Queue;
@@ -40,9 +38,13 @@ public final class MeshShaderBackend {
     private long deviceHandle = 0L;
     private boolean initialized = false;
     private boolean meshEnabled = false;
-
-    private final Map<BlockPos, Long> chunkHandles = new HashMap<>();
-    private final Set<BlockPos> meshed = new HashSet<>();
+    private final Map<BlockPos, Long> chunkHandles = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Set<BlockPos> meshed = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+    private final java.util.concurrent.ConcurrentLinkedQueue<Long> meshPool = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private final java.util.concurrent.atomic.AtomicInteger poolSize = new java.util.concurrent.atomic.AtomicInteger(0);
+    private final int MAX_POOL_SIZE = Math.max(8, Runtime.getRuntime().availableProcessors() * 4);
+    private volatile boolean nativeUpdateSupported = false;
+    private volatile boolean nativeUpdateProbed = false;
 
     public synchronized boolean initIfNeeded() {
         if (initialized) return true;
@@ -51,7 +53,11 @@ public final class MeshShaderBackend {
             MetalLogger.error("MeshShaderBackend: missing MinecraftClient or Window");
             return false;
         }
-  
+    long ctx = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+    if (ctx == 0L) {
+        MetalLogger.info("MeshShaderBackend: GLFW context not ready, deferring init");
+        return false;
+    }
     if (!NativeBridge.load()) return false;
     long glfwWindow = client.getWindow().getHandle();
     long nsWindow = org.lwjgl.glfw.GLFWNativeCocoa.glfwGetCocoaWindow(glfwWindow);
@@ -71,6 +77,15 @@ public final class MeshShaderBackend {
         if (meshEnabled) {
             try {
                 MeshShaderNative.initMeshPipeline(deviceHandle);
+                if (!nativeUpdateProbed) {
+                    nativeUpdateProbed = true;
+                    try {
+                        java.lang.reflect.Method m = MeshShaderNative.class.getDeclaredMethod("updateNativeChunkMesh", long.class, long.class, java.nio.ByteBuffer.class, int.class, int.class, java.nio.ByteBuffer.class, int.class, int.class);
+                        nativeUpdateSupported = (m != null);
+                    } catch (NoSuchMethodException ignored) {
+                        nativeUpdateSupported = false;
+                    }
+                }
             } catch (Throwable t) {
                 MetalLogger.error("MeshShaderBackend: initMeshPipeline failed");
                 meshEnabled = false;
@@ -84,10 +99,17 @@ public final class MeshShaderBackend {
     public synchronized void destroy() {
         if (!initialized) return;
         for (Long h : chunkHandles.values()) {
-            try { MeshShaderNative.destroyNativeChunkMesh(h); } catch (Throwable t) { MetalLogger.error("Error destroying chunk mesh"); }
+            if (h != null && h != 0L) {
+                try { MeshShaderNative.destroyNativeChunkMesh(h); } catch (Throwable ignored) {}
+            }
         }
         chunkHandles.clear();
         meshed.clear();
+        Long ph;
+        while ((ph = meshPool.poll()) != null) {
+            try { MeshShaderNative.destroyNativeChunkMesh(ph); } catch (Throwable ignored) {}
+            poolSize.decrementAndGet();
+        }
         if (deviceHandle != 0L) {
             try { MeshShaderNative.destroyMeshDevice(deviceHandle); } catch (Throwable t) { MetalLogger.error("Error destroying mesh device"); }
             deviceHandle = 0L;
@@ -99,8 +121,7 @@ public final class MeshShaderBackend {
     public Future<Long> uploadChunkMeshAsync(BlockPos pos, ByteBuffer vertexData, int vertexCount, int vertexStride,
                                              ByteBuffer indexData, int indexCount, int indexType) {
         return meshUploadExecutor.submit(() -> uploadChunkMeshInternal(pos, vertexData, vertexCount, vertexStride, indexData, indexCount, indexType));
-    }
-
+     }
 
     private synchronized long uploadChunkMeshInternal(BlockPos pos, ByteBuffer vertexData, int vertexCount, int vertexStride,
                                                      ByteBuffer indexData, int indexCount, int indexType) {
@@ -110,8 +131,23 @@ public final class MeshShaderBackend {
             return 0L;
         }
         try {
-            long h = MeshShaderNative.createNativeChunkMesh(deviceHandle, vertexData, vertexCount, vertexStride,
-                    indexData, indexCount, indexType);
+            long h = 0L;
+            if (nativeUpdateSupported) {
+                Long pooled = meshPool.poll();
+                if (pooled != null && pooled != 0L) {
+                    try {
+                        h = MeshShaderNative.updateNativeChunkMesh(pooled, deviceHandle, vertexData, vertexCount, vertexStride, indexData, indexCount, indexType);
+                    } catch (Throwable t) {
+                        try { MeshShaderNative.destroyNativeChunkMesh(pooled); } catch (Throwable ignored) {}
+                        poolSize.decrementAndGet();
+                        h = 0L;
+                    }
+                }
+            }
+            if (h == 0L) {
+                h = MeshShaderNative.createNativeChunkMesh(deviceHandle, vertexData, vertexCount, vertexStride,
+                        indexData, indexCount, indexType);
+            }
             if (h != 0L) {
                 chunkHandles.put(pos, h);
                 meshed.add(pos);
@@ -135,7 +171,12 @@ public final class MeshShaderBackend {
     public synchronized void removeChunkMesh(BlockPos pos) {
         Long h = chunkHandles.remove(pos);
         if (h != null && h != 0L) {
-            try { MeshShaderNative.destroyNativeChunkMesh(h); } catch (Throwable t) { MetalLogger.error("Error destroying native mesh"); }
+            if (poolSize.get() < MAX_POOL_SIZE) {
+                meshPool.offer(h);
+                poolSize.incrementAndGet();
+            } else {
+                try { MeshShaderNative.destroyNativeChunkMesh(h); } catch (Throwable ignored) {}
+            }
         }
         meshed.remove(pos);
     }
