@@ -12,14 +12,13 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.Camera;
-import net.minecraft.client.render.RenderLayer;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.math.BlockPos;
 import java.nio.ByteBuffer;
+import net.minecraft.client.render.BlockRenderLayerGroup;
 
 @Environment(EnvType.CLIENT)
 @Mixin(SodiumWorldRenderer.class)
@@ -57,11 +56,11 @@ public class SodiumRendererMixin {
     }
 
     @Inject(method = "drawChunkLayer", at = @At("HEAD"), cancellable = true)
-    private void onDrawChunkLayer(RenderLayer group, ChunkRenderMatrices matrices, double x, double y, double z, CallbackInfoReturnable<Boolean> cir) {
+    private void onDrawChunkLayer(BlockRenderLayerGroup group, ChunkRenderMatrices matrices, double x, double y, double z, CallbackInfo ci) {
         if (metalBackend != null) {
             int layer = 0; 
             boolean handled = metalBackend.drawChunkLayerSodiumOverride(layer);
-            if (handled) cir.setReturnValue(false);
+            if (handled) ci.cancel();
         }
         MeshShaderBackend meshBackend = com.metalrender.MetalRenderClient.getMeshBackend();
         if (meshBackend != null && meshBackend.isMeshEnabled()) {
@@ -74,7 +73,6 @@ public class SodiumRendererMixin {
             }
         }
     }
-
 
     public void queueMeshUpload(BlockPos pos, ByteBuffer vertexData, int vertexCount, int vertexStride,
                                 ByteBuffer indexData, int indexCount, int indexType) {
