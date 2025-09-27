@@ -30,8 +30,28 @@ It is still currently in ALpha, no results are promised.
 - Shaders are not yet supported yet, they might be added in the future
 - This should be compatible with most other mods, if it isn't please add a Issue
   
+---
 
+# FAQs
+- Why is this version diffrent from the Modrinth version?
   
+  It is diffrent because I can't make a new version for every bug fix, performance buff or Library edit. It is inefficent so I would make a new version for Modrinth
+  every stable release and major bug clearance (a group of bugs that I fixed) or a new feature etc etc. I cannot flood the Modrinth page with 20 new releases every 5
+  days or so.
+
+- When will Forge/Neoforge/Quilt be added?
+
+  I probably won't make support for other loaders in the future but for now, only Fabric is supported because its the most lightweight and popular. 
+
+- Can I run MetalRender on non-Apple Silicon hardware?
+
+  Yes you can! But there just might be a crash, best case scenario it just doesn't offer any benefits. I'm working to add other optimisation features that don't need
+  Apple Silicon to run so that even Intel/AMD/Nvidia people can enjoy MetalRender. You can expect that maybe next year, I'm busy with school and everything!
+
+- Where can I put suggestions?
+
+  There is a Suggestion tag on the Issues tab now! Please share your suggestions for MetalRender, I'm open to all suggestions and thanks for your help making
+  MetalRender better for everyone!
 ---
 
 ## Install
