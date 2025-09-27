@@ -5,6 +5,7 @@ import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import com.metalrender.nativebridge.MetalBackend;
 import com.metalrender.nativebridge.NativeMemory;
+import com.metalrender.util.MetalLogger;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.util.Window;
 import net.minecraft.client.world.ClientWorld;
@@ -35,31 +36,44 @@ public final class MetalRendererBackend {
 
     public MetalRendererBackend(MinecraftClient client) {
         this.client = client;
+        MetalLogger.info("MetalRendererBackend constructor, client=" + client);
     }
 
     public MetalRendererBackend() {
         this.client = null;
+        MetalLogger.info("MetalRendererBackend default constructor, client=null");
 
     }
 
     public boolean initIfNeeded() {
-        if (initialized) return true;
+        if (initialized) {
+            MetalLogger.info("MetalRendererBackend already initialized");
+            return true;
+        }
+        MetalLogger.info("MetalRendererBackend initializing");
         try {
             long ctx = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+            MetalLogger.info("GLFW context=" + ctx);
             if (ctx == 0L) {
+                MetalLogger.error("GLFW context is 0L");
                 return false;
             }
             long nsWindow = org.lwjgl.glfw.GLFWNativeCocoa.glfwGetCocoaWindow(ctx);
+            MetalLogger.info("nsWindow=" + nsWindow);
             boolean srgb = true;
             handle = MetalBackend.init(nsWindow, srgb);
+            MetalLogger.info("MetalBackend.init returned handle=" + handle);
             if (handle == 0L) {
+                MetalLogger.error("MetalBackend.init returned 0L");
                 return false;
             }
             startNanos = System.nanoTime();
             batchUploadVisibleChunkMeshes();
             initialized = true;
+            MetalLogger.info("MetalRendererBackend initialized");
             return true;
         } catch (Throwable t) {
+            MetalLogger.error("Exception during MetalRendererBackend initialization: " + t);
             initialized = false;
             return false;
         }

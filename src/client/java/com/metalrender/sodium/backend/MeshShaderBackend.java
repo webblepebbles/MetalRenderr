@@ -47,52 +47,67 @@ public final class MeshShaderBackend {
     private volatile boolean nativeUpdateProbed = false;
 
     public synchronized boolean initIfNeeded() {
-        if (initialized) return true;
+        if (initialized) {
+            MetalLogger.info("MeshShaderBackend already initialized");
+            return true;
+        }
+        MetalLogger.info("MeshShaderBackend initializing");
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null || client.getWindow() == null) {
-            MetalLogger.error("MeshShaderBackend: missing MinecraftClient or Window");
+            MetalLogger.error("MeshShaderBackend missing MinecraftClient or Window");
             return false;
         }
-    long ctx = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
-    if (ctx == 0L) {
-        MetalLogger.info("MeshShaderBackend: GLFW context not ready, deferring init");
-        return false;
-    }
-    if (!NativeBridge.load()) return false;
-    long glfwWindow = client.getWindow().getHandle();
-    long nsWindow = org.lwjgl.glfw.GLFWNativeCocoa.glfwGetCocoaWindow(glfwWindow);
-    boolean srgb = true;
-    deviceHandle = MeshShaderNative.initMeshDevice(nsWindow, srgb);
+        long ctx = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
+    MetalLogger.info("GLFW context=" + ctx);
+        if (ctx == 0L) {
+            MetalLogger.error("GLFW context not ready");
+            return false;
+        }
+        if (!NativeBridge.load()) {
+            MetalLogger.error("NativeBridge.load() failed");
+            return false;
+        }
+        long glfwWindow = client.getWindow().getHandle();
+    MetalLogger.info("glfwWindow handle=" + glfwWindow);
+        long nsWindow = org.lwjgl.glfw.GLFWNativeCocoa.glfwGetCocoaWindow(glfwWindow);
+    MetalLogger.info("nsWindow=" + nsWindow);
+        boolean srgb = true;
+        deviceHandle = MeshShaderNative.initMeshDevice(nsWindow, srgb);
+    MetalLogger.info("initMeshDevice returned deviceHandle=" + deviceHandle);
         if (deviceHandle == 0L) {
-            MetalLogger.error("MeshShaderBackend: initMeshDevice returned 0");
+            MetalLogger.error("initMeshDevice returned 0");
             return false;
         }
         try {
             meshEnabled = MetalRenderConfig.get().getAdvancedMetalFeatures().isMeshShadersEnabled()
                     && MeshShaderNative.supportsMeshShaders(deviceHandle);
+            MetalLogger.info("meshEnabled=" + meshEnabled);
         } catch (Throwable t) {
-            MetalLogger.error("MeshShaderBackend: error probing mesh support");
+            MetalLogger.error("error probing mesh support: " + t);
             meshEnabled = false;
         }
         if (meshEnabled) {
             try {
                 MeshShaderNative.initMeshPipeline(deviceHandle);
+                MetalLogger.info("Mesh pipeline initialized");
                 if (!nativeUpdateProbed) {
                     nativeUpdateProbed = true;
                     try {
                         java.lang.reflect.Method m = MeshShaderNative.class.getDeclaredMethod("updateNativeChunkMesh", long.class, long.class, java.nio.ByteBuffer.class, int.class, int.class, java.nio.ByteBuffer.class, int.class, int.class);
                         nativeUpdateSupported = (m != null);
+                        MetalLogger.info("nativeUpdateSupported=" + nativeUpdateSupported);
                     } catch (NoSuchMethodException ignored) {
                         nativeUpdateSupported = false;
+                        MetalLogger.info("updateNativeChunkMesh method not found");
                     }
                 }
             } catch (Throwable t) {
-                MetalLogger.error("MeshShaderBackend: initMeshPipeline failed");
+                MetalLogger.error("initMeshPipeline failed: " + t);
                 meshEnabled = false;
             }
         }
         initialized = true;
-        MetalLogger.info("MeshShaderBackend initialized. meshEnabled=" + meshEnabled);
+        MetalLogger.info("MeshShaderBackend initialized, meshEnabled=" + meshEnabled);
         return true;
     }
 

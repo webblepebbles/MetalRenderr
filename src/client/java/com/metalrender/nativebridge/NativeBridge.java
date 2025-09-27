@@ -9,15 +9,17 @@ public final class NativeBridge {
     private NativeBridge() {}
 
     public static boolean load() {
-        if (LOADED.get()) return AVAILABLE.get();
-        boolean ok = false;
-        try {
-            System.loadLibrary("metalrender");
-            ok = nIsAvailable();
-        } catch (Throwable ignored) {}
-        AVAILABLE.set(ok);
-        LOADED.set(true);
-        return ok;
+            if (LOADED.get()) return AVAILABLE.get();
+            boolean ok = false;
+            try {
+                System.loadLibrary("metalrender");
+                ok = nIsAvailable();
+            } catch (Throwable t) {
+                com.metalrender.util.MetalLogger.error("NativeBridge.load() failed: " + t);
+            }
+            AVAILABLE.set(ok);
+            LOADED.set(true);
+            return ok;
     }
     public static boolean isAvailable() {
         return LOADED.get() ? AVAILABLE.get() : load();
