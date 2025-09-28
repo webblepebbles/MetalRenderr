@@ -14,7 +14,7 @@ It is still currently in ALpha, no results are promised.
 | Fabric | Necessary | [Fabric's official page](https://fabricmc.net/use/installer/) |
 | Fabric API | Necessary | [Modrinth](https://modrinth.com/mod/fabric-api) |
 | Ramen noodles | Necessary for survival | Find it yourself |
-| Java JVM >21 | Necessary | [Oracle](https://www.oracle.com/au/java/technologies/downloads/#java21) |
+| Java JVM 21 | Necessary | [Oracle](https://www.oracle.com/au/java/technologies/downloads/#java21) |
 
 ## Features
 
