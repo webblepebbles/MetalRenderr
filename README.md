@@ -53,6 +53,11 @@ It is still currently in ALpha, no results are promised.
 
   There is a Suggestion tag on the Issues tab now! Please share your suggestions for MetalRender, I'm open to all suggestions and thanks for your help making
   MetalRender better for everyone!
+
+- Does it work with xxx launcher?
+
+  As long as your launcher doesn't mess with display libraries, GLFW or EGL (like Prism does), it would work. It has been verifyed to NOT work on Prism launcher. The
+  Offical Mojang launcher works.
 ---
 
 ## Install
