@@ -27,7 +27,7 @@ static NSWindow *minecraftWindow = nil;
 
 extern "C" {
 
-JNIEXPORT jboolean JNICALL Java_com_metalrender_nativebridge_MetalRendererBackend_nIsAvailable(JNIEnv *, jobject) {
+JNIEXPORT jboolean JNICALL Java_com_metalrender_nativebridge_NativeBridge_nIsAvailable(JNIEnv *, jclass) {
 
     id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
     if (dev) {

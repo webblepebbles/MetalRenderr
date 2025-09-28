@@ -1,7 +1,7 @@
 {
   "quality": {
-    "weather_quality": "DEFAULT",
-    "leaves_quality": "DEFAULT",
+    "weather_quality": "FAST",
+    "leaves_quality": "FAST",
     "enable_vignette": true
   },
   "advanced": {
