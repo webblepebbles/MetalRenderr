@@ -83,7 +83,7 @@ JNIEXPORT jboolean JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_su
     id<MTLDevice> dev = (__bridge id<MTLDevice>)(void*)deviceHandle;
     if (!dev) return JNI_FALSE;
     NSError *err;
-    std::string path = std::string(getenv("HOME")) + "/lib/shaders.metallib"; // just where my local path to this library is
+    std::string path = std::string(getenv("HOME")) + "/lib/shaders.metallib"; // just where my local path to this metallib is
     NSString *pathString = [NSString stringWithUTF8String:path.c_str()];
     id<MTLLibrary> lib = [dev newLibraryWithURL:[NSURL fileURLWithPath:pathString] error:&err];
         if (!lib) return JNI_FALSE;
