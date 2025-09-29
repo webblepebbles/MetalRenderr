@@ -22,5 +22,9 @@ run/logs/
 /node_modules/
 /build/tmp/
 /build/loom-cache/
+.cache/
+bin/
+compiled/
 #.gz
 #.log
+compile_commands.json

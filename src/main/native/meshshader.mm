@@ -69,12 +69,11 @@ JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_initM
                 return (jlong)0;
             }
             METAL_LOG_DEBUG("initMeshDevice: device created");
-        }
-        if (!gCommandQueue) gCommandQueue = [gDevice newCommandQueue];
-        id<MTLDevice> dev = gDevice;
-        CFRetain((__bridge CFTypeRef)dev);
-        return (jlong)(intptr_t)(__bridge void*) dev;
     }
+    if (!gCommandQueue) gCommandQueue = [gDevice newCommandQueue];
+    id<MTLDevice> dev = gDevice;
+    CFRetain((__bridge CFTypeRef)dev);
+    return (jlong)(intptr_t)(__bridge void*) dev;
 }
 
 JNIEXPORT jboolean JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_supportsMeshShaders(JNIEnv* env, jclass cls, jlong deviceHandle) {
@@ -83,9 +82,12 @@ JNIEXPORT jboolean JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_su
     if (deviceHandle == 0) return JNI_FALSE;
     id<MTLDevice> dev = (__bridge id<MTLDevice>)(void*)deviceHandle;
     if (!dev) return JNI_FALSE;
-    id<MTLLibrary> lib = [dev newDefaultLibrary];
+    NSError *err;
+    std::string path = std::string(getenv("HOME")) + "/lib/shaders.metallib"; // just where my local path to this library is
+    NSString *pathString = [NSString stringWithUTF8String:path.c_str()];
+    id<MTLLibrary> lib = [dev newLibraryWithURL:[NSURL fileURLWithPath:pathString] error:&err];
         if (!lib) return JNI_FALSE;
-        id<MTLFunction> f = [lib newFunctionWithName:@"mesh_main"];
+        id<MTLFunction> f = [lib newFunctionWithName:@"vertex_main"];
         if (!f) return JNI_FALSE;
         return JNI_TRUE;
     }
@@ -97,17 +99,20 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_initMe
         if (deviceHandle == 0) return;
         id<MTLDevice> dev = (__bridge id<MTLDevice>)(void*)deviceHandle;
         if (!dev) return;
-    if (!gLibrary) gLibrary = [dev newDefaultLibrary];
+        NSError *firstErr;
+        std::string path = std::string(getenv("HOME")) + "/lib/shaders.metallib"; // just where my local path to this metallib is
+        NSString *pathString = [NSString stringWithUTF8String:path.c_str()];
+    if (!gLibrary) gLibrary = [dev newLibraryWithURL:[NSURL fileURLWithPath:pathString] error:&firstErr];
     if (!gLibrary) { METAL_LOG_ERROR("initMeshPipeline: unable to load default library"); return; }
-        id<MTLFunction> v = [gLibrary newFunctionWithName:@"mesh_main"];
+        id<MTLFunction> v = [gLibrary newFunctionWithName:@"vertex_main"];
         id<MTLFunction> f = [gLibrary newFunctionWithName:@"fragment_main"];
     if (!v || !f) { METAL_LOG_ERROR("initMeshPipeline: missing shader functions"); return; }
         MTLRenderPipelineDescriptor* desc = [[MTLRenderPipelineDescriptor alloc] init];
         desc.vertexFunction = v;
         desc.fragmentFunction = f;
         desc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-        NSError* err = nil;
-        gPipeline = [dev newRenderPipelineStateWithDescriptor:desc error:&err];
+        NSError* secondErr = nil;
+        gPipeline = [dev newRenderPipelineStateWithDescriptor:desc error:&secondErr];
         if (!gPipeline) gPipeline = nil;
     }
 }
@@ -122,14 +127,14 @@ JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_creat
         id<MTLDevice> dev = (__bridge id<MTLDevice>)(void*)deviceHandle;
         if (!dev) return (jlong)0;
         if (!vertexBuf) return (jlong)0;
-        void* vptr = (*env)->GetDirectBufferAddress(env, vertexBuf);
+        void* vptr = env->GetDirectBufferAddress(vertexBuf);
         if (!vptr) return (jlong)0;
         size_t vsize = (size_t)vertexCount * (size_t)vertexStride;
         id<MTLBuffer> vbuf = [dev newBufferWithBytes:vptr length:vsize options:MTLResourceStorageModeShared];
     if (!vbuf) { METAL_LOG_ERROR("createNativeChunkMesh: vertex buffer allocation failed"); return (jlong)0; }
         id<MTLBuffer> ibuf = nil;
         if (indexBuf) {
-            void* iptr = (*env)->GetDirectBufferAddress(env, indexBuf);
+            void* iptr = env->GetDirectBufferAddress(indexBuf);
             if (!iptr) { METAL_LOG_ERROR("createNativeChunkMesh: index buffer direct address null"); return (jlong)0; }
             size_t isize = (size_t)indexCount * (indexType == 1 ? 4 : 2);
             ibuf = [dev newBufferWithBytes:iptr length:isize options:MTLResourceStorageModeShared];
@@ -156,7 +161,7 @@ JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_updat
         id<MTLDevice> dev = (__bridge id<MTLDevice>)(void*)deviceHandle;
         if (!dev) return (jlong)0;
         if (!vertexBuf) return (jlong)0;
-        void* vptr = (*env)->GetDirectBufferAddress(env, vertexBuf);
+        void* vptr = env->GetDirectBufferAddress(vertexBuf);
         if (!vptr) return (jlong)0;
         size_t vsize = (size_t)vertexCount * (size_t)vertexStride;
 
@@ -167,7 +172,7 @@ JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_updat
         id<MTLBuffer> newVBuf = [dev newBufferWithBytes:vptr length:vsize options:MTLResourceStorageModeShared];
         id<MTLBuffer> newIBuf = nil;
         if (indexBuf) {
-            void* iptr = (*env)->GetDirectBufferAddress(env, indexBuf);
+            void* iptr = env->GetDirectBufferAddress(indexBuf);
             if (!iptr) {
                 if (newVBuf) newVBuf = nil;
                 return (jlong)0;
@@ -177,7 +182,7 @@ JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_updat
         if (!newIBuf) { if (newVBuf) newVBuf = nil; METAL_LOG_ERROR("updateNativeChunkMesh: index buffer allocation failed"); return (jlong)0; }
         }
 
-        if (existing)
+        if (existing) {
             existing->vertexBuffer = newVBuf;
             existing->indexBuffer = newIBuf;
             existing->indexCount = (uint32_t)indexCount;

@@ -1,5 +1,4 @@
-#ifndef MESHSHADER_H
-#define MESHSHADER_H
+#pragma once
 
 #include <jni.h>
 
@@ -20,6 +19,4 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_destro
 
 #ifdef __cplusplus
 }
-#endif
-
 #endif
