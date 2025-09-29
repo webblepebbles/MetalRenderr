@@ -30,6 +30,8 @@ public final class MetalRendererBackend {
     private long handle = 0L;
     private boolean initialized = false;
     private long startNanos = 0L;
+    private static final long ACTIVATION_DELAY_NANOS = 60_000_000_000L;
+    private static long modStartNanos = System.nanoTime();
     
 
     private final Set<BlockPos> meshedChunks = new HashSet<>();
@@ -49,6 +51,11 @@ public final class MetalRendererBackend {
         if (initialized) {
             MetalLogger.info("MetalRendererBackend already initialized");
             return true;
+        }
+        long now = System.nanoTime();
+        if (now - modStartNanos < ACTIVATION_DELAY_NANOS) {
+            MetalLogger.info("MetalRendererBackend: waiting for 1 minute before initializing.");
+            return false;
         }
         MetalLogger.info("MetalRendererBackend initializing");
         try {

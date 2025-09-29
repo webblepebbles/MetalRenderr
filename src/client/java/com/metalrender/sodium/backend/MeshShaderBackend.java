@@ -46,10 +46,17 @@ public final class MeshShaderBackend {
     private volatile boolean nativeUpdateSupported = false;
     private volatile boolean nativeUpdateProbed = false;
 
+    private static final long ACTIVATION_DELAY_NANOS = 60_000_000_000L;
+    private static long modStartNanos = System.nanoTime();
     public synchronized boolean initIfNeeded() {
         if (initialized) {
             MetalLogger.info("MeshShaderBackend already initialized");
             return true;
+        }
+        long now = System.nanoTime();
+        if (now - modStartNanos < ACTIVATION_DELAY_NANOS) {
+            MetalLogger.info("MeshShaderBackend: waiting for 1 minute before initializing.");
+            return false;
         }
         MetalLogger.info("MeshShaderBackend initializing");
         MinecraftClient client = MinecraftClient.getInstance();
@@ -58,7 +65,7 @@ public final class MeshShaderBackend {
             return false;
         }
         long ctx = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
-    MetalLogger.info("GLFW context=" + ctx);
+        MetalLogger.info("GLFW context=" + ctx);
         if (ctx == 0L) {
             MetalLogger.error("GLFW context not ready");
             return false;
@@ -68,12 +75,12 @@ public final class MeshShaderBackend {
             return false;
         }
         long glfwWindow = client.getWindow().getHandle();
-    MetalLogger.info("glfwWindow handle=" + glfwWindow);
+        MetalLogger.info("glfwWindow handle=" + glfwWindow);
         long nsWindow = org.lwjgl.glfw.GLFWNativeCocoa.glfwGetCocoaWindow(glfwWindow);
-    MetalLogger.info("nsWindow=" + nsWindow);
+        MetalLogger.info("nsWindow=" + nsWindow);
         boolean srgb = true;
         deviceHandle = MeshShaderNative.initMeshDevice(nsWindow, srgb);
-    MetalLogger.info("initMeshDevice returned deviceHandle=" + deviceHandle);
+        MetalLogger.info("initMeshDevice returned deviceHandle=" + deviceHandle);
         if (deviceHandle == 0L) {
             MetalLogger.error("initMeshDevice returned 0");
             return false;
