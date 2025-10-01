@@ -20,6 +20,7 @@ import net.minecraft.util.math.BlockPos;
 import java.nio.ByteBuffer;
 import net.minecraft.client.render.BlockRenderLayerGroup;
 
+
 @Environment(EnvType.CLIENT)
 @Mixin(SodiumWorldRenderer.class)
 public class SodiumRendererMixin {
@@ -56,12 +57,18 @@ public class SodiumRendererMixin {
     }
 
     @Inject(method = "drawChunkLayer", at = @At("HEAD"), cancellable = true)
-    private void onDrawChunkLayer(BlockRenderLayerGroup group, ChunkRenderMatrices matrices, double x, double y, double z, CallbackInfo ci) {
+    private void onDrawChunkLayer(BlockRenderLayerGroup group,
+                                  ChunkRenderMatrices matrices,
+                                  double x, double y, double z,
+                                  CallbackInfo ci) {
         if (metalBackend != null) {
-            int layer = 0; 
-            boolean handled = metalBackend.drawChunkLayerSodiumOverride(layer);
-            if (handled) ci.cancel();
+            boolean handled = metalBackend.drawChunkLayerSodiumOverride(group.ordinal());
+            if (handled) {
+                ci.cancel();
+                return;
+            }
         }
+
         MeshShaderBackend meshBackend = com.metalrender.MetalRenderClient.getMeshBackend();
         if (meshBackend != null && meshBackend.isMeshEnabled()) {
             try {
@@ -81,5 +88,4 @@ public class SodiumRendererMixin {
             meshBackend.uploadChunkMeshAsync(pos, vertexData, vertexCount, vertexStride, indexData, indexCount, indexType);
         }
     }
-    
-}
+}  

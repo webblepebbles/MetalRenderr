@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.metalrender"
-version = "0.1"
+version = "0.3"
 
 java {
     toolchain.languageVersion = JavaLanguageVersion.of(21)
@@ -25,12 +25,11 @@ repositories {
         }
 }
 dependencies {
-    minecraft "com.mojang:minecraft:1.21.8"
-    mappings "net.fabricmc:yarn:1.21.8+build.1:v2"
+    minecraft "com.mojang:minecraft:1.21.9"
+    mappings "net.fabricmc:yarn:1.21.9+build.1:v2"
     modImplementation "net.fabricmc:fabric-loader:0.17.2"
-    modImplementation "net.fabricmc.fabric-api:fabric-api:0.132.0+1.21.8"
-    modImplementation "maven.modrinth:sodium:mc1.21.6-0.6.13-fabric"
-    modImplementation "net.fabricmc.fabric-api:fabric-api:0.132.0+1.21.8"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:0.133.14+1.21.9"
+    modImplementation "maven.modrinth:sodium:mc1.21.9-0.7.0-fabric"
     modImplementation "org.lwjgl:lwjgl:3.3.3"
     modImplementation "org.lwjgl:lwjgl-glfw:3.3.3"
     modImplementation "org.lwjgl:lwjgl:3.3.3:natives-macos"
