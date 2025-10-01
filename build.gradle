@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.metalrender"
-version = "0.1"
+version = "0.3"
 
 java {
     toolchain.languageVersion = JavaLanguageVersion.of(21)
@@ -37,7 +37,6 @@ dependencies {
     modImplementation "org.lwjgl:lwjgl-glfw:3.3.3:natives-macos"
     modImplementation 'org.joml:joml:1.10.5'
 }
-
 
 loom {
     splitEnvironmentSourceSets()
