@@ -1,8 +1,9 @@
-#include <jni.h>
+#include "metalrender.h"
 #import <Cocoa/Cocoa.h>
+#include <string>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
-
+#include <dlfcn.h>
 
 static inline bool metal_debug_enabled_mr() {
     const char* e = getenv("METALRENDER_DEBUG");
@@ -24,6 +25,17 @@ static id<MTLDevice> device = nil;
 static id<MTLCommandQueue> commandQueue = nil;
 static CAMetalLayer *metalLayer = nil;
 static NSWindow *minecraftWindow = nil;
+static void *handle;
+
+void *symbolWithErr(void *handle, const char *symbol) {
+    if (void *func = dlsym(handle, symbol)) { 
+        return func;
+    }
+    else {
+        METAL_LOG_ERROR_MR("unable to open symbol %s: %s", symbol, dlerror());
+        return nullptr;
+    }
+}
 
 extern "C" {
 
@@ -33,12 +45,14 @@ JNIEXPORT jboolean JNICALL Java_com_metalrender_nativebridge_NativeBridge_nIsAva
     if (dev) {
         dev = nil;
         METAL_LOG_DEBUG_MR("nIsAvailable: device present");
+        std::string path = std::string(getenv("HOME")) + "/lib/libmetalrender.dylib"; // just where my local path to this library is
+        handle = dlopen(path.c_str(), RTLD_LAZY);
         return JNI_TRUE;
     }
     return JNI_FALSE;
 }
 
-JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalRendererBackend_nInit(JNIEnv *, jobject) {
+JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nInit(JNIEnv *, jobject) {
     device = MTLCreateSystemDefaultDevice();
     if (!device) return;
     METAL_LOG_DEBUG_MR("nInit: device created");
@@ -65,14 +79,14 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalRendererBackend_nI
     });
 }
 
-JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalRendererBackend_nResize(JNIEnv *, jobject, jint width, jint height) {
+JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nResize(JNIEnv *, jobject, jint width, jint height) {
     if (!metalLayer) return;
     dispatch_async(dispatch_get_main_queue(), ^{
         metalLayer.drawableSize = CGSizeMake(width, height);
     });
 }
 
-JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalRendererBackend_nRender(JNIEnv *, jobject) {
+JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nRender(JNIEnv *, jobject) {
     if (!metalLayer || !commandQueue) return;
     @autoreleasepool {
         id<CAMetalDrawable> drawable = [metalLayer nextDrawable];
@@ -89,7 +103,8 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalRendererBackend_nR
         [commandBuffer commit];
     }
 }
-JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalRendererBackend_nDestroy(JNIEnv *, jobject) {
+
+JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nDestroy(JNIEnv *, jobject) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (minecraftWindow && metalLayer) {
             [[minecraftWindow contentView].layer removeFromSuperlayer];
@@ -98,6 +113,34 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalRendererBackend_nD
         commandQueue = nil;
         device = nil;
     });
+}
+
+JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MetalBackend_initNative(JNIEnv* env, jclass klass, jlong device, jboolean someOption) {
+    return reinterpret_cast<decltype(&Java_com_metalrender_nativebridge_MetalBackend_initNative)>(symbolWithErr(handle, "Java_com_metalrender_nativebridge_MetalBackend_init"))(env, klass, device, someOption);
+}
+
+JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalBackend_resize(JNIEnv* env, jclass klass, jlong device, jint width, jint height) {
+    return reinterpret_cast<decltype(&Java_com_metalrender_nativebridge_MetalBackend_resize)>(symbolWithErr(handle, "Java_com_metalrender_nativebridge_MetalBackend_resize"))(env, klass, device, width, height);
+}
+
+JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalBackend_render(JNIEnv* env, jclass klass, jlong device, jfloat thing) {
+    return reinterpret_cast<decltype(&Java_com_metalrender_nativebridge_MetalBackend_render)>(symbolWithErr(handle, "Java_com_metalrender_nativebridge_MetalBackend_render"))(env, klass, device, thing);
+}
+
+JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalBackend_destroy(JNIEnv* env, jclass klass, jlong device) {
+    return reinterpret_cast<decltype(&Java_com_metalrender_nativebridge_MetalBackend_destroy)>(symbolWithErr(handle, "Java_com_metalrender_nativebridge_MetalBackend_destroy"))(env, klass, device);
+}
+
+JNIEXPORT jboolean JNICALL Java_com_metalrender_nativebridge_MetalBackend_supportsMeshShaders(JNIEnv* env, jclass klass) {
+    return reinterpret_cast<decltype(&Java_com_metalrender_nativebridge_MetalBackend_supportsMeshShaders)>(symbolWithErr(handle, "Java_com_metalrender_nativebridge_MetalBackend_supportsMeshShaders"))(env, klass);
+}
+
+JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalBackend_uploadStaticMesh(JNIEnv* env, jclass klass, jlong device, jobject obj, jint int1, jint int2) {
+    return reinterpret_cast<decltype(&Java_com_metalrender_nativebridge_MetalBackend_uploadStaticMesh)>(symbolWithErr(handle, "Java_com_metalrender_nativebridge_MetalBackend_uploadStaticMesh"))(env, klass, device, obj, int1, int2);
+}
+
+JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalBackend_setCamera(JNIEnv* env, jclass klass, jlong device, jfloatArray array) {
+    return reinterpret_cast<decltype(&Java_com_metalrender_nativebridge_MetalBackend_setCamera)>(symbolWithErr(handle, "Java_com_metalrender_nativebridge_MetalBackend_setCamera"))(env, klass, device, array);
 }
 
 }
