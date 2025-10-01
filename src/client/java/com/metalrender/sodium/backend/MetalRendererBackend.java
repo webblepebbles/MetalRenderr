@@ -52,6 +52,7 @@ public final class MetalRendererBackend {
             MetalLogger.info("MetalRendererBackend already initialized");
             return true;
         }
+        //i think that i should rmove this check but idk tell
         long now = System.nanoTime();
         if (now - modStartNanos < ACTIVATION_DELAY_NANOS) {
             MetalLogger.info("MetalRendererBackend: waiting for 1 minute before initializing.");

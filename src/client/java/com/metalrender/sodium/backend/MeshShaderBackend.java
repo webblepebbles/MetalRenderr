@@ -46,18 +46,14 @@ public final class MeshShaderBackend {
     private volatile boolean nativeUpdateSupported = false;
     private volatile boolean nativeUpdateProbed = false;
 
-    private static final long ACTIVATION_DELAY_NANOS = 60_000_000_000L;
-    private static long modStartNanos = System.nanoTime();
+
     public synchronized boolean initIfNeeded() {
         if (initialized) {
             MetalLogger.info("MeshShaderBackend already initialized");
             return true;
         }
         long now = System.nanoTime();
-        if (now - modStartNanos < ACTIVATION_DELAY_NANOS) {
-            MetalLogger.info("MeshShaderBackend: waiting for 1 minute before initializing.");
-            return false;
-        }
+       
         MetalLogger.info("MeshShaderBackend initializing");
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null || client.getWindow() == null) {
