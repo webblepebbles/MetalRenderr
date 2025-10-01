@@ -30,6 +30,7 @@ It is still currently in ALpha, no results are promised.
 - Will still load on other GPUs but won't offer any additional benefits or changes
 - Shaders are not yet supported yet, they might be added in the future
 - This should be compatible with most other mods, if it isn't please add a Issue
+- MarioMastr helped me a ton by making a fork that addressed some MAJOR issues in native code! Thank them too!
   
 ---
 
