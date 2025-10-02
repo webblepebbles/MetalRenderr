@@ -3,7 +3,6 @@ package com.metalrender.nativebridge;
 import com.mojang.logging.LogUtils;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
@@ -20,10 +19,6 @@ public final class MetalHardwareChecker {
     private static volatile Boolean compatible = null;
     private static volatile boolean checkScheduled = false;
     private static volatile String lastFailureReason = "";
-
-    static {
-        ClientTickEvents.END_CLIENT_TICK.register(client -> scheduleCheck());
-    }
 
     public static boolean isCompatible() {
         scheduleCheck();
