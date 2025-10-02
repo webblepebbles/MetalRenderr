@@ -33,6 +33,7 @@ static id<MTLCommandQueue> gCommandQueue = nil;
 
 static id<CAMetalDrawable> gDrawable = nil;
 static MTLRenderPassDescriptor* gRenderPass = nil;
+static std::string gShadersPath;
 
 struct NativeChunkMesh {
     id<MTLBuffer> vertexBuffer;
@@ -48,13 +49,8 @@ static CAMetalLayer* layerForWindow(NSWindow* win) {
     if (!cv) return nil;
     CALayer* l = [cv layer];
     if (l && [l isKindOfClass:[CAMetalLayer class]]) return (CAMetalLayer*)l;
-    CAMetalLayer* ml = [CAMetalLayer layer];
-    ml.device = gDevice ? gDevice : MTLCreateSystemDefaultDevice();
-    ml.pixelFormat = MTLPixelFormatBGRA8Unorm;
-    ml.framebufferOnly = NO;
-    [cv setWantsLayer:YES];
-    [cv setLayer:ml];
-    return ml;
+    // Do not attach or replace layers to avoid black screens; if no CAMetalLayer, return nil.
+    return nil;
 }
 
 extern "C" {
@@ -83,7 +79,12 @@ JNIEXPORT jboolean JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_su
     id<MTLDevice> dev = (__bridge id<MTLDevice>)(void*)deviceHandle;
     if (!dev) return JNI_FALSE;
     NSError *err;
-    std::string path = std::string(getenv("HOME")) + "/lib/shaders.metallib"; // just where my local path to this metallib is
+    std::string path = gShadersPath;
+    if (path.empty()) {
+        NSString* bundlePath = [[NSBundle mainBundle] pathForResource:@"shaders" ofType:@"metallib"];
+        if (bundlePath) path = [bundlePath UTF8String];
+    }
+    if (path.empty()) return JNI_FALSE;
     NSString *pathString = [NSString stringWithUTF8String:path.c_str()];
     id<MTLLibrary> lib = [dev newLibraryWithURL:[NSURL fileURLWithPath:pathString] error:&err];
         if (!lib) return JNI_FALSE;
@@ -100,7 +101,12 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_initMe
         id<MTLDevice> dev = (__bridge id<MTLDevice>)(void*)deviceHandle;
         if (!dev) return;
         NSError *firstErr;
-        std::string path = std::string(getenv("HOME")) + "/lib/shaders.metallib"; // just where my local path to this metallib is
+        std::string path = gShadersPath;
+        if (path.empty()) {
+            NSString* bundlePath = [[NSBundle mainBundle] pathForResource:@"shaders" ofType:@"metallib"];
+            if (bundlePath) path = [bundlePath UTF8String];
+        }
+        if (path.empty()) { METAL_LOG_ERROR("initMeshPipeline: shaders.metallib path not set"); return; }
         NSString *pathString = [NSString stringWithUTF8String:path.c_str()];
     if (!gLibrary) gLibrary = [dev newLibraryWithURL:[NSURL fileURLWithPath:pathString] error:&firstErr];
     if (!gLibrary) { METAL_LOG_ERROR("initMeshPipeline: unable to load default library"); return; }
@@ -114,6 +120,19 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_initMe
         NSError* secondErr = nil;
         gPipeline = [dev newRenderPipelineStateWithDescriptor:desc error:&secondErr];
         if (!gPipeline) gPipeline = nil;
+    }
+}
+
+JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_setShadersPath(JNIEnv* env, jclass, jstring jpath) {
+    @autoreleasepool {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (!jpath) { gShadersPath.clear(); return; }
+        const char* c = env->GetStringUTFChars(jpath, nullptr);
+        if (c) {
+            gShadersPath = c;
+            env->ReleaseStringUTFChars(jpath, c);
+            METAL_LOG_DEBUG("setShadersPath: %s", gShadersPath.c_str());
+        }
     }
 }
 

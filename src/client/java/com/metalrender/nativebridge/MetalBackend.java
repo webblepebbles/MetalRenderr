@@ -31,6 +31,8 @@ public final class MetalBackend {
     public static native boolean supportsMeshShaders();
 
     public static String getLastInitError() {
-        throw new UnsupportedOperationException("Unimplemented method 'getLastInitError'");
+        try { return getLastInitErrorNative(); } catch (Throwable t) { return null; }
     }
+
+    private static native String getLastInitErrorNative();
 }

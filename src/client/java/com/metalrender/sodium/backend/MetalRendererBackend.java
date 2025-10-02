@@ -1,4 +1,3 @@
-
 package com.metalrender.sodium.backend;
 
 import net.fabricmc.api.EnvType;
@@ -10,9 +9,7 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.util.Window;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.client.render.Camera;
-import net.minecraft.client.render.Frustum;
-import net.minecraft.util.math.Box;
-import org.joml.Matrix4f;
+// removed unused imports
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.block.BlockState;
@@ -49,13 +46,17 @@ public final class MetalRendererBackend {
 
     public boolean initIfNeeded() {
         if (initialized) {
-            MetalLogger.info("MetalRendererBackend already initialized");
             return true;
         }
         //i think that i should rmove this check but idk tell
-        long now = System.nanoTime();
+    // long now = System.nanoTime();
         MetalLogger.info("MetalRendererBackend initializing");
         try {
+            MinecraftClient mc = this.client != null ? this.client : MinecraftClient.getInstance();
+            if (mc == null) {
+                MetalLogger.error("MetalRendererBackend: MinecraftClient is null");
+                return false;
+            }
             long ctx = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
             MetalLogger.info("GLFW context=" + ctx);
             if (ctx == 0L) {
@@ -89,10 +90,11 @@ public final class MetalRendererBackend {
 
 
     private void batchUploadVisibleChunkMeshes() {
-        if (client.world == null || client.player == null) return;
-        Camera camera = client.gameRenderer.getCamera();
-        ClientWorld world = client.world;
-        BlockPos playerPos = client.player.getBlockPos();
+        MinecraftClient mc = this.client != null ? this.client : MinecraftClient.getInstance();
+        if (mc == null || mc.world == null || mc.player == null) return;
+        Camera camera = mc.gameRenderer.getCamera();
+        ClientWorld world = mc.world;
+        BlockPos playerPos = mc.player.getBlockPos();
         int chunkRadius = 6;
         for (int cx = -chunkRadius; cx <= chunkRadius; cx++) {
             for (int cz = -chunkRadius; cz <= chunkRadius; cz++) {
@@ -122,7 +124,8 @@ public final class MetalRendererBackend {
 
     private void uploadChunkMesh(WorldChunk chunk, BlockPos chunkPos) {
     int minY = chunk.getBottomY();
-    int maxY = client.world.getHeight();
+    MinecraftClient mc2 = this.client != null ? this.client : MinecraftClient.getInstance();
+    int maxY = mc2 != null && mc2.world != null ? mc2.world.getHeight() : 256;
         java.util.List<Short> vertices = new java.util.ArrayList<>();
         java.util.List<Integer> colors = new java.util.ArrayList<>();
         int stride = 3 * 2 + 4; 
@@ -236,7 +239,9 @@ public final class MetalRendererBackend {
 
     public void resizeIfNeeded() {
         if (!initialized) return;
-        Window w = client.getWindow();
+        MinecraftClient mc = this.client != null ? this.client : MinecraftClient.getInstance();
+        if (mc == null) return;
+        Window w = mc.getWindow();
         MetalBackend.resize(handle, w.getFramebufferWidth(), w.getFramebufferHeight());
     }
     public void updateChunkMesh(WorldChunk chunk) {
@@ -258,7 +263,9 @@ public final class MetalRendererBackend {
 
     public void sendCamera(float fovDegrees) {
         if (!initialized) return;
-        Window w = client.getWindow();
+    MinecraftClient mc3 = this.client != null ? this.client : MinecraftClient.getInstance();
+    if (mc3 == null) return;
+    Window w = mc3.getWindow();
         float width = w.getFramebufferWidth();
         float height = w.getFramebufferHeight();
         float aspect = height == 0 ? 1f : width / height;
@@ -286,16 +293,14 @@ public final class MetalRendererBackend {
 
     public void onSetupTerrain(float fovDegrees) {
         if (!initIfNeeded()) return;
+        // Keep our context updated but do not draw over Sodium's renderer yet
         resizeIfNeeded();
         sendCamera(fovDegrees);
-        float t = (System.nanoTime() - startNanos) / 1_000_000_000f;
-        MetalBackend.render(handle, t);
     }
 
     public boolean drawChunkLayerSodiumOverride(int layerId) {
-        if (!initialized) return false;
-        MetalBackend.render(handle, (System.nanoTime() - startNanos) / 1_000_000_000f);
-        return true;
+        // Do not override Sodium rendering; return false to allow normal pipeline
+        return false;
     }
 
     public void destroy() {
