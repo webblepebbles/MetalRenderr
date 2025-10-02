@@ -7,7 +7,7 @@ import com.metalrender.util.MetalLogger;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Environment(EnvType.CLIENT)
@@ -17,21 +17,14 @@ public class MetalRenderClient implements ClientModInitializer{
     private static boolean usingMesh = false;
     private static int ticksElapsed = 0;
 
-    @Override // Theres already a check for GLFW here so i dont think that the 1 minute timer is necessary
+    @Override 
     public void onInitializeClient() {
-        MetalLogger.info("scheduling MetalRender client initialization after window is ready");
+        MetalLogger.info("scheduling MetalRender client initialization on CLIENT_STARTED");
         AtomicBoolean initialized = new AtomicBoolean(false);
-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+        ClientLifecycleEvents.CLIENT_STARTED.register(client -> {
+            if (initialized.getAndSet(true)) return;
             try {
-                if (initialized.get()) return;
-                long ctx = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
-                if (ctx == 0L) return;
-                ticksElapsed++;
-                if (ticksElapsed < 20 * 60) { 
-                    return;
-                }
-                initialized.set(true);
-                MetalLogger.info("starting MetalRenderClient (deferred, after delay)");
+                MetalLogger.info("starting MetalRenderClient (CLIENT_STARTED)");
                 String osName = System.getProperty("os.name").toLowerCase();
                 if (!osName.contains("mac")) {
                     MetalLogger.warn("MetalRender: Your computer does not support Metal.");
@@ -53,6 +46,7 @@ public class MetalRenderClient implements ClientModInitializer{
                     initFallback();
                 }
             } catch (Throwable t) {
+                MetalLogger.error("Error during MetalRender client init: " + t);
             }
         });
     }

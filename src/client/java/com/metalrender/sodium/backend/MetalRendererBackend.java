@@ -30,7 +30,7 @@ public final class MetalRendererBackend {
     private long handle = 0L;
     private boolean initialized = false;
     private long startNanos = 0L;
-    private static final long ACTIVATION_DELAY_NANOS = 60_000_000_000L;
+    private static final long ACTIVATION_DELAY_NANOS = 0L;
     private static long modStartNanos = System.nanoTime();
     
 
@@ -54,10 +54,6 @@ public final class MetalRendererBackend {
         }
         //i think that i should rmove this check but idk tell
         long now = System.nanoTime();
-        if (now - modStartNanos < ACTIVATION_DELAY_NANOS) {
-            MetalLogger.info("MetalRendererBackend: waiting for 1 minute before initializing.");
-            return false;
-        }
         MetalLogger.info("MetalRendererBackend initializing");
         try {
             long ctx = org.lwjgl.glfw.GLFW.glfwGetCurrentContext();
@@ -73,6 +69,10 @@ public final class MetalRendererBackend {
             MetalLogger.info("MetalBackend.init returned handle=" + handle);
             if (handle == 0L) {
                 MetalLogger.error("MetalBackend.init returned 0L");
+                try {
+                    String err = MetalBackend.getLastInitError();
+                    if (err != null) MetalLogger.error("Native init error: " + err);
+                } catch (Throwable t) {}
                 return false;
             }
             startNanos = System.nanoTime();
