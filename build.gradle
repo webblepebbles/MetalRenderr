@@ -53,11 +53,8 @@ tasks.withType(JavaCompile).configureEach {
     options.release = 21
 }
     jar {
-        from('src/main/native') {
+        from('src/main/resources/native') {
             include 'metalrender.h', 'metalrender.mm'
             into 'native'
         }
     }
-
-
-//testing testing
