@@ -8,7 +8,6 @@ import com.metalrender.config.MetalRenderConfig;
 import com.metalrender.util.MetalLogger;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.math.BlockPos;
-
 import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.Set;
@@ -20,7 +19,8 @@ import java.util.concurrent.Future;
 
 @Environment(EnvType.CLIENT)
 public final class MeshShaderBackend {
-    private final ExecutorService meshUploadExecutor = Executors.newSingleThreadExecutor(r -> {
+    private final ExecutorService meshUploadExecutor = Executors.newFixedThreadPool(
+        Math.max(2, Runtime.getRuntime().availableProcessors() / 2), r -> {
         Thread t = new Thread(r, "MeshShaderUploadThread");
         t.setDaemon(true);
         return t;
@@ -52,9 +52,8 @@ public final class MeshShaderBackend {
             MetalLogger.info("MeshShaderBackend already initialized");
             return true;
         }
-        long now = System.nanoTime();
        
-        MetalLogger.info("MeshShaderBackend initializing");
+        MetalLogger.info("MeshShaderBackend initialising");
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null || client.getWindow() == null) {
             MetalLogger.error("MeshShaderBackend missing MinecraftClient or Window");
@@ -81,9 +80,33 @@ public final class MeshShaderBackend {
             MetalLogger.error("initMeshDevice returned 0");
             return false;
         }
+    
         try {
-            meshEnabled = MetalRenderConfig.get().getAdvancedMetalFeatures().isMeshShadersEnabled()
-                    && MeshShaderNative.supportsMeshShaders(deviceHandle);
+            java.nio.file.Path tempDir = java.nio.file.Files.createTempDirectory("metalrender-shaders");
+            tempDir.toFile().deleteOnExit();
+            java.nio.file.Path out = tempDir.resolve("shaders.metallib");
+            try (java.io.InputStream in = MeshShaderBackend.class.getClassLoader().getResourceAsStream("shaders.metallib")) {
+                if (in != null) {
+                    java.nio.file.Files.copy(in, out, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    MeshShaderNative.setShadersPath(out.toAbsolutePath().toString());
+                    MetalLogger.info("Provided shaders.metallib to native at: " + out);
+                } else {
+                    MetalLogger.warn("shaders.metallib not found in resources; native will try default library");
+                }
+            }
+        } catch (Throwable t) {
+            MetalLogger.warn("Unable to provision shaders.metallib: " + t);
+        }
+        try {
+            boolean configEnabled = MetalRenderConfig.get().getAdvancedMetalFeatures().isMeshShadersEnabled();
+            MetalLogger.info("Config mesh shaders enabled: " + configEnabled);
+            if (configEnabled) {
+                boolean nativeSupport = MeshShaderNative.supportsMeshShaders(deviceHandle);
+                MetalLogger.info("Native mesh shaders supported: " + nativeSupport);
+                meshEnabled = nativeSupport;
+            } else {
+                meshEnabled = false;
+            }
             MetalLogger.info("meshEnabled=" + meshEnabled);
         } catch (Throwable t) {
             MetalLogger.error("error probing mesh support: " + t);
@@ -116,6 +139,16 @@ public final class MeshShaderBackend {
 
     public synchronized void destroy() {
         if (!initialized) return;
+        
+        meshUploadExecutor.shutdown();
+        try {
+            if (!meshUploadExecutor.awaitTermination(100, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                meshUploadExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            meshUploadExecutor.shutdownNow();
+        }
+        
         for (Long h : chunkHandles.values()) {
             if (h != null && h != 0L) {
                 try { MeshShaderNative.destroyNativeChunkMesh(h); } catch (Throwable ignored) {}
@@ -145,7 +178,7 @@ public final class MeshShaderBackend {
                                                      ByteBuffer indexData, int indexCount, int indexType) {
         if (!initialized) return 0L;
         if (!meshEnabled) return 0L;
-        if (vertexData == null || !vertexData.isDirect()) {
+        if (vertexData == null || !vertexData.isDirect() || vertexCount <= 0) {
             return 0L;
         }
         try {
@@ -202,11 +235,8 @@ public final class MeshShaderBackend {
     public void beginFrame() {
         if (!initialized || !meshEnabled) return;
         try {
-            boolean ok = MeshShaderNative.startMeshFrame(deviceHandle);
-            if (!ok) {
-            }
+            MeshShaderNative.startMeshFrame(deviceHandle);
         } catch (Throwable t) {
-            MetalLogger.error("MeshShaderBackend: error");
         }
     }
     public void queueDrawChunkLayer(BlockPos pos, int layer) {
@@ -217,14 +247,15 @@ public final class MeshShaderBackend {
 
     public void processDrawQueue() {
         if (!initialized || !meshEnabled) return;
+        int processed = 0;
         DrawRequest req;
         while ((req = drawQueue.poll()) != null) {
             Long h = chunkHandles.get(req.pos);
             if (h != null && h != 0L) {
                 try {
                     MeshShaderNative.drawNativeChunkMesh(deviceHandle, h, req.layer);
+                    processed++;
                 } catch (Throwable t) {
-                 
                 }
             }
         }
@@ -234,10 +265,12 @@ public final class MeshShaderBackend {
         try {
             MeshShaderNative.endMeshFrame(deviceHandle);
         } catch (Throwable t) {
-            MetalLogger.error("MeshShaderBackend: error");
         }
     }
     public boolean isMeshEnabled() {
         return meshEnabled;
     }
+     public boolean hasMesh(BlockPos pos) {
+         return meshed.contains(pos);
+     }
 }

@@ -24,4 +24,5 @@ public final class MeshShaderNative {
     public static native void drawNativeChunkMesh(long deviceHandle, long meshHandle, int layer);
     public static native void endMeshFrame(long deviceHandle);
     public static native void destroyMeshDevice(long deviceHandle);
+    public static native void setShadersPath(String string);
 }

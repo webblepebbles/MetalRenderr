@@ -25,30 +25,33 @@ import net.minecraft.client.render.BlockRenderLayerGroup;
 public class SodiumRendererMixin {
     @Shadow private MinecraftClient client;
     private volatile boolean meshFrameEnded = false;
-    // Use global backends from MetalRenderClient; do not construct another backend per renderer.
+
     @Inject(method = "setupTerrain", at = @At("HEAD"))
     private void onSetupTerrain(Camera camera, Viewport viewport, FogParameters fogParameters,
                                 boolean spectator, boolean updateChunksImmediately, ChunkRenderMatrices matrices, CallbackInfo ci) {
-        // Drive rendering for the active backend
+      
         float fov = (client != null && client.options != null && client.options.getFov() != null) ? (float) client.options.getFov().getValue() : 70f;
+        
         MetalRendererBackend fb = com.metalrender.MetalRenderClient.getFallbackBackend();
-        if (fb != null && !com.metalrender.MetalRenderClient.isUsingMeshShaders()) {
+        if (fb != null) {
             fb.onSetupTerrain(fov);
         }
-       
-        meshFrameEnded = false;
+        
         MeshShaderBackend meshBackend = com.metalrender.MetalRenderClient.getMeshBackend();
         if (meshBackend != null && meshBackend.isMeshEnabled()) {
-            try { meshBackend.beginFrame(); } catch (Throwable ignored) {}
+            meshFrameEnded = false;
+            try { 
+                meshBackend.beginFrame(); 
+            } catch (Throwable ignored) {}
         }
     }
 
-    @Inject(method = "drawChunkLayer", at = @At("HEAD"), cancellable = true)
+        @Inject(method = "drawChunkLayer", at = @At("HEAD"))
     private void onDrawChunkLayer(BlockRenderLayerGroup group,
                                   ChunkRenderMatrices matrices,
                                   double x, double y, double z,
                                   CallbackInfo ci) {
-        // Allow Sodium to render its normal chunk layers; do not cancel.
+       
         MeshShaderBackend meshBackend = com.metalrender.MetalRenderClient.getMeshBackend();
         if (meshBackend != null && meshBackend.isMeshEnabled()) {
             try {
@@ -68,4 +71,6 @@ public class SodiumRendererMixin {
             meshBackend.uploadChunkMeshAsync(pos, vertexData, vertexCount, vertexStride, indexData, indexCount, indexType);
         }
     }
-}  
+
+
+}

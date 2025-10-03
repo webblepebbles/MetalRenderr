@@ -11,11 +11,41 @@ public final class NativeBridge {
     public static boolean load() {
             if (LOADED.get()) return AVAILABLE.get();
             boolean ok = false;
-            try {
-                System.loadLibrary("metalrender");
-                ok = nIsAvailable();
-            } catch (Throwable t) {
-                com.metalrender.util.MetalLogger.error("NativeBridge.load() failed: " + t);
+            Throwable lastError = null;
+        
+            String cwd = System.getProperty("user.dir", ".");
+            java.nio.file.Path[] candidates = new java.nio.file.Path[] {
+                java.nio.file.Paths.get(cwd, "bin", "main", "libmetalrender.dylib"),
+                java.nio.file.Paths.get(cwd, "build", "native", "libmetalrender.dylib"),
+                java.nio.file.Paths.get(cwd, "src", "main", "resources", "libmetalrender.dylib")
+            };
+            for (java.nio.file.Path p : candidates) {
+                try {
+                    if (java.nio.file.Files.isRegularFile(p)) {
+                        System.load(p.toAbsolutePath().toString());
+                        ok = nIsAvailable();
+                        if (ok) {
+                            com.metalrender.util.MetalLogger.info("Loaded native lib from " + p.toAbsolutePath());
+                            break;
+                        }
+                    }
+                } catch (Throwable t) {
+                    lastError = t;
+                }
+            }
+            if (!ok) {
+                try {
+                    System.loadLibrary("metalrender");
+                    ok = nIsAvailable();
+                    if (ok) {
+                        com.metalrender.util.MetalLogger.info("Loaded native lib via System.loadLibrary");
+                    }
+                } catch (Throwable t) {
+                    lastError = t;
+                }
+            }
+            if (!ok && lastError != null) {
+                com.metalrender.util.MetalLogger.error("NativeBridge.load() failed: " + lastError);
             }
             AVAILABLE.set(ok);
             LOADED.set(true);

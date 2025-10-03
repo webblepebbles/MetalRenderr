@@ -9,7 +9,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.util.Window;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.client.render.Camera;
-// removed unused imports
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.block.BlockState;
@@ -48,8 +47,7 @@ public final class MetalRendererBackend {
         if (initialized) {
             return true;
         }
-        //i think that i should rmove this check but idk tell
-    // long now = System.nanoTime();
+
         MetalLogger.info("MetalRendererBackend initializing");
         try {
             MinecraftClient mc = this.client != null ? this.client : MinecraftClient.getInstance();
@@ -293,13 +291,13 @@ public final class MetalRendererBackend {
 
     public void onSetupTerrain(float fovDegrees) {
         if (!initIfNeeded()) return;
-        // Keep our context updated but do not draw over Sodium's renderer yet
+       
         resizeIfNeeded();
         sendCamera(fovDegrees);
     }
 
     public boolean drawChunkLayerSodiumOverride(int layerId) {
-        // Do not override Sodium rendering; return false to allow normal pipeline
+       
         return false;
     }
 
