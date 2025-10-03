@@ -21,6 +21,8 @@ public class MetalRenderClient implements ClientModInitializer{
     public void onInitializeClient() {
         MetalLogger.info("scheduling MetalRender client initialization on CLIENT_STARTED");
         AtomicBoolean initialized = new AtomicBoolean(false);
+        boolean forceFallback = true; // you can set this to true to load it regularly using mesh shaders 
+                                    // if applicable. T 
         ClientLifecycleEvents.CLIENT_STARTED.register(client -> {
             if (initialized.getAndSet(true)) return;
             try {
@@ -28,6 +30,11 @@ public class MetalRenderClient implements ClientModInitializer{
                 String osName = System.getProperty("os.name").toLowerCase();
                 if (!osName.contains("mac")) {
                     MetalLogger.warn("MetalRender: Your computer does not support Metal.");
+                    return;
+                }
+                if (forceFallback) {
+                    MetalLogger.info("Force fallback: using MetalRendererBackend for testing");
+                    initFallback();
                     return;
                 }
                 MetalRenderConfig cfg = MetalRenderConfig.get();
