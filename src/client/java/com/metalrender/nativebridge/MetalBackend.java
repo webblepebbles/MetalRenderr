@@ -8,8 +8,6 @@ import java.nio.ByteBuffer;
 
 @Environment(EnvType.CLIENT)
 public final class MetalBackend {
-    
-
     public static long init(long windowHandle, boolean someFlag) {
        
         if (!NativeBridge.load()) {

@@ -6,7 +6,12 @@ import com.metalrender.nativebridge.MeshShaderNative;
 import com.metalrender.nativebridge.NativeBridge;
 import com.metalrender.config.MetalRenderConfig;
 import com.metalrender.util.MetalLogger;
+import com.metalrender.util.FrustumCuller;
+import com.metalrender.util.OcclusionCuller;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.render.Camera;
+import net.minecraft.client.util.Window;
+import org.joml.Matrix4f;
 import net.minecraft.util.math.BlockPos;
 import java.nio.ByteBuffer;
 import java.util.Map;
@@ -45,6 +50,8 @@ public final class MeshShaderBackend {
     private final int MAX_POOL_SIZE = Math.max(8, Runtime.getRuntime().availableProcessors() * 4);
     private volatile boolean nativeUpdateSupported = false;
     private volatile boolean nativeUpdateProbed = false;
+    private final FrustumCuller frustumCuller = new FrustumCuller();
+    private final OcclusionCuller occlusionCuller = new OcclusionCuller();
 
 
     public synchronized boolean initIfNeeded() {
@@ -165,6 +172,7 @@ public final class MeshShaderBackend {
             try { MeshShaderNative.destroyMeshDevice(deviceHandle); } catch (Throwable t) { MetalLogger.error("Error destroying mesh device"); }
             deviceHandle = 0L;
         }
+        occlusionCuller.clearCache();
         initialized = false;
     }
 
@@ -236,8 +244,63 @@ public final class MeshShaderBackend {
         if (!initialized || !meshEnabled) return;
         try {
             MeshShaderNative.startMeshFrame(deviceHandle);
+            updateFrustumCulling();
         } catch (Throwable t) {
         }
+    }
+    
+    private void updateFrustumCulling() {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc == null || mc.gameRenderer == null) return;
+        
+        Camera camera = mc.gameRenderer.getCamera();
+        if (camera == null) return;
+        
+        Window window = mc.getWindow();
+        float aspect = (float) window.getFramebufferWidth() / window.getFramebufferHeight();
+        float fovDegrees = (mc.options != null && mc.options.getFov() != null) ? 
+                          (float) mc.options.getFov().getValue() : 70f;
+        float fovRadians = (float) Math.toRadians(fovDegrees);
+        float zNear = 0.05f;
+        float zFar = 1000f;
+        
+        Matrix4f projectionMatrix = new Matrix4f();
+        projectionMatrix.perspective(fovRadians, aspect, zNear, zFar);
+        frustumCuller.updateFromCamera(camera, projectionMatrix);
+    }
+    
+    public boolean shouldRenderChunk(BlockPos chunkPos) {
+        if (!frustumCuller.isFrustumValid()) {
+            return true; 
+        }
+        
+        MinecraftClient mc = MinecraftClient.getInstance();
+        if (mc != null && mc.world != null && mc.gameRenderer != null) {
+            Camera camera = mc.gameRenderer.getCamera();
+           
+            int minY = mc.world.getBottomY();
+            int maxY = mc.world.getHeight();
+            if (!frustumCuller.isChunkVisible(chunkPos.getX() >> 4, chunkPos.getZ() >> 4, minY, maxY)) {
+                return false; 
+            }
+           
+            if (camera != null) {
+                double distanceSquared = camera.getPos().squaredDistanceTo(
+                    (chunkPos.getX() << 4) + 8, chunkPos.getY() + 32, (chunkPos.getZ() << 4) + 8);
+                if (distanceSquared > (48 * 48)) { 
+                    return !occlusionCuller.isChunkOccluded(chunkPos, camera);
+                }
+            }
+            return true; 
+        }
+        
+        return true; //safety 
+    }
+    
+    public String getCullingStats() {
+        return String.format("Frustum valid: %s, Occlusion cache size: %d", 
+                           frustumCuller.isFrustumValid(), 
+                           occlusionCuller.getCacheSize());
     }
     public void queueDrawChunkLayer(BlockPos pos, int layer) {
         drawQueue.add(new DrawRequest(pos, layer));
@@ -248,8 +311,14 @@ public final class MeshShaderBackend {
     public void processDrawQueue() {
         if (!initialized || !meshEnabled) return;
         int processed = 0;
+        int culled = 0;
         DrawRequest req;
         while ((req = drawQueue.poll()) != null) {
+            if (!shouldRenderChunk(req.pos)) {
+                culled++;
+                continue;
+            }
+            
             Long h = chunkHandles.get(req.pos);
             if (h != null && h != 0L) {
                 try {
@@ -258,6 +327,10 @@ public final class MeshShaderBackend {
                 } catch (Throwable t) {
                 }
             }
+        }
+        
+        if (culled > 0) {
+            MetalLogger.info("Culled " + culled + " chunks (frustum + occlusion), rendered " + processed);
         }
     }
     public void endFrame() {

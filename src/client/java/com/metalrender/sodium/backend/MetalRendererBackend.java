@@ -5,6 +5,8 @@ import net.fabricmc.api.Environment;
 import com.metalrender.nativebridge.MetalBackend;
 import com.metalrender.nativebridge.NativeMemory;
 import com.metalrender.util.MetalLogger;
+import com.metalrender.util.FrustumCuller;
+import com.metalrender.util.OcclusionCuller;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.util.Window;
 import net.minecraft.client.world.ClientWorld;
@@ -17,10 +19,10 @@ import java.nio.ByteBuffer;
 import java.nio.ShortBuffer;
 import java.util.Set;
 import java.util.HashSet;
+import org.joml.Matrix4f;
 
 @Environment(EnvType.CLIENT)
 public final class MetalRendererBackend {
-    
 
     private final MinecraftClient client;
     private long handle = 0L;
@@ -28,9 +30,10 @@ public final class MetalRendererBackend {
     private long startNanos = 0L;
     private static final long ACTIVATION_DELAY_NANOS = 0L;
     private static long modStartNanos = System.nanoTime();
-    
 
     private final Set<BlockPos> meshedChunks = new HashSet<>();
+    private final FrustumCuller frustumCuller = new FrustumCuller();
+    private final OcclusionCuller occlusionCuller = new OcclusionCuller();
 
     public MetalRendererBackend(MinecraftClient client) {
         this.client = client;
@@ -86,7 +89,6 @@ public final class MetalRendererBackend {
         }
     }
 
-
     private void batchUploadVisibleChunkMeshes() {
         MinecraftClient mc = this.client != null ? this.client : MinecraftClient.getInstance();
         if (mc == null || mc.world == null || mc.player == null) return;
@@ -116,17 +118,35 @@ public final class MetalRendererBackend {
         double chunkCenterZ = (chunkPos.getZ() << 4) + 8;
         double dx = camX - chunkCenterX;
         double dz = camZ - chunkCenterZ;
-        return (dx * dx + dz * dz) < (128 * 128);
+        double distanceSquared = dx * dx + dz * dz;
+
+        if (distanceSquared > (128 * 128)) {
+            return false;
+        }
+
+        MinecraftClient mc = this.client != null ? this.client : MinecraftClient.getInstance();
+        if (mc != null && mc.world != null) {
+            int minY = mc.world.getBottomY();
+            int maxY = mc.world.getHeight();
+            if (!frustumCuller.isChunkVisible(chunkPos.getX(), chunkPos.getZ(), minY, maxY)) {
+                return false;
+            }
+            if (distanceSquared > (48 * 48)) {
+                return !occlusionCuller.isChunkOccluded(chunkPos, camera);
+            }
+            return true;
+        }
+
+        return distanceSquared < (64 * 64);
     }
 
-
     private void uploadChunkMesh(WorldChunk chunk, BlockPos chunkPos) {
-    int minY = chunk.getBottomY();
-    MinecraftClient mc2 = this.client != null ? this.client : MinecraftClient.getInstance();
-    int maxY = mc2 != null && mc2.world != null ? mc2.world.getHeight() : 256;
+        int minY = chunk.getBottomY();
+        MinecraftClient mc2 = this.client != null ? this.client : MinecraftClient.getInstance();
+        int maxY = mc2 != null && mc2.world != null ? mc2.world.getHeight() : 256;
         java.util.List<Short> vertices = new java.util.ArrayList<>();
         java.util.List<Integer> colors = new java.util.ArrayList<>();
-        int stride = 3 * 2 + 4; 
+        int stride = 3 * 2 + 4;
         for (int x = 0; x < 16; x++) {
             for (int y = minY; y < maxY; y++) {
                 for (int z = 0; z < 16; z++) {
@@ -168,11 +188,10 @@ public final class MetalRendererBackend {
             buf.putInt(colors.get(i));
         }
         buf.rewind();
-    
+
         com.metalrender.sodium.backend.MeshShaderBackend mesh = com.metalrender.MetalRenderClient.getMeshBackend();
         if (mesh != null) {
             try {
-        
                 if (mesh.initIfNeeded() && mesh.isMeshEnabled()) {
                     mesh.uploadChunkMeshAsync(chunkPos, buf, vertexCount, stride, null, 0, 0);
                     meshedChunks.add(chunkPos);
@@ -192,6 +211,7 @@ public final class MetalRendererBackend {
         }
         return true;
     }
+
     private short[][] getFaceVerticesShort(short bx, short by, short bz, Direction dir) {
         short s = 1;
         switch (dir) {
@@ -242,12 +262,12 @@ public final class MetalRendererBackend {
         Window w = mc.getWindow();
         MetalBackend.resize(handle, w.getFramebufferWidth(), w.getFramebufferHeight());
     }
+
     public void updateChunkMesh(WorldChunk chunk) {
         BlockPos chunkPos = new BlockPos(chunk.getPos().x, 0, chunk.getPos().z);
         uploadChunkMesh(chunk, chunkPos);
         meshedChunks.add(chunkPos);
     }
-
 
     public void removeChunkMesh(WorldChunk chunk) {
         BlockPos chunkPos = new BlockPos(chunk.getPos().x, 0, chunk.getPos().z);
@@ -261,9 +281,9 @@ public final class MetalRendererBackend {
 
     public void sendCamera(float fovDegrees) {
         if (!initialized) return;
-    MinecraftClient mc3 = this.client != null ? this.client : MinecraftClient.getInstance();
-    if (mc3 == null) return;
-    Window w = mc3.getWindow();
+        MinecraftClient mc3 = this.client != null ? this.client : MinecraftClient.getInstance();
+        if (mc3 == null) return;
+        Window w = mc3.getWindow();
         float width = w.getFramebufferWidth();
         float height = w.getFramebufferHeight();
         float aspect = height == 0 ? 1f : width / height;
@@ -291,13 +311,33 @@ public final class MetalRendererBackend {
 
     public void onSetupTerrain(float fovDegrees) {
         if (!initIfNeeded()) return;
-       
+
         resizeIfNeeded();
         sendCamera(fovDegrees);
+
+        updateFrustumCulling(fovDegrees);
+    }
+
+    private void updateFrustumCulling(float fovDegrees) {
+        MinecraftClient mc = this.client != null ? this.client : MinecraftClient.getInstance();
+        if (mc == null || mc.gameRenderer == null) return;
+
+        Camera camera = mc.gameRenderer.getCamera();
+        if (camera == null) return;
+
+        Window window = mc.getWindow();
+        float aspect = (float) window.getFramebufferWidth() / window.getFramebufferHeight();
+        float fovRadians = (float) Math.toRadians(fovDegrees);
+        float zNear = 0.05f;
+        float zFar = 1000f;
+
+        Matrix4f projectionMatrix = new Matrix4f();
+        projectionMatrix.perspective(fovRadians, aspect, zNear, zFar);
+
+        frustumCuller.updateFromCamera(camera, projectionMatrix);
     }
 
     public boolean drawChunkLayerSodiumOverride(int layerId) {
-       
         return false;
     }
 
@@ -308,8 +348,15 @@ public final class MetalRendererBackend {
             try { mesh.destroy(); } catch (Throwable t) { }
         }
         meshedChunks.clear();
+        occlusionCuller.clearCache();
         MetalBackend.destroy(handle);
         handle = 0L;
         initialized = false;
+    }
+
+    public String getCullingStats() {
+        return String.format("Frustum valid: %s, Occlusion cache size: %d",
+                           frustumCuller.isFrustumValid(),
+                           occlusionCuller.getCacheSize());
     }
 }
