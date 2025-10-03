@@ -5,6 +5,8 @@
 #import <Foundation/Foundation.h>
 #include <mutex>
 #include <stdlib.h>
+#include <vector>
+#include <queue>
 
 
 #define STRINGIFY(x) #x
@@ -42,6 +44,99 @@ struct NativeChunkMesh {
     uint32_t indexType;
     uint32_t vertexCount;
 };
+
+struct PooledBuffer {
+    id<MTLBuffer> buffer;
+    size_t size;
+    bool inUse;
+};
+
+static std::vector<PooledBuffer> gVertexBufferPool;
+static std::vector<PooledBuffer> gIndexBufferPool;
+static const size_t MAX_POOL_SIZE = 64; 
+
+
+static id<MTLBuffer> getPooledVertexBuffer(id<MTLDevice> device, size_t size) {
+    for (auto& pooled : gVertexBufferPool) {
+        if (!pooled.inUse && pooled.size >= size) {
+            pooled.inUse = true;
+            METAL_LOG_DEBUG("Reusing vertex buffer from pool, size: %zu", size);
+            return pooled.buffer;
+        }
+    }
+    
+    if (gVertexBufferPool.size() < MAX_POOL_SIZE) {
+        id<MTLBuffer> newBuffer = [device newBufferWithLength:size options:MTLResourceStorageModeShared];
+        if (newBuffer) {
+            gVertexBufferPool.push_back({newBuffer, size, true});
+            METAL_LOG_DEBUG("Created new vertex buffer for pool, size: %zu", size);
+            return newBuffer;
+        }
+    }
+    
+    METAL_LOG_DEBUG("Creating non-pooled vertex buffer, size: %zu", size);
+    return [device newBufferWithLength:size options:MTLResourceStorageModeShared];
+}
+
+static id<MTLBuffer> getPooledIndexBuffer(id<MTLDevice> device, size_t size) {
+    for (auto& pooled : gIndexBufferPool) {
+        if (!pooled.inUse && pooled.size >= size) {
+            pooled.inUse = true;
+            METAL_LOG_DEBUG("Reusing index buffer from pool, size: %zu", size);
+            return pooled.buffer;
+        }
+    }
+    
+    if (gIndexBufferPool.size() < MAX_POOL_SIZE) {
+        id<MTLBuffer> newBuffer = [device newBufferWithLength:size options:MTLResourceStorageModeShared];
+        if (newBuffer) {
+            gIndexBufferPool.push_back({newBuffer, size, true});
+            METAL_LOG_DEBUG("Created new index buffer for pool, size: %zu", size);
+            return newBuffer;
+        }
+    }
+    
+    METAL_LOG_DEBUG("Creating non-pooled index buffer, size: %zu", size);
+    return [device newBufferWithLength:size options:MTLResourceStorageModeShared];
+}
+
+static void returnVertexBufferToPool(id<MTLBuffer> buffer) {
+    for (auto& pooled : gVertexBufferPool) {
+        if (pooled.buffer == buffer) {
+            pooled.inUse = false;
+            METAL_LOG_DEBUG("Returned vertex buffer to pool");
+            return;
+        }
+    }
+}
+
+static void returnIndexBufferToPool(id<MTLBuffer> buffer) {
+    for (auto& pooled : gIndexBufferPool) {
+        if (pooled.buffer == buffer) {
+            pooled.inUse = false;
+            METAL_LOG_DEBUG("Returned index buffer to pool");
+            return;
+        }
+    }
+}
+
+static void logBufferPoolStats() {
+    size_t vertexInUse = 0, vertexAvailable = 0;
+    size_t indexInUse = 0, indexAvailable = 0;
+    
+    for (const auto& pooled : gVertexBufferPool) {
+        if (pooled.inUse) vertexInUse++;
+        else vertexAvailable++;
+    }
+    
+    for (const auto& pooled : gIndexBufferPool) {
+        if (pooled.inUse) indexInUse++;
+        else indexAvailable++;
+    }
+    
+    METAL_LOG_DEBUG("Buffer Pool Stats - Vertex: %zu in use, %zu available | Index: %zu in use, %zu available", 
+                   vertexInUse, vertexAvailable, indexInUse, indexAvailable);
+}
 
 static CAMetalLayer* layerForWindow(NSWindow* win) {
     if (!win) return nil;
@@ -168,15 +263,28 @@ JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_creat
         void* vptr = env->GetDirectBufferAddress(vertexBuf);
         if (!vptr) return (jlong)0;
         size_t vsize = (size_t)vertexCount * (size_t)vertexStride;
-        id<MTLBuffer> vbuf = [dev newBufferWithBytes:vptr length:vsize options:MTLResourceStorageModeShared];
-    if (!vbuf) { METAL_LOG_ERROR("createNativeChunkMesh: vertex buffer allocation failed"); return (jlong)0; }
+    
+        id<MTLBuffer> vbuf = getPooledVertexBuffer(dev, vsize);
+        if (!vbuf) { METAL_LOG_ERROR("createNativeChunkMesh: vertex buffer allocation failed"); return (jlong)0; }
+        memcpy([vbuf contents], vptr, vsize);
+        
         id<MTLBuffer> ibuf = nil;
         if (indexBuf) {
             void* iptr = env->GetDirectBufferAddress(indexBuf);
-            if (!iptr) { METAL_LOG_ERROR("createNativeChunkMesh: index buffer direct address null"); return (jlong)0; }
+            if (!iptr) { 
+                returnVertexBufferToPool(vbuf);
+                METAL_LOG_ERROR("createNativeChunkMesh: index buffer direct address null"); 
+                return (jlong)0; 
+            }
             size_t isize = (size_t)indexCount * (indexType == 1 ? 4 : 2);
-            ibuf = [dev newBufferWithBytes:iptr length:isize options:MTLResourceStorageModeShared];
-            if (!ibuf) return (jlong)0;
+            
+            ibuf = getPooledIndexBuffer(dev, isize);
+            if (!ibuf) {
+                returnVertexBufferToPool(vbuf);
+                return (jlong)0;
+            }
+            
+            memcpy([ibuf contents], iptr, isize);
         }
         NativeChunkMesh* mesh = (NativeChunkMesh*) malloc(sizeof(NativeChunkMesh));
         mesh->vertexBuffer = vbuf;
@@ -205,19 +313,33 @@ JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_updat
 
         NativeChunkMesh* existing = nullptr;
         if (existingHandle != 0) existing = (NativeChunkMesh*)(intptr_t)existingHandle;
-
-    
-        id<MTLBuffer> newVBuf = [dev newBufferWithBytes:vptr length:vsize options:MTLResourceStorageModeShared];
+        if (existing) {
+            if (existing->vertexBuffer) returnVertexBufferToPool(existing->vertexBuffer);
+            if (existing->indexBuffer) returnIndexBufferToPool(existing->indexBuffer);
+        }
+        
+        id<MTLBuffer> newVBuf = getPooledVertexBuffer(dev, vsize);
+        if (!newVBuf) return (jlong)0;
+        
+        memcpy([newVBuf contents], vptr, vsize);
+        
         id<MTLBuffer> newIBuf = nil;
         if (indexBuf) {
             void* iptr = env->GetDirectBufferAddress(indexBuf);
             if (!iptr) {
-                if (newVBuf) newVBuf = nil;
+                returnVertexBufferToPool(newVBuf);
                 return (jlong)0;
             }
             size_t isize = (size_t)indexCount * (indexType == 1 ? 4 : 2);
-            newIBuf = [dev newBufferWithBytes:iptr length:isize options:MTLResourceStorageModeShared];
-        if (!newIBuf) { if (newVBuf) newVBuf = nil; METAL_LOG_ERROR("updateNativeChunkMesh: index buffer allocation failed"); return (jlong)0; }
+            
+            newIBuf = getPooledIndexBuffer(dev, isize);
+            if (!newIBuf) { 
+                returnVertexBufferToPool(newVBuf);
+                METAL_LOG_ERROR("updateNativeChunkMesh: index buffer allocation failed"); 
+                return (jlong)0; 
+            }
+            
+            memcpy([newIBuf contents], iptr, isize);
         }
 
         if (existing) {
@@ -248,9 +370,18 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_destro
         if (meshHandle == 0) return;
         NativeChunkMesh* mesh = (NativeChunkMesh*)(intptr_t)meshHandle;
         if (!mesh) return;
-        mesh->vertexBuffer = nil;
-        mesh->indexBuffer = nil;
+        
+        if (mesh->vertexBuffer) {
+            returnVertexBufferToPool(mesh->vertexBuffer);
+            mesh->vertexBuffer = nil;
+        }
+        if (mesh->indexBuffer) {
+            returnIndexBufferToPool(mesh->indexBuffer);
+            mesh->indexBuffer = nil;
+        }
+        
         free(mesh);
+        METAL_LOG_DEBUG("destroyNativeChunkMesh: mesh destroyed and buffers returned to pool");
     }
 }
 
@@ -330,6 +461,18 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_destro
         gPipeline = nil;
         gLibrary = nil;
         if (gCommandQueue) gCommandQueue = nil;
+        
+        METAL_LOG_DEBUG("Cleaning up buffer pools - vertex: %zu, index: %zu", gVertexBufferPool.size(), gIndexBufferPool.size());
+        for (auto& pooled : gVertexBufferPool) {
+            pooled.buffer = nil;
+        }
+        gVertexBufferPool.clear();
+        
+        for (auto& pooled : gIndexBufferPool) {
+            pooled.buffer = nil;
+        }
+        gIndexBufferPool.clear();
+        
         if (gDevice) {
             CFRelease((__bridge CFTypeRef)gDevice);
             gDevice = nil;
