@@ -5,26 +5,24 @@ import com.metalrender.sodium.backend.MeshShaderBackend;
 import com.metalrender.sodium.backend.MetalRendererBackend;
 import com.metalrender.util.MetalLogger;
 import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.api.EnvType;
-import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-@Environment(EnvType.CLIENT)
-public class MetalRenderClient implements ClientModInitializer{
+public class MetalRenderClient implements ClientModInitializer {
     private static MetalRendererBackend fallbackBackend;
     private static MeshShaderBackend meshBackend;
     private static boolean usingMesh = false;
     private static int ticksElapsed = 0;
 
-    @Override 
+    @Override
     public void onInitializeClient() {
         MetalLogger.info("scheduling MetalRender client initialization on CLIENT_STARTED");
         AtomicBoolean initialized = new AtomicBoolean(false);
-        boolean forceFallback = true; // you can set this to true to load it regularly using mesh shaders 
-                                    // if applicable. T 
+        boolean forceFallback = true; // you can set this to true to load it regularly using mesh shaders
+                                      // if applicable. T
         ClientLifecycleEvents.CLIENT_STARTED.register(client -> {
-            if (initialized.getAndSet(true)) return;
+            if (initialized.getAndSet(true))
+                return;
             try {
                 MetalLogger.info("starting MetalRenderClient (CLIENT_STARTED)");
                 String osName = System.getProperty("os.name").toLowerCase();
@@ -52,13 +50,11 @@ public class MetalRenderClient implements ClientModInitializer{
                 } else {
                     initFallback();
                 }
-            } catch (Throwable t) {
-                MetalLogger.error("Error during MetalRender client init: " + t);
+            } catch (UnsatisfiedLinkError | IllegalArgumentException e) {
+                MetalLogger.error("Error during MetalRender client init: " + e);
             }
         });
     }
-
-    
 
     private void initFallback() {
         fallbackBackend = new MetalRendererBackend();

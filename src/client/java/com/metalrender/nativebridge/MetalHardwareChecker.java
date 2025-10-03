@@ -1,8 +1,6 @@
 package com.metalrender.nativebridge;
 
 import com.mojang.logging.LogUtils;
-import net.fabricmc.api.EnvType;
-import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
@@ -13,7 +11,6 @@ import org.lwjgl.glfw.GLFW;
 import org.lwjgl.opengl.GL11;
 import org.slf4j.Logger;
 
-@Environment(EnvType.CLIENT)
 public final class MetalHardwareChecker {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static volatile Boolean compatible = null;
@@ -33,7 +30,8 @@ public final class MetalHardwareChecker {
     }
 
     private static void scheduleCheck() {
-        if (compatible != null || checkScheduled) return;
+        if (compatible != null || checkScheduled)
+            return;
         checkScheduled = true;
         try {
             MinecraftClient.getInstance().execute(() -> {
@@ -53,16 +51,16 @@ public final class MetalHardwareChecker {
                     } else {
                         LOGGER.info("[MetalRender] Hardware check passed (vendor={})", vendor);
                     }
-                } catch (Throwable t) {
+                } catch (UnsatisfiedLinkError | IllegalArgumentException e) {
                     compatible = true;
-                    LOGGER.warn("[MetalRender] Hardware check failed unexpectedly, allowing safe run", t);
+                    LOGGER.warn("[MetalRender] Hardware check failed unexpectedly, allowing safe run", e);
                 } finally {
                     checkScheduled = false;
                 }
             });
-        } catch (Throwable t) {
+        } catch (UnsatisfiedLinkError | IllegalArgumentException e) {
             compatible = true;
-            LOGGER.warn("[MetalRender] Could not schedule GL capability check, allowing fallback", t);
+            LOGGER.warn("[MetalRender] Could not schedule GL capability check, allowing fallback", e);
         }
     }
 
@@ -77,11 +75,12 @@ public final class MetalHardwareChecker {
         @Override
         protected void init() {
             this.addDrawableChild(
-                    ButtonWidget.builder(Text.literal("Back to Title"), b ->
-                                    MinecraftClient.getInstance().setScreen(new TitleScreen()))
-                            .dimensions(this.width / 2 - 100, this.height / 2 + 20, 200, 20).build()
-            );
+                    ButtonWidget
+                            .builder(Text.literal("Back to Title"),
+                                    b -> MinecraftClient.getInstance().setScreen(new TitleScreen()))
+                            .dimensions(this.width / 2 - 100, this.height / 2 + 20, 200, 20).build());
         }
+
         @Override
         public void render(DrawContext context, int mouseX, int mouseY, float delta) {
             this.renderBackground(context, mouseX, mouseY, delta);

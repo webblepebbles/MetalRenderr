@@ -1,7 +1,5 @@
 package com.metalrender.sodium.backend;
 
-import net.fabricmc.api.EnvType;
-import net.fabricmc.api.Environment;
 import com.metalrender.nativebridge.MetalBackend;
 import com.metalrender.nativebridge.NativeMemory;
 import com.metalrender.util.MetalLogger;
@@ -21,7 +19,6 @@ import java.util.Set;
 import java.util.HashSet;
 import org.joml.Matrix4f;
 
-@Environment(EnvType.CLIENT)
 public final class MetalRendererBackend {
 
     private final MinecraftClient client;
@@ -73,8 +70,10 @@ public final class MetalRendererBackend {
                 MetalLogger.error("MetalBackend.init returned 0L");
                 try {
                     String err = MetalBackend.getLastInitError();
-                    if (err != null) MetalLogger.error("Native init error: " + err);
-                } catch (Throwable t) {}
+                    if (err != null)
+                        MetalLogger.error("Native init error: " + err);
+                } catch (Throwable t) {
+                }
                 return false;
             }
             startNanos = System.nanoTime();
@@ -91,7 +90,8 @@ public final class MetalRendererBackend {
 
     private void batchUploadVisibleChunkMeshes() {
         MinecraftClient mc = this.client != null ? this.client : MinecraftClient.getInstance();
-        if (mc == null || mc.world == null || mc.player == null) return;
+        if (mc == null || mc.world == null || mc.player == null)
+            return;
         Camera camera = mc.gameRenderer.getCamera();
         ClientWorld world = mc.world;
         BlockPos playerPos = mc.player.getBlockPos();
@@ -101,7 +101,8 @@ public final class MetalRendererBackend {
                 int chunkX = (playerPos.getX() >> 4) + cx;
                 int chunkZ = (playerPos.getZ() >> 4) + cz;
                 BlockPos chunkPos = new BlockPos(chunkX, 0, chunkZ);
-                if (!isChunkInView(chunkPos, camera)) continue;
+                if (!isChunkInView(chunkPos, camera))
+                    continue;
                 WorldChunk chunk = world.getChunk(chunkX, chunkZ);
                 if (chunk != null && !meshedChunks.contains(chunkPos)) {
                     uploadChunkMesh(chunk, chunkPos);
@@ -207,7 +208,8 @@ public final class MetalRendererBackend {
     private boolean isBlockSurrounded(WorldChunk chunk, BlockPos pos) {
         for (Direction dir : Direction.values()) {
             BlockPos adj = pos.offset(dir);
-            if (chunk.getBlockState(adj).isAir()) return false;
+            if (chunk.getBlockState(adj).isAir())
+                return false;
         }
         return true;
     }
@@ -217,33 +219,57 @@ public final class MetalRendererBackend {
         switch (dir) {
             case UP:
                 return new short[][] {
-                    {(short)(bx-s), (short)(by+s), (short)(bz-s)}, {(short)(bx+s), (short)(by+s), (short)(bz-s)}, {(short)(bx+s), (short)(by+s), (short)(bz+s)},
-                    {(short)(bx-s), (short)(by+s), (short)(bz-s)}, {(short)(bx+s), (short)(by+s), (short)(bz+s)}, {(short)(bx-s), (short)(by+s), (short)(bz+s)}
+                        { (short) (bx - s), (short) (by + s), (short) (bz - s) },
+                        { (short) (bx + s), (short) (by + s), (short) (bz - s) },
+                        { (short) (bx + s), (short) (by + s), (short) (bz + s) },
+                        { (short) (bx - s), (short) (by + s), (short) (bz - s) },
+                        { (short) (bx + s), (short) (by + s), (short) (bz + s) },
+                        { (short) (bx - s), (short) (by + s), (short) (bz + s) }
                 };
             case DOWN:
                 return new short[][] {
-                    {(short)(bx-s), (short)(by-s), (short)(bz-s)}, {(short)(bx+s), (short)(by-s), (short)(bz+s)}, {(short)(bx+s), (short)(by-s), (short)(bz-s)},
-                    {(short)(bx-s), (short)(by-s), (short)(bz-s)}, {(short)(bx-s), (short)(by-s), (short)(bz+s)}, {(short)(bx+s), (short)(by-s), (short)(bz+s)}
+                        { (short) (bx - s), (short) (by - s), (short) (bz - s) },
+                        { (short) (bx + s), (short) (by - s), (short) (bz + s) },
+                        { (short) (bx + s), (short) (by - s), (short) (bz - s) },
+                        { (short) (bx - s), (short) (by - s), (short) (bz - s) },
+                        { (short) (bx - s), (short) (by - s), (short) (bz + s) },
+                        { (short) (bx + s), (short) (by - s), (short) (bz + s) }
                 };
             case NORTH:
                 return new short[][] {
-                    {(short)(bx-s), (short)(by-s), (short)(bz-s)}, {(short)(bx+s), (short)(by+s), (short)(bz-s)}, {(short)(bx+s), (short)(by-s), (short)(bz-s)},
-                    {(short)(bx-s), (short)(by-s), (short)(bz-s)}, {(short)(bx-s), (short)(by+s), (short)(bz-s)}, {(short)(bx+s), (short)(by+s), (short)(bz-s)}
+                        { (short) (bx - s), (short) (by - s), (short) (bz - s) },
+                        { (short) (bx + s), (short) (by + s), (short) (bz - s) },
+                        { (short) (bx + s), (short) (by - s), (short) (bz - s) },
+                        { (short) (bx - s), (short) (by - s), (short) (bz - s) },
+                        { (short) (bx - s), (short) (by + s), (short) (bz - s) },
+                        { (short) (bx + s), (short) (by + s), (short) (bz - s) }
                 };
             case SOUTH:
                 return new short[][] {
-                    {(short)(bx-s), (short)(by-s), (short)(bz+s)}, {(short)(bx+s), (short)(by-s), (short)(bz+s)}, {(short)(bx+s), (short)(by+s), (short)(bz+s)},
-                    {(short)(bx-s), (short)(by-s), (short)(bz+s)}, {(short)(bx+s), (short)(by+s), (short)(bz+s)}, {(short)(bx-s), (short)(by+s), (short)(bz+s)}
+                        { (short) (bx - s), (short) (by - s), (short) (bz + s) },
+                        { (short) (bx + s), (short) (by - s), (short) (bz + s) },
+                        { (short) (bx + s), (short) (by + s), (short) (bz + s) },
+                        { (short) (bx - s), (short) (by - s), (short) (bz + s) },
+                        { (short) (bx + s), (short) (by + s), (short) (bz + s) },
+                        { (short) (bx - s), (short) (by + s), (short) (bz + s) }
                 };
             case WEST:
                 return new short[][] {
-                    {(short)(bx-s), (short)(by-s), (short)(bz-s)}, {(short)(bx-s), (short)(by-s), (short)(bz+s)}, {(short)(bx-s), (short)(by+s), (short)(bz+s)},
-                    {(short)(bx-s), (short)(by-s), (short)(bz-s)}, {(short)(bx-s), (short)(by+s), (short)(bz+s)}, {(short)(bx-s), (short)(by+s), (short)(bz-s)}
+                        { (short) (bx - s), (short) (by - s), (short) (bz - s) },
+                        { (short) (bx - s), (short) (by - s), (short) (bz + s) },
+                        { (short) (bx - s), (short) (by + s), (short) (bz + s) },
+                        { (short) (bx - s), (short) (by - s), (short) (bz - s) },
+                        { (short) (bx - s), (short) (by + s), (short) (bz + s) },
+                        { (short) (bx - s), (short) (by + s), (short) (bz - s) }
                 };
             case EAST:
                 return new short[][] {
-                    {(short)(bx+s), (short)(by-s), (short)(bz-s)}, {(short)(bx+s), (short)(by+s), (short)(bz+s)}, {(short)(bx+s), (short)(by-s), (short)(bz+s)},
-                    {(short)(bx+s), (short)(by-s), (short)(bz-s)}, {(short)(bx+s), (short)(by+s), (short)(bz-s)}, {(short)(bx+s), (short)(by+s), (short)(bz+s)}
+                        { (short) (bx + s), (short) (by - s), (short) (bz - s) },
+                        { (short) (bx + s), (short) (by + s), (short) (bz + s) },
+                        { (short) (bx + s), (short) (by - s), (short) (bz + s) },
+                        { (short) (bx + s), (short) (by - s), (short) (bz - s) },
+                        { (short) (bx + s), (short) (by + s), (short) (bz - s) },
+                        { (short) (bx + s), (short) (by + s), (short) (bz + s) }
                 };
             default:
                 return new short[0][0];
@@ -256,9 +282,11 @@ public final class MetalRendererBackend {
     }
 
     public void resizeIfNeeded() {
-        if (!initialized) return;
+        if (!initialized)
+            return;
         MinecraftClient mc = this.client != null ? this.client : MinecraftClient.getInstance();
-        if (mc == null) return;
+        if (mc == null)
+            return;
         Window w = mc.getWindow();
         MetalBackend.resize(handle, w.getFramebufferWidth(), w.getFramebufferHeight());
     }
@@ -274,43 +302,51 @@ public final class MetalRendererBackend {
         meshedChunks.remove(chunkPos);
         com.metalrender.sodium.backend.MeshShaderBackend mesh = com.metalrender.MetalRenderClient.getMeshBackend();
         if (mesh != null) {
-            try { mesh.removeChunkMesh(chunkPos); } catch (Throwable t) { }
+            try {
+                mesh.removeChunkMesh(chunkPos);
+            } catch (Throwable t) {
+            }
             return;
         }
     }
 
     public void sendCamera(float fovDegrees) {
-        if (!initialized) return;
+        if (!initialized)
+            return;
         MinecraftClient mc3 = this.client != null ? this.client : MinecraftClient.getInstance();
-        if (mc3 == null) return;
+        if (mc3 == null)
+            return;
         Window w = mc3.getWindow();
         float width = w.getFramebufferWidth();
         float height = w.getFramebufferHeight();
         float aspect = height == 0 ? 1f : width / height;
-        float f = (float)(1.0 / Math.tan(Math.toRadians(fovDegrees) * 0.5));
+        float f = (float) (1.0 / Math.tan(Math.toRadians(fovDegrees) * 0.5));
         float zNear = 0.05f;
         float zFar = 1000f;
         float[] proj = new float[] {
-                f/aspect,0,0,0,
-                0,f,0,0,
-                0,0,(zFar+zNear)/(zNear-zFar),-1,
-                0,0,(2*zFar*zNear)/(zNear-zFar),0
+                f / aspect, 0, 0, 0,
+                0, f, 0, 0,
+                0, 0, (zFar + zNear) / (zNear - zFar), -1,
+                0, 0, (2 * zFar * zNear) / (zNear - zFar), 0
         };
         float[] view = new float[] {
-                1,0,0,0,
-                0,1,0,0,
-                0,0,1,0,
-                0,0,-3,1
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                0, 0, -3, 1
         };
         float[] m = new float[16];
-        for (int r=0;r<4;r++) for (int c=0;c<4;c++) {
-            m[r*4+c]=view[r*4+0]*proj[0*4+c]+view[r*4+1]*proj[1*4+c]+view[r*4+2]*proj[2*4+c]+view[r*4+3]*proj[3*4+c];
-        }
+        for (int r = 0; r < 4; r++)
+            for (int c = 0; c < 4; c++) {
+                m[r * 4 + c] = view[r * 4 + 0] * proj[0 * 4 + c] + view[r * 4 + 1] * proj[1 * 4 + c]
+                        + view[r * 4 + 2] * proj[2 * 4 + c] + view[r * 4 + 3] * proj[3 * 4 + c];
+            }
         MetalBackend.setCamera(handle, m);
     }
 
     public void onSetupTerrain(float fovDegrees) {
-        if (!initIfNeeded()) return;
+        if (!initIfNeeded())
+            return;
 
         resizeIfNeeded();
         sendCamera(fovDegrees);
@@ -320,10 +356,12 @@ public final class MetalRendererBackend {
 
     private void updateFrustumCulling(float fovDegrees) {
         MinecraftClient mc = this.client != null ? this.client : MinecraftClient.getInstance();
-        if (mc == null || mc.gameRenderer == null) return;
+        if (mc == null || mc.gameRenderer == null)
+            return;
 
         Camera camera = mc.gameRenderer.getCamera();
-        if (camera == null) return;
+        if (camera == null)
+            return;
 
         Window window = mc.getWindow();
         float aspect = (float) window.getFramebufferWidth() / window.getFramebufferHeight();
@@ -342,10 +380,14 @@ public final class MetalRendererBackend {
     }
 
     public void destroy() {
-        if (!initialized) return;
+        if (!initialized)
+            return;
         com.metalrender.sodium.backend.MeshShaderBackend mesh = com.metalrender.MetalRenderClient.getMeshBackend();
         if (mesh != null) {
-            try { mesh.destroy(); } catch (Throwable t) { }
+            try {
+                mesh.destroy();
+            } catch (Throwable t) {
+            }
         }
         meshedChunks.clear();
         occlusionCuller.clearCache();
@@ -356,7 +398,7 @@ public final class MetalRendererBackend {
 
     public String getCullingStats() {
         return String.format("Frustum valid: %s, Occlusion cache size: %d",
-                           frustumCuller.isFrustumValid(),
-                           occlusionCuller.getCacheSize());
+                frustumCuller.isFrustumValid(),
+                occlusionCuller.getCacheSize());
     }
 }
