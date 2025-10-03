@@ -105,7 +105,7 @@ static id<MTLRenderPipelineState> createPipeline(id<MTLDevice> dev) {
     vd.attributes[1].format = MTLVertexFormatFloat4;
     vd.attributes[1].offset = 8; 
     vd.attributes[1].bufferIndex = 0;
-    static const NSUInteger kVertexStrideBytes = 24; // 3*short (6) + 2 pad + 4*float (16) = 24
+    static const NSUInteger kVertexStrideBytes = 24;
     vd.layouts[0].stride = kVertexStrideBytes;
     vd.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
     MTLRenderPipelineDescriptor* desc = [[MTLRenderPipelineDescriptor alloc] init];
@@ -131,7 +131,7 @@ JNIEXPORT jboolean JNICALL Java_com_metalrender_nativebridge_NativeBridge_nIsAva
 }
 
 JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nInit(JNIEnv *, jobject) {
-    // Intentionally disabled CAMetalLayer attachment to avoid overlay/black screen.
+
     device = MTLCreateSystemDefaultDevice();
     if (!device) return;
     METAL_LOG_DEBUG_MR("nInit: device created (no layer attached)");
@@ -140,11 +140,11 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nInit(JNIE
 }
 
 JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nResize(JNIEnv *, jobject, jint width, jint height) {
-    // No-op: we are not attaching our own CAMetalLayer in NativeBridge path.
+
 }
 
 JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nRender(JNIEnv *, jobject) {
-    // No-op: do not render to a layer we don't own.
+  
 }
 JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nDestroy(JNIEnv *, jobject) {
     metalLayer = nil;

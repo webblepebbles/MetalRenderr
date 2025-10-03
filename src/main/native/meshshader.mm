@@ -49,7 +49,7 @@ static CAMetalLayer* layerForWindow(NSWindow* win) {
     if (!cv) return nil;
     CALayer* l = [cv layer];
     if (l && [l isKindOfClass:[CAMetalLayer class]]) return (CAMetalLayer*)l;
-    // Do not attach or replace layers to avoid black screens; if no CAMetalLayer, return nil.
+   
     return nil;
 }
 
@@ -75,21 +75,40 @@ JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_initM
 JNIEXPORT jboolean JNICALL Java_com_metalrender_nativebridge_MeshShaderNative_supportsMeshShaders(JNIEnv* env, jclass cls, jlong deviceHandle) {
     @autoreleasepool {
         std::lock_guard<std::mutex> lock(g_mutex);
-    if (deviceHandle == 0) return JNI_FALSE;
+    if (deviceHandle == 0) {
+        METAL_LOG_DEBUG("supportsMeshShaders: deviceHandle is 0");
+        return JNI_FALSE;
+    }
     id<MTLDevice> dev = (__bridge id<MTLDevice>)(void*)deviceHandle;
-    if (!dev) return JNI_FALSE;
+    if (!dev) {
+        METAL_LOG_DEBUG("supportsMeshShaders: device is nil");
+        return JNI_FALSE;
+    }
     NSError *err;
     std::string path = gShadersPath;
     if (path.empty()) {
         NSString* bundlePath = [[NSBundle mainBundle] pathForResource:@"shaders" ofType:@"metallib"];
         if (bundlePath) path = [bundlePath UTF8String];
+        METAL_LOG_DEBUG("supportsMeshShaders: using bundle path: %s", path.c_str());
+    } else {
+        METAL_LOG_DEBUG("supportsMeshShaders: using set path: %s", path.c_str());
     }
-    if (path.empty()) return JNI_FALSE;
+    if (path.empty()) {
+        METAL_LOG_DEBUG("supportsMeshShaders: no metallib path available");
+        return JNI_FALSE;
+    }
     NSString *pathString = [NSString stringWithUTF8String:path.c_str()];
     id<MTLLibrary> lib = [dev newLibraryWithURL:[NSURL fileURLWithPath:pathString] error:&err];
-        if (!lib) return JNI_FALSE;
+        if (!lib) {
+            METAL_LOG_DEBUG("supportsMeshShaders: failed to load library from %s, error: %s", path.c_str(), [[err localizedDescription] UTF8String]);
+            return JNI_FALSE;
+        }
         id<MTLFunction> f = [lib newFunctionWithName:@"vertex_main"];
-        if (!f) return JNI_FALSE;
+        if (!f) {
+            METAL_LOG_DEBUG("supportsMeshShaders: vertex_main function not found in library");
+            return JNI_FALSE;
+        }
+        METAL_LOG_DEBUG("supportsMeshShaders: all checks passed, mesh shaders supported");
         return JNI_TRUE;
     }
 }
