@@ -19,7 +19,7 @@ public class MetalRenderClient implements ClientModInitializer {
         MetalLogger.info("scheduling MetalRender client initialization on CLIENT_STARTED");
         AtomicBoolean initialized = new AtomicBoolean(false);
         boolean forceFallback = false; // you can set this to true to load it regularly using mesh shaders
-                                       // if applicable. This can be useful for testing.
+                                       // if applicable. T
         ClientLifecycleEvents.CLIENT_STARTED.register(client -> {
             if (initialized.getAndSet(true))
                 return;
