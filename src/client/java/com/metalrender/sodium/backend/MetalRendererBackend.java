@@ -2,32 +2,27 @@ package com.metalrender.sodium.backend;
 
 import com.metalrender.nativebridge.MetalBackend;
 import com.metalrender.nativebridge.NativeMemory;
-import com.metalrender.util.MetalLogger;
 import com.metalrender.util.FrustumCuller;
+import com.metalrender.util.MetalLogger;
 import com.metalrender.util.OcclusionCuller;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.util.Window;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.client.render.Camera;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.chunk.WorldChunk;
-import net.minecraft.block.BlockState;
-import net.minecraft.util.math.Direction;
 import java.nio.ByteBuffer;
 import java.nio.ShortBuffer;
-import java.util.Set;
 import java.util.HashSet;
+import java.util.Set;
+import net.minecraft.block.BlockState;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.render.Camera;
+import net.minecraft.client.util.Window;
+import net.minecraft.client.world.ClientWorld;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
+import net.minecraft.world.chunk.WorldChunk;
 import org.joml.Matrix4f;
 
 public final class MetalRendererBackend {
-
     private final MinecraftClient client;
     private long handle = 0L;
     private boolean initialized = false;
-    private long startNanos = 0L;
-    private static final long ACTIVATION_DELAY_NANOS = 0L;
-    private static long modStartNanos = System.nanoTime();
-
     private final Set<BlockPos> meshedChunks = new HashSet<>();
     private final FrustumCuller frustumCuller = new FrustumCuller();
     private final OcclusionCuller occlusionCuller = new OcclusionCuller();
@@ -40,7 +35,6 @@ public final class MetalRendererBackend {
     public MetalRendererBackend() {
         this.client = null;
         MetalLogger.info("MetalRendererBackend default constructor, client=null");
-
     }
 
     public boolean initIfNeeded() {
@@ -76,7 +70,6 @@ public final class MetalRendererBackend {
                 }
                 return false;
             }
-            startNanos = System.nanoTime();
             batchUploadVisibleChunkMeshes();
             initialized = true;
             MetalLogger.info("MetalRendererBackend initialized");
@@ -218,59 +211,47 @@ public final class MetalRendererBackend {
         short s = 1;
         switch (dir) {
             case UP:
-                return new short[][] {
-                        { (short) (bx - s), (short) (by + s), (short) (bz - s) },
-                        { (short) (bx + s), (short) (by + s), (short) (bz - s) },
-                        { (short) (bx + s), (short) (by + s), (short) (bz + s) },
-                        { (short) (bx - s), (short) (by + s), (short) (bz - s) },
-                        { (short) (bx + s), (short) (by + s), (short) (bz + s) },
-                        { (short) (bx - s), (short) (by + s), (short) (bz + s) }
-                };
+                return new short[][] {{(short) (bx - s), (short) (by + s), (short) (bz - s)},
+                    {(short) (bx + s), (short) (by + s), (short) (bz - s)},
+                    {(short) (bx + s), (short) (by + s), (short) (bz + s)},
+                    {(short) (bx - s), (short) (by + s), (short) (bz - s)},
+                    {(short) (bx + s), (short) (by + s), (short) (bz + s)},
+                    {(short) (bx - s), (short) (by + s), (short) (bz + s)}};
             case DOWN:
-                return new short[][] {
-                        { (short) (bx - s), (short) (by - s), (short) (bz - s) },
-                        { (short) (bx + s), (short) (by - s), (short) (bz + s) },
-                        { (short) (bx + s), (short) (by - s), (short) (bz - s) },
-                        { (short) (bx - s), (short) (by - s), (short) (bz - s) },
-                        { (short) (bx - s), (short) (by - s), (short) (bz + s) },
-                        { (short) (bx + s), (short) (by - s), (short) (bz + s) }
-                };
+                return new short[][] {{(short) (bx - s), (short) (by - s), (short) (bz - s)},
+                    {(short) (bx + s), (short) (by - s), (short) (bz + s)},
+                    {(short) (bx + s), (short) (by - s), (short) (bz - s)},
+                    {(short) (bx - s), (short) (by - s), (short) (bz - s)},
+                    {(short) (bx - s), (short) (by - s), (short) (bz + s)},
+                    {(short) (bx + s), (short) (by - s), (short) (bz + s)}};
             case NORTH:
-                return new short[][] {
-                        { (short) (bx - s), (short) (by - s), (short) (bz - s) },
-                        { (short) (bx + s), (short) (by + s), (short) (bz - s) },
-                        { (short) (bx + s), (short) (by - s), (short) (bz - s) },
-                        { (short) (bx - s), (short) (by - s), (short) (bz - s) },
-                        { (short) (bx - s), (short) (by + s), (short) (bz - s) },
-                        { (short) (bx + s), (short) (by + s), (short) (bz - s) }
-                };
+                return new short[][] {{(short) (bx - s), (short) (by - s), (short) (bz - s)},
+                    {(short) (bx + s), (short) (by + s), (short) (bz - s)},
+                    {(short) (bx + s), (short) (by - s), (short) (bz - s)},
+                    {(short) (bx - s), (short) (by - s), (short) (bz - s)},
+                    {(short) (bx - s), (short) (by + s), (short) (bz - s)},
+                    {(short) (bx + s), (short) (by + s), (short) (bz - s)}};
             case SOUTH:
-                return new short[][] {
-                        { (short) (bx - s), (short) (by - s), (short) (bz + s) },
-                        { (short) (bx + s), (short) (by - s), (short) (bz + s) },
-                        { (short) (bx + s), (short) (by + s), (short) (bz + s) },
-                        { (short) (bx - s), (short) (by - s), (short) (bz + s) },
-                        { (short) (bx + s), (short) (by + s), (short) (bz + s) },
-                        { (short) (bx - s), (short) (by + s), (short) (bz + s) }
-                };
+                return new short[][] {{(short) (bx - s), (short) (by - s), (short) (bz + s)},
+                    {(short) (bx + s), (short) (by - s), (short) (bz + s)},
+                    {(short) (bx + s), (short) (by + s), (short) (bz + s)},
+                    {(short) (bx - s), (short) (by - s), (short) (bz + s)},
+                    {(short) (bx + s), (short) (by + s), (short) (bz + s)},
+                    {(short) (bx - s), (short) (by + s), (short) (bz + s)}};
             case WEST:
-                return new short[][] {
-                        { (short) (bx - s), (short) (by - s), (short) (bz - s) },
-                        { (short) (bx - s), (short) (by - s), (short) (bz + s) },
-                        { (short) (bx - s), (short) (by + s), (short) (bz + s) },
-                        { (short) (bx - s), (short) (by - s), (short) (bz - s) },
-                        { (short) (bx - s), (short) (by + s), (short) (bz + s) },
-                        { (short) (bx - s), (short) (by + s), (short) (bz - s) }
-                };
+                return new short[][] {{(short) (bx - s), (short) (by - s), (short) (bz - s)},
+                    {(short) (bx - s), (short) (by - s), (short) (bz + s)},
+                    {(short) (bx - s), (short) (by + s), (short) (bz + s)},
+                    {(short) (bx - s), (short) (by - s), (short) (bz - s)},
+                    {(short) (bx - s), (short) (by + s), (short) (bz + s)},
+                    {(short) (bx - s), (short) (by + s), (short) (bz - s)}};
             case EAST:
-                return new short[][] {
-                        { (short) (bx + s), (short) (by - s), (short) (bz - s) },
-                        { (short) (bx + s), (short) (by + s), (short) (bz + s) },
-                        { (short) (bx + s), (short) (by - s), (short) (bz + s) },
-                        { (short) (bx + s), (short) (by - s), (short) (bz - s) },
-                        { (short) (bx + s), (short) (by + s), (short) (bz - s) },
-                        { (short) (bx + s), (short) (by + s), (short) (bz + s) }
-                };
+                return new short[][] {{(short) (bx + s), (short) (by - s), (short) (bz - s)},
+                    {(short) (bx + s), (short) (by + s), (short) (bz + s)},
+                    {(short) (bx + s), (short) (by - s), (short) (bz + s)},
+                    {(short) (bx + s), (short) (by - s), (short) (bz - s)},
+                    {(short) (bx + s), (short) (by + s), (short) (bz - s)},
+                    {(short) (bx + s), (short) (by + s), (short) (bz + s)}};
             default:
                 return new short[0][0];
         }
@@ -323,23 +304,14 @@ public final class MetalRendererBackend {
         float f = (float) (1.0 / Math.tan(Math.toRadians(fovDegrees) * 0.5));
         float zNear = 0.05f;
         float zFar = 1000f;
-        float[] proj = new float[] {
-                f / aspect, 0, 0, 0,
-                0, f, 0, 0,
-                0, 0, (zFar + zNear) / (zNear - zFar), -1,
-                0, 0, (2 * zFar * zNear) / (zNear - zFar), 0
-        };
-        float[] view = new float[] {
-                1, 0, 0, 0,
-                0, 1, 0, 0,
-                0, 0, 1, 0,
-                0, 0, -3, 1
-        };
+        float[] proj = new float[] {f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (zFar + zNear) / (zNear - zFar), -1, 0, 0,
+            (2 * zFar * zNear) / (zNear - zFar), 0};
+        float[] view = new float[] {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -3, 1};
         float[] m = new float[16];
         for (int r = 0; r < 4; r++)
             for (int c = 0; c < 4; c++) {
                 m[r * 4 + c] = view[r * 4 + 0] * proj[0 * 4 + c] + view[r * 4 + 1] * proj[1 * 4 + c]
-                        + view[r * 4 + 2] * proj[2 * 4 + c] + view[r * 4 + 3] * proj[3 * 4 + c];
+                    + view[r * 4 + 2] * proj[2 * 4 + c] + view[r * 4 + 3] * proj[3 * 4 + c];
             }
         MetalBackend.setCamera(handle, m);
     }
@@ -372,7 +344,7 @@ public final class MetalRendererBackend {
         Matrix4f projectionMatrix = new Matrix4f();
         projectionMatrix.perspective(fovRadians, aspect, zNear, zFar);
 
-        frustumCuller.updateFromCamera(camera, projectionMatrix);
+        frustumCuller.updateFrustum(camera, (float) Math.toDegrees(fovRadians), aspect, zNear, zFar);
     }
 
     public boolean drawChunkLayerSodiumOverride(int layerId) {
@@ -390,15 +362,13 @@ public final class MetalRendererBackend {
             }
         }
         meshedChunks.clear();
-        occlusionCuller.clearCache();
+
         MetalBackend.destroy(handle);
         handle = 0L;
         initialized = false;
     }
 
     public String getCullingStats() {
-        return String.format("Frustum valid: %s, Occlusion cache size: %d",
-                frustumCuller.isFrustumValid(),
-                occlusionCuller.getCacheSize());
+        return "Culling active";
     }
 }

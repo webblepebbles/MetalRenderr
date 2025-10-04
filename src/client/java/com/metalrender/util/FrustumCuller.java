@@ -2,117 +2,132 @@ package com.metalrender.util;
 
 import net.minecraft.client.render.Camera;
 import net.minecraft.util.math.Vec3d;
-import org.joml.Matrix4f;
-import org.joml.Vector4f;
 
-public class FrustumCuller {
-    private final Vector4f[] frustumPlanes = new Vector4f[6];
+public final class FrustumCuller {
+    private double[] frustumPlanes = new double[24];
     private boolean frustumValid = false;
+    private static final int SECTOR_SIZE = 4;
 
-    public FrustumCuller() {
-        for (int i = 0; i < 6; i++) {
-            frustumPlanes[i] = new Vector4f();
-        }
-    }
+    public void updateFrustum(Camera camera, float fovDegrees, float aspect, float nearPlane, float farPlane) {
+        Vec3d pos = camera.getPos();
+        Vec3d forward =
+            new Vec3d(camera.getHorizontalPlane().x, camera.getHorizontalPlane().y, camera.getHorizontalPlane().z);
+        Vec3d up = new Vec3d(camera.getVerticalPlane().x, camera.getVerticalPlane().y, camera.getVerticalPlane().z);
+        Vec3d right = forward.crossProduct(up).normalize();
 
-    public void updateFrustum(Matrix4f viewProjectionMatrix) {
-        frustumPlanes[0].set(
-            viewProjectionMatrix.m30() + viewProjectionMatrix.m00(),
-            viewProjectionMatrix.m31() + viewProjectionMatrix.m01(),
-            viewProjectionMatrix.m32() + viewProjectionMatrix.m02(),
-            viewProjectionMatrix.m33() + viewProjectionMatrix.m03()
-        );
+        double fovRad = Math.toRadians(fovDegrees);
+        double halfHeight = Math.tan(fovRad * 0.5) * nearPlane;
+        double halfWidth = halfHeight * aspect;
 
-        frustumPlanes[1].set(
-            viewProjectionMatrix.m30() - viewProjectionMatrix.m00(),
-            viewProjectionMatrix.m31() - viewProjectionMatrix.m01(),
-            viewProjectionMatrix.m32() - viewProjectionMatrix.m02(),
-            viewProjectionMatrix.m33() - viewProjectionMatrix.m03()
-        );
+        Vec3d nearCenter = pos.add(forward.multiply(nearPlane));
+        Vec3d farCenter = pos.add(forward.multiply(farPlane));
 
-        frustumPlanes[2].set(
-            viewProjectionMatrix.m30() - viewProjectionMatrix.m10(),
-            viewProjectionMatrix.m31() - viewProjectionMatrix.m11(),
-            viewProjectionMatrix.m32() - viewProjectionMatrix.m12(),
-            viewProjectionMatrix.m33() - viewProjectionMatrix.m13()
-        );
+        Vec3d nearTopLeft = nearCenter.add(up.multiply(halfHeight)).subtract(right.multiply(halfWidth));
+        Vec3d nearTopRight = nearCenter.add(up.multiply(halfHeight)).add(right.multiply(halfWidth));
+        Vec3d nearBottomLeft = nearCenter.subtract(up.multiply(halfHeight)).subtract(right.multiply(halfWidth));
+        Vec3d nearBottomRight = nearCenter.subtract(up.multiply(halfHeight)).add(right.multiply(halfWidth));
 
-        frustumPlanes[3].set(
-            viewProjectionMatrix.m30() + viewProjectionMatrix.m10(),
-            viewProjectionMatrix.m31() + viewProjectionMatrix.m11(),
-            viewProjectionMatrix.m32() + viewProjectionMatrix.m12(),
-            viewProjectionMatrix.m33() + viewProjectionMatrix.m13()
-        );
+        Vec3d farTopLeft = farCenter.add(up.multiply(halfHeight * farPlane / nearPlane))
+                               .subtract(right.multiply(halfWidth * farPlane / nearPlane));
+        Vec3d farBottomRight = farCenter.subtract(up.multiply(halfHeight * farPlane / nearPlane))
+                                   .add(right.multiply(halfWidth * farPlane / nearPlane));
 
-        frustumPlanes[4].set(
-            viewProjectionMatrix.m30() + viewProjectionMatrix.m20(),
-            viewProjectionMatrix.m31() + viewProjectionMatrix.m21(),
-            viewProjectionMatrix.m32() + viewProjectionMatrix.m22(),
-            viewProjectionMatrix.m33() + viewProjectionMatrix.m23()
-        );
-
-        frustumPlanes[5].set(
-            viewProjectionMatrix.m30() - viewProjectionMatrix.m20(),
-            viewProjectionMatrix.m31() - viewProjectionMatrix.m21(),
-            viewProjectionMatrix.m32() - viewProjectionMatrix.m22(),
-            viewProjectionMatrix.m33() - viewProjectionMatrix.m23()
-        );
-
-        for (Vector4f plane : frustumPlanes) {
-            float length = (float) Math.sqrt(plane.x * plane.x + plane.y * plane.y + plane.z * plane.z);
-            if (length > 0) {
-                plane.div(length);
-            }
-        }
+        extractPlane(0, nearTopLeft, nearTopRight, farTopLeft);
+        extractPlane(1, nearBottomRight, nearBottomLeft, farBottomRight);
+        extractPlane(2, nearBottomLeft, nearTopLeft, farTopLeft);
+        extractPlane(3, nearTopRight, nearBottomRight, farBottomRight);
+        extractPlane(4, nearTopLeft, nearBottomLeft, nearBottomRight);
+        extractPlane(5, farTopLeft, farBottomRight, farTopLeft);
 
         frustumValid = true;
     }
 
-    public boolean isAABBVisible(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
-        if (!frustumValid) {
-            return true;
-        }
-
-        for (Vector4f plane : frustumPlanes) {
-            float px = plane.x >= 0 ? maxX : minX;
-            float py = plane.y >= 0 ? maxY : minY;
-            float pz = plane.z >= 0 ? maxZ : minZ;
-
-            if (plane.x * px + plane.y * py + plane.z * pz + plane.w < 0) {
-                return false;
-            }
-        }
-
-        return true;
+    private void extractPlane(int index, Vec3d p1, Vec3d p2, Vec3d p3) {
+        Vec3d v1 = p2.subtract(p1);
+        Vec3d v2 = p3.subtract(p1);
+        Vec3d normal = v1.crossProduct(v2).normalize();
+        double d = -normal.dotProduct(p1);
+        int offset = index * 4;
+        frustumPlanes[offset] = normal.x;
+        frustumPlanes[offset + 1] = normal.y;
+        frustumPlanes[offset + 2] = normal.z;
+        frustumPlanes[offset + 3] = d;
     }
 
     public boolean isChunkVisible(int chunkX, int chunkZ, int minY, int maxY) {
-        float minX = chunkX * 16.0f;
-        float maxX = minX + 16.0f;
-        float minZ = chunkZ * 16.0f;
-        float maxZ = minZ + 16.0f;
+        if (!frustumValid)
+            return true;
 
-        return isAABBVisible(minX, minY, minZ, maxX, maxY, maxZ);
+        return isChunkVisibleDirect(chunkX, chunkZ, minY, maxY);
     }
 
-    public void updateFromCamera(Camera camera, Matrix4f projectionMatrix) {
-        if (camera == null) return;
+    public boolean isSectorVisible(int sectorX, int sectorZ, int minY, int maxY) {
+        if (!frustumValid)
+            return true;
 
-        Vec3d cameraPos = camera.getPos();
+        int chunkMinX = sectorX * SECTOR_SIZE;
+        int chunkMaxX = chunkMinX + SECTOR_SIZE - 1;
+        int chunkMinZ = sectorZ * SECTOR_SIZE;
+        int chunkMaxZ = chunkMinZ + SECTOR_SIZE - 1;
 
-        Matrix4f viewMatrix = new Matrix4f();
-        viewMatrix.identity();
-        viewMatrix.rotateX((float) Math.toRadians(-camera.getPitch()));
-        viewMatrix.rotateY((float) Math.toRadians(-camera.getYaw() + 180));
-        viewMatrix.translate(-(float)cameraPos.x, -(float)cameraPos.y, -(float)cameraPos.z);
+        double minX = chunkMinX * 16.0;
+        double maxX = (chunkMaxX + 1) * 16.0;
+        double minZ = chunkMinZ * 16.0;
+        double maxZ = (chunkMaxZ + 1) * 16.0;
 
-        Matrix4f viewProjection = new Matrix4f(projectionMatrix);
-        viewProjection.mul(viewMatrix);
+        for (int i = 0; i < 6; i++) {
+            int offset = i * 4;
+            double nx = frustumPlanes[offset];
+            double ny = frustumPlanes[offset + 1];
+            double nz = frustumPlanes[offset + 2];
+            double d = frustumPlanes[offset + 3];
 
-        updateFrustum(viewProjection);
+            double pX = nx > 0 ? maxX : minX;
+            double pY = ny > 0 ? maxY : minY;
+            double pZ = nz > 0 ? maxZ : minZ;
+
+            if (nx * pX + ny * pY + nz * pZ + d < 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
-    public boolean isFrustumValid() {
-        return frustumValid;
+    private boolean isChunkVisibleDirect(int chunkX, int chunkZ, int minY, int maxY) {
+        double minX = chunkX * 16.0;
+        double maxX = minX + 16.0;
+        double minZ = chunkZ * 16.0;
+        double maxZ = minZ + 16.0;
+
+        for (int i = 0; i < 6; i++) {
+            int offset = i * 4;
+            double nx = frustumPlanes[offset];
+            double ny = frustumPlanes[offset + 1];
+            double nz = frustumPlanes[offset + 2];
+            double d = frustumPlanes[offset + 3];
+
+            double pX = nx > 0 ? maxX : minX;
+            double pY = ny > 0 ? maxY : minY;
+            double pZ = nz > 0 ? maxZ : minZ;
+
+            if (nx * pX + ny * pY + nz * pZ + d < 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public boolean isPointVisible(double x, double y, double z) {
+        if (!frustumValid)
+            return true;
+
+        for (int i = 0; i < 6; i++) {
+            int offset = i * 4;
+            double distance = frustumPlanes[offset] * x + frustumPlanes[offset + 1] * y + frustumPlanes[offset + 2] * z
+                + frustumPlanes[offset + 3];
+            if (distance < 0)
+                return false;
+        }
+        return true;
     }
 }
