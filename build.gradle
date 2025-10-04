@@ -30,7 +30,6 @@ dependencies {
     modImplementation "net.fabricmc:fabric-loader:0.17.2"
     modImplementation "net.fabricmc.fabric-api:fabric-api:0.132.0+1.21.8"
     modImplementation "maven.modrinth:sodium:mc1.21.6-0.6.13-fabric"
-    modImplementation "net.fabricmc.fabric-api:fabric-api:0.132.0+1.21.8"
     modImplementation "org.lwjgl:lwjgl:3.3.3"
     modImplementation "org.lwjgl:lwjgl-glfw:3.3.3"
     modImplementation "org.lwjgl:lwjgl:3.3.3:natives-macos"
@@ -52,9 +51,11 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     options.release = 21
 }
-    jar {
-        from('src/main/resources/native') {
-            include 'metalrender.h', 'metalrender.mm'
-            into 'native'
-        }
+
+jar {
+    from('src/main/resources/native') {
+        include 'metalrender.h', 'metalrender.mm'
+        into 'native'
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     }
+}
