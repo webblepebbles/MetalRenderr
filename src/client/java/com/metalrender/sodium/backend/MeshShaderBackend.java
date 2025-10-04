@@ -6,11 +6,11 @@ import com.metalrender.config.MetalRenderConfig;
 import com.metalrender.util.MetalLogger;
 import com.metalrender.util.FrustumCuller;
 import com.metalrender.util.OcclusionCuller;
+import com.metalrender.util.PerformanceLogger;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.Camera;
-import net.minecraft.client.util.Window;
-import org.joml.Matrix4f;
 import net.minecraft.util.math.BlockPos;
+
 import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.Set;
@@ -21,6 +21,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 public final class MeshShaderBackend {
+    private int debugFrameCount = 0;
     private final ExecutorService meshUploadExecutor = Executors.newFixedThreadPool(
             Math.max(2, Runtime.getRuntime().availableProcessors() / 2), r -> {
                 Thread t = new Thread(r, "MeshShaderUploadThread");
@@ -28,6 +29,8 @@ public final class MeshShaderBackend {
                 return t;
             });
     private final Queue<DrawRequest> drawQueue = new ConcurrentLinkedQueue<>();
+    private final java.util.List<BatchDrawCommand> drawBatch = new java.util.ArrayList<>();
+    private static final int BATCH_SIZE_LIMIT = 16;
 
     private static class DrawRequest {
         final BlockPos pos;
@@ -35,6 +38,16 @@ public final class MeshShaderBackend {
 
         DrawRequest(BlockPos pos, int layer) {
             this.pos = pos;
+            this.layer = layer;
+        }
+    }
+
+    private static class BatchDrawCommand {
+        final long handle;
+        final int layer;
+
+        BatchDrawCommand(long handle, int layer) {
+            this.handle = handle;
             this.layer = layer;
         }
     }
@@ -52,6 +65,9 @@ public final class MeshShaderBackend {
     private volatile boolean nativeUpdateProbed = false;
     private final FrustumCuller frustumCuller = new FrustumCuller();
     private final OcclusionCuller occlusionCuller = new OcclusionCuller();
+    private final PerformanceLogger perfLogger = new PerformanceLogger();
+    private final com.metalrender.util.LODManager lodManager = new com.metalrender.util.LODManager();
+    private final com.metalrender.util.SpatialCullingCache spatialCache = new com.metalrender.util.SpatialCullingCache();
 
     public synchronized boolean initIfNeeded() {
         if (initialized) {
@@ -125,9 +141,7 @@ public final class MeshShaderBackend {
                 MetalLogger.info("Mesh pipeline initialized");
                 if (!nativeUpdateProbed) {
                     nativeUpdateProbed = true;
-                    // Directly check for method existence using reflection only if absolutely
-                    // necessary
-                    nativeUpdateSupported = true; // Assume support if JNI is present
+                    nativeUpdateSupported = true;
                     MetalLogger.info("nativeUpdateSupported assumed true (reflection removed)");
                 }
             } catch (Throwable t) {
@@ -179,7 +193,6 @@ public final class MeshShaderBackend {
             }
             deviceHandle = 0L;
         }
-        occlusionCuller.clearCache();
         initialized = false;
     }
 
@@ -264,95 +277,243 @@ public final class MeshShaderBackend {
             return;
         try {
             MeshShaderNative.startMeshFrame(deviceHandle);
-            updateFrustumCulling();
-        } catch (Throwable t) {
-        }
-    }
 
-    private void updateFrustumCulling() {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc == null || mc.gameRenderer == null)
-            return;
-
-        Camera camera = mc.gameRenderer.getCamera();
-        if (camera == null)
-            return;
-
-        Window window = mc.getWindow();
-        float aspect = (float) window.getFramebufferWidth() / window.getFramebufferHeight();
-        float fovDegrees = (mc.options != null && mc.options.getFov() != null) ? (float) mc.options.getFov().getValue()
-                : 70f;
-        float fovRadians = (float) Math.toRadians(fovDegrees);
-        float zNear = 0.05f;
-        float zFar = 1000f;
-
-        Matrix4f projectionMatrix = new Matrix4f();
-        projectionMatrix.perspective(fovRadians, aspect, zNear, zFar);
-        frustumCuller.updateFromCamera(camera, projectionMatrix);
-    }
-
-    public boolean shouldRenderChunk(BlockPos chunkPos) {
-        if (!frustumCuller.isFrustumValid()) {
-            return true;
-        }
-
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc != null && mc.world != null && mc.gameRenderer != null) {
-            Camera camera = mc.gameRenderer.getCamera();
-
-            int minY = mc.world.getBottomY();
-            int maxY = mc.world.getHeight();
-            if (!frustumCuller.isChunkVisible(chunkPos.getX() >> 4, chunkPos.getZ() >> 4, minY, maxY)) {
-                return false;
-            }
-
-            if (camera != null) {
-                double distanceSquared = camera.getPos().squaredDistanceTo(
-                        (chunkPos.getX() << 4) + 8, chunkPos.getY() + 32, (chunkPos.getZ() << 4) + 8);
-                if (distanceSquared > (48 * 48)) {
-                    return !occlusionCuller.isChunkOccluded(chunkPos, camera);
+            MinecraftClient client = MinecraftClient.getInstance();
+            if (client != null && client.gameRenderer != null) {
+                Camera cam = client.gameRenderer.getCamera();
+                if (cam != null) {
+                    float fov = client.options.getFov().getValue().floatValue();
+                    float aspect = (float) client.getWindow().getFramebufferWidth()
+                            / Math.max(1, client.getWindow().getFramebufferHeight());
+                    frustumCuller.updateFrustum(cam, fov, aspect, 0.1f, 256.0f);
                 }
             }
-            return true;
+        } catch (Throwable t) {
         }
-
-        return true; // safety
-    }
-
-    public String getCullingStats() {
-        return String.format("Frustum valid: %s, Occlusion cache size: %d",
-                frustumCuller.isFrustumValid(),
-                occlusionCuller.getCacheSize());
     }
 
     public void queueDrawChunkLayer(BlockPos pos, int layer) {
         drawQueue.add(new DrawRequest(pos, layer));
     }
 
-    public void processDrawQueue() {
-        if (!initialized || !meshEnabled)
+    public void processChunksAroundCamera(Camera camera, MinecraftClient client) {
+        if (!initialized || !meshEnabled || camera == null || client == null || client.world == null) {
             return;
-        int processed = 0;
-        int culled = 0;
-        DrawRequest req;
-        while ((req = drawQueue.poll()) != null) {
-            if (!shouldRenderChunk(req.pos)) {
-                culled++;
-                continue;
-            }
+        }
 
-            Long h = chunkHandles.get(req.pos);
-            if (h != null && h != 0L) {
-                try {
-                    MeshShaderNative.drawNativeChunkMesh(deviceHandle, h, req.layer);
-                    processed++;
-                } catch (Throwable t) {
+        BlockPos cameraPos = camera.getBlockPos();
+        int cameraChunkX = cameraPos.getX() >> 4;
+        int cameraChunkZ = cameraPos.getZ() >> 4;
+        int renderDistance = Math.min(16, Math.max(4, client.options.getViewDistance().getValue()));
+
+        int chunksProcessed = 0;
+        int chunksBuilt = 0;
+        int chunksQueued = 0;
+
+        perfLogger.startFrame();
+
+        int maxChunksPerFrame = 64;
+        int processedThisFrame = 0;
+
+        for (int radius = 0; radius <= Math.min(renderDistance, 8)
+                && processedThisFrame < maxChunksPerFrame; radius++) {
+            for (int dx = -radius; dx <= radius && processedThisFrame < maxChunksPerFrame; dx++) {
+                for (int dz = -radius; dz <= radius && processedThisFrame < maxChunksPerFrame; dz++) {
+                    if (Math.abs(dx) != radius && Math.abs(dz) != radius && radius > 0) {
+                        continue;
+                    }
+
+                    int chunkX = cameraChunkX + dx;
+                    int chunkZ = cameraChunkZ + dz;
+                    BlockPos chunkPos = new BlockPos(chunkX << 4, cameraPos.getY(), chunkZ << 4);
+
+                    chunksProcessed++;
+                    try {
+                        if (!client.world.isChunkLoaded(chunkX, chunkZ)) {
+                            continue;
+                        }
+
+                        if (!hasMesh(chunkPos)) {
+                            if (buildChunkMesh(client.world.getChunk(chunkX, chunkZ), chunkPos)) {
+                                chunksBuilt++;
+                                processedThisFrame++;
+                            }
+                        }
+
+                        if (hasMesh(chunkPos)) {
+                            queueDrawChunkLayer(chunkPos, 0);
+                            chunksQueued++;
+                        }
+                    } catch (Exception e) {
+                        continue;
+                    }
                 }
             }
         }
 
-        if (culled > 0) {
-            MetalLogger.info("Culled " + culled + " chunks (frustum + occlusion), rendered " + processed);
+        if (debugFrameCount <= 10 || debugFrameCount % 60 == 0) {
+            MetalLogger.info("[CHUNK] Processed=" + chunksProcessed + ", Built=" + chunksBuilt +
+                    ", Queued=" + chunksQueued + ", Camera=(" + cameraChunkX + "," + cameraChunkZ + ")");
+        }
+    }
+
+    private boolean buildChunkMesh(net.minecraft.world.chunk.WorldChunk chunk, BlockPos chunkPos) {
+        if (chunk == null)
+            return false;
+
+        if (hasMesh(chunkPos)) {
+            return true;
+        }
+
+        try {
+
+            boolean hasBlocks = false;
+            int minY = chunk.getBottomY();
+            int maxY = Math.min(chunk.getBottomY() + chunk.getHeight(), minY + 32);
+
+            outerLoop: for (int x = 0; x < 16; x += 4) {
+                for (int y = minY; y < maxY; y += 4) {
+                    for (int z = 0; z < 16; z += 4) {
+                        BlockPos pos = new BlockPos(chunk.getPos().getStartX() + x, y, chunk.getPos().getStartZ() + z);
+                        if (!chunk.getBlockState(pos).isAir()) {
+                            hasBlocks = true;
+                            break outerLoop;
+                        }
+                    }
+                }
+            }
+
+            meshed.add(chunkPos);
+
+            if (!hasBlocks) {
+                return true;
+            }
+            java.nio.ByteBuffer buf = java.nio.ByteBuffer.allocateDirect(4 * (3 * 2 + 4));
+            buf.order(java.nio.ByteOrder.nativeOrder());
+            int groundY = Math.max(minY, 64);
+            buf.putShort((short) 0).putShort((short) groundY).putShort((short) 0).putInt(0xFF00FF00);
+            buf.putShort((short) 15).putShort((short) groundY).putShort((short) 0).putInt(0xFF00FF00);
+            buf.putShort((short) 15).putShort((short) groundY).putShort((short) 15).putInt(0xFF00FF00);
+            buf.putShort((short) 0).putShort((short) groundY).putShort((short) 15).putInt(0xFF00FF00);
+            buf.rewind();
+
+            long handle = uploadChunkMeshInternal(chunkPos, buf, 4, 3 * 2 + 4, null, 0, 0);
+            if (handle != 0L) {
+                chunkHandles.put(chunkPos, handle);
+                return true;
+            }
+
+            return false;
+
+        } catch (Exception e) {
+
+            meshed.add(chunkPos);
+            MetalLogger.warn("Failed to build mesh for chunk " + chunkPos + ": " + e.getMessage());
+            return false;
+        }
+    }
+
+    private void flushDrawBatch() {
+        if (drawBatch.isEmpty())
+            return;
+
+        java.util.Map<Integer, java.util.List<Long>> layerBatches = new java.util.HashMap<>();
+        for (BatchDrawCommand cmd : drawBatch) {
+            layerBatches.computeIfAbsent(cmd.layer, k -> new java.util.ArrayList<>()).add(cmd.handle);
+        }
+
+        try {
+            for (java.util.Map.Entry<Integer, java.util.List<Long>> entry : layerBatches.entrySet()) {
+                int layer = entry.getKey();
+                java.util.List<Long> handles = entry.getValue();
+                for (Long handle : handles) {
+                    MeshShaderNative.drawNativeChunkMesh(deviceHandle, handle, layer);
+                }
+            }
+        } catch (Throwable t) {
+        }
+        drawBatch.clear();
+    }
+
+    public void processDrawQueue() {
+        if (!initialized || !meshEnabled)
+            return;
+
+        int processed = 0;
+        int frustumCulled = 0;
+        int occlusionCulled = 0;
+        int sectorCulled = 0;
+        int lodCulled = 0;
+        int noMeshSkipped = 0;
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        Camera camera = client != null && client.gameRenderer != null ? client.gameRenderer.getCamera() : null;
+
+        DrawRequest req;
+        while ((req = drawQueue.poll()) != null) {
+            Long h = chunkHandles.get(req.pos);
+            if (h == null || h == 0L) {
+                noMeshSkipped++;
+                continue;
+            }
+
+            int chunkX = req.pos.getX() >> 4;
+            int chunkZ = req.pos.getZ() >> 4;
+            int minY = req.pos.getY() - 8;
+            int maxY = req.pos.getY() + 24;
+
+            int sectorX = chunkX >> 2;
+            int sectorZ = chunkZ >> 2;
+
+            if (!frustumCuller.isSectorVisible(sectorX, sectorZ, minY, maxY)) {
+                sectorCulled++;
+                continue;
+            }
+
+            if (!frustumCuller.isChunkVisible(chunkX, chunkZ, minY, maxY)) {
+                frustumCulled++;
+                continue;
+            }
+
+            if (camera != null && !lodManager.shouldRenderChunk(req.pos, camera)) {
+                lodCulled++;
+                continue;
+            }
+
+            if (camera != null && occlusionCuller.isChunkOccluded(req.pos, camera)) {
+                occlusionCulled++;
+                continue;
+            }
+
+            drawBatch.add(new BatchDrawCommand(h, req.layer));
+            processed++;
+
+            if (drawBatch.size() >= BATCH_SIZE_LIMIT) {
+                flushDrawBatch();
+            }
+        }
+
+        flushDrawBatch();
+
+        debugFrameCount++;
+        int totalQueued = processed + frustumCulled + occlusionCulled + sectorCulled + lodCulled + noMeshSkipped;
+
+        double currentFPS = perfLogger.getCurrentFPS();
+        double frameTime = perfLogger.getAvgFrameTime();
+        lodManager.updatePerformanceMetrics(currentFPS, (long) frameTime);
+
+        perfLogger.endFrame(totalQueued, processed, frustumCulled + sectorCulled, occlusionCulled);
+
+        if (debugFrameCount <= 10) {
+            MetalLogger.info("[DEBUG] Frame " + debugFrameCount + ": Queued=" + totalQueued + ", Drawn=" + processed
+                    + ", FCull=" + frustumCulled + ", SCull=" + sectorCulled + ", LOD=" + lodCulled + ", OCull="
+                    + occlusionCulled
+                    + ", NoMesh=" + noMeshSkipped);
+        } else if (debugFrameCount % 60 == 0) {
+            MetalLogger.info("[RENDER] Queued=" + totalQueued + ", Drawn=" + processed + ", FCull=" + frustumCulled
+                    + ", SCull=" + sectorCulled + ", LOD=" + lodCulled + ", OCull=" + occlusionCulled
+                    + ", RenderDist=" + lodManager.getCurrentRenderDistance() + ", Cache=" + chunkHandles.size()
+                    + ", SpatialCache=" + spatialCache.getCacheSize());
         }
     }
 
