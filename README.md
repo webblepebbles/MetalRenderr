@@ -38,7 +38,7 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 - Why is this version diffrent from the Modrinth version?
   
   It is diffrent because I can't make a new version for every bug fix, performance buff or Library edit. It is inefficent so I would make a new version for Modrinth
-  every stable release and major bug clearance (a group of bugs that I fixed) or a new feature etc etc. I cannot flood the Modrinth page with 20 new releases every 5
+  every stable release and major bug clearance (a group of bugs that I fixed) or a new feature etc etc. I cannot flood the Modrinth page with 20 new releases every   5
   days or so.
 
 - When will Forge/Neoforge/Quilt be added?
@@ -59,6 +59,13 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 
   As long as your launcher doesn't mess with display libraries, GLFW or EGL (like Prism does), it would work. It has been verifyed to NOT work on Prism launcher. The
   Offical Mojang launcher works.
+
+- How do you name versions?
+
+  MetalRender version do not follow the typical vX.X.X format. Instead, they are named vX.X. If there is a bug fix, enchancement or it is very similar to the
+  previous, it would be named vX.X.X, with an extra version number to indicate that it is a branch from the main version.
+
+  
 ---
 
 ## Install
