@@ -1,7 +1,7 @@
 package com.metalrender.util;
 
-import org.slf4j.Logger;
 import com.mojang.logging.LogUtils;
+import org.slf4j.Logger;
 
 public class MetalLogger {
     private static final Logger LOGGER = LogUtils.getLogger();
@@ -13,6 +13,6 @@ public class MetalLogger {
         LOGGER.warn("[MetalRender] " + msg);
     }
     public static void error(String msg) {
-        LOGGER.error("[MetalRender] " + msg);
+        LOGGER.error("[MetalRender:] " + msg);
     }
 }

@@ -4,9 +4,9 @@ import com.metalrender.config.MetalRenderConfig;
 import com.metalrender.sodium.backend.MeshShaderBackend;
 import com.metalrender.sodium.backend.MetalRendererBackend;
 import com.metalrender.util.MetalLogger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MetalRenderClient implements ClientModInitializer {
     private static MetalRendererBackend fallbackBackend;
@@ -19,7 +19,7 @@ public class MetalRenderClient implements ClientModInitializer {
         MetalLogger.info("scheduling MetalRender client initialization on CLIENT_STARTED");
         AtomicBoolean initialized = new AtomicBoolean(false);
         boolean forceFallback = false; // you can set this to true to load it regularly using mesh shaders
-                                       // if applicable. T
+                                       // if applicable. This can be useful for testing.
         ClientLifecycleEvents.CLIENT_STARTED.register(client -> {
             if (initialized.getAndSet(true))
                 return;
