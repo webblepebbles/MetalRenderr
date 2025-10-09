@@ -1,43 +1,20 @@
+
 package com.metalrender.nativebridge;
-
-import net.minecraft.client.MinecraftClient;
-
-import java.nio.ByteBuffer;
-
 public final class MetalBackend {
-    public static long init(long windowHandle, boolean someFlag) {
-
-        if (!NativeBridge.load()) {
-            return 0L;
-        }
-        if (!MetalHardwareChecker.isCompatible()) {
-            MinecraftClient.getInstance().execute(() -> MetalHardwareChecker.showIncompatibleScreen());
-            return 0L;
-        }
-        return initNative(windowHandle, someFlag);
-    }
-
-    private static native long initNative(long windowHandle, boolean someFlag);
-
-    public static native void uploadStaticMesh(long handle, ByteBuffer vertexData, int vertexCount, int stride);
-
+    private MetalBackend() {}
+    public static native long initNative(long windowHandle, boolean someFlag);
+    public static native void uploadStaticMesh(long handle, java.nio.Buffer vertexData, int vertexCount, int stride);
     public static native void resize(long handle, int width, int height);
-
     public static native void setCamera(long handle, float[] viewProj4x4);
-
     public static native void render(long handle, float timeSeconds);
-
     public static native void destroy(long handle);
-
     public static native boolean supportsMeshShaders();
-
-    public static String getLastInitError() {
-        try {
-            return getLastInitErrorNative();
-        } catch (UnsatisfiedLinkError | IllegalArgumentException e) {
-            return null;
-        }
-    }
-
-    private static native String getLastInitErrorNative();
+    public static native String getLastInitErrorNative();
+    public static native long createVertexBuffer(long handle, java.nio.Buffer data, int size);
+    public static native long createIndexBuffer(long handle, java.nio.Buffer data, int size);
+    public static native void destroyBuffer(long handle, long bufferHandle);
+    public static native boolean createTerrainPipelines(long handle);
+    public static native boolean isPipelineReady(long handle, int pass);
+    public static native void drawIndexed(
+        long handle, long vboHandle, long iboHandle, int indexCount, int firstIndex, int baseVertex, int pass);
 }

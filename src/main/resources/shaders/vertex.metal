@@ -1,19 +1,7 @@
 #include <metal_stdlib>
 using namespace metal;
 
-struct VertexIn {
-    float4 position
-    float3 normal
-};
-
-struct VertexOut {
-    float4 position [[position]];
-    float3 normal;
-};
-
-vertex VertexOut vertex_main(VertexIn in [[stage_in]]) {
-    VertexOut out;
-    out.position = in.position;
-    out.normal = in.normal;
-    return out;
+struct VSOut { float4 pos [[position]]; };
+vertex VSOut vs_main(uint vid [[vertex_id]]) {
+	VSOut o; o.pos = float4(0,0,0,1); return o;
 }

@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.metalrender"
-version = "0.3"
+version = "0.1.5"
 
 java {
     toolchain.languageVersion = JavaLanguageVersion.of(21)
@@ -32,8 +32,6 @@ dependencies {
     modImplementation "maven.modrinth:sodium:mc1.21.6-0.6.13-fabric"
     modImplementation "org.lwjgl:lwjgl:3.3.3"
     modImplementation "org.lwjgl:lwjgl-glfw:3.3.3"
-    modImplementation "org.lwjgl:lwjgl:3.3.3:natives-macos"
-    modImplementation "org.lwjgl:lwjgl-glfw:3.3.3:natives-macos"
     modImplementation 'org.joml:joml:1.10.5'
 }
 
@@ -52,10 +50,120 @@ tasks.withType(JavaCompile).configureEach {
     options.release = 21
 }
 
+// Disable remapping for early development iteration per project requirement
+// This avoids generating a remapped jar and speeds up dev cycles
+tasks.configureEach { t ->
+    if (t.name == 'remapJar') {
+        t.enabled = false
+    }
+}
+
 jar {
-    from('src/main/resources/native') {
-        include 'metalrender.h', 'metalrender.mm'
-        into 'native'
+    from('src/main/resources') {
+        include 'fabric.mod.json', 'libmetalrender.dylib', 'metalrender-config.json', 'metalrender.mixins.json', 'shaders.metallib'
+        into '.'
         duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     }
+    from('src/main/resources/native/shaders') {
+        include '*.metal'
+        into 'native/shaders'
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    }
+    from('src/main/resources/shaders') {
+        include '*.metal'
+        into 'shaders'
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    }
+}
+
+// --- Native and Metal shader build pipeline (macOS only) ---
+def isMac = org.gradle.internal.os.OperatingSystem.current().isMacOsX()
+
+tasks.register('compileMetalShaders', Exec) {
+    group = 'build'
+    description = 'Compile .metal shaders to a single shaders.metallib'
+    onlyIf { isMac }
+    // Create build/shaders dir
+    doFirst {
+        file("${project.buildDir}/shaders").mkdirs()
+    }
+    // Safely handle empty shader folders by touching minimal pass-through shaders
+    doFirst {
+        def shaderDir = file('src/main/resources/shaders')
+        if (!shaderDir.exists()) {
+            shaderDir.mkdirs()
+        }
+        def vtx = file('src/main/resources/shaders/vertex.metal')
+        def frg = file('src/main/resources/shaders/fragment.metal')
+        if (!vtx.text?.trim()) {
+            vtx.text = """
+            #include <metal_stdlib>
+            using namespace metal;
+            struct VSIn { float3 pos [[attribute(0)]]; };
+            struct VSOut { float4 pos [[position]]; };
+            vertex VSOut vs_main(uint vid [[vertex_id]]) {
+                VSOut o; o.pos = float4(0.0,0.0,0.0,1.0); return o;
+            }
+            """.stripIndent()
+        }
+        if (!frg.text?.trim()) {
+            frg.text = """
+            #include <metal_stdlib>
+            using namespace metal;
+            fragment float4 fs_main() { return float4(0.0,0.0,0.0,1.0); }
+            """.stripIndent()
+        }
+    }
+    // Compile all .metal files in shaders/ and native/shaders/ to metallib
+    commandLine 'bash', '-c', '''
+        echo "🔹 Starting Metal shader compilation..."
+        BUILD_DIR="build/shaders"
+        mkdir -p "$BUILD_DIR"
+        METAL_FILES=$(find src/main/resources/shaders src/main/resources/native/shaders -name "*.metal")
+        for file in $METAL_FILES; do
+            BASENAME=$(basename "$file" .metal)
+            AIR_FILE="$BUILD_DIR/${BASENAME}.air"
+            echo "Compiling $file → $AIR_FILE"
+            xcrun -sdk macosx metal -c "$file" -o "$AIR_FILE"
+            if [ $? -ne 0 ]; then
+                echo "Compilation failed for $file"
+                exit 1
+            fi
+        done
+        echo "Linking all .air files into shaders.metallib..."
+        xcrun -sdk macosx metallib "$BUILD_DIR"/*.air -o "$BUILD_DIR/shaders.metallib"
+        if [ $? -eq 0 ]; then
+            echo "Compilation complete."
+            echo "Metallib located at: $BUILD_DIR/shaders.metallib"
+        else
+            echo "Metallib creation failed."
+            exit 1
+        fi
+    '''
+}
+
+tasks.register('buildNative', Exec) {
+    group = 'build'
+    description = 'Build libmetalrender.dylib from Objective-C++ sources'
+    onlyIf { isMac }
+    doFirst { file("${project.buildDir}/native").mkdirs() }
+    commandLine 'bash', '-c', '''
+        set -euo pipefail
+        JAVA_HOME=${JAVA_HOME:-$(/usr/libexec/java_home -v 21)}
+        mkdir -p build/native
+        clang++ -fobjc-arc -shared \
+          -o build/native/libmetalrender.dylib \
+          src/main/resources/native/metalrender.mm \
+          src/main/resources/native/meshshader.mm \
+          -framework Cocoa -framework Metal -framework QuartzCore \
+          -I"$JAVA_HOME/include" \
+          -I"$JAVA_HOME/include/darwin" \
+          -MJ src/main/resources/native/compile_commands.json
+        cp build/native/libmetalrender.dylib src/main/resources/
+    '''
+}
+
+tasks.matching { it.name.equalsIgnoreCase('runclient') || it.name.equalsIgnoreCase('runClient') }.configureEach { t ->
+    t.dependsOn tasks.named('compileMetalShaders')
+    t.dependsOn tasks.named('buildNative')
 }

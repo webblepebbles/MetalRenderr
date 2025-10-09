@@ -3,7 +3,16 @@
   "minVersion": "0.8",
   "package": "com.metalrender.sodium.mixins",
   "compatibilityLevel": "JAVA_21",
+  "refmap": "metalrender.refmap.json",
+  "mixins": [],
   "client": [
-    "SodiumRendererMixin"
-  ]
+    "SodiumRendererMixin",
+    "SodiumWorldRendererMixin",
+    "ChunkRenderManagerMixin",
+    "sodiumhook.SodiumWorldRendererMixin_CM"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "remap": false
 }
