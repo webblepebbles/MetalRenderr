@@ -1,8 +1,32 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
 
-xcrun -sdk macosx metal -o src/main/resources/native/shaders/compiled/fragment.ir -c src/main/resources/native/shaders/fragment.metal
-xcrun -sdk macosx metal -o src/main/resources/native/shaders/compiled/vertex.ir -c src/main/resources/native/shaders/vertex.metal
-xcrun -sdk macosx metallib -o build/native/shaders.metallib src/main/resources/native/shaders/compiled/fragment.ir src/main/resources/native/shaders/compiled/vertex.ir
+echo "🔹 Starting Metal shader compilation..."
 
-cp build/native/shaders.metallib src/main/resources/
+BUILD_DIR="build"
+mkdir -p "$BUILD_DIR"
+
+METAL_FILES=$(find . -name "*.metal")
+
+for file in $METAL_FILES; do
+    BASENAME=$(basename "$file" .metal)
+    AIR_FILE="$BUILD_DIR/${BASENAME}.air"
+
+    echo "Compiling $file → $AIR_FILE"
+    xcrun -sdk macosx metal -c "$file" -o "$AIR_FILE"
+
+    if [ $? -ne 0 ]; then
+        echo "Compilation failed for $file"
+        exit 1
+    fi
+done
+
+echo "Linking all .air files into shaders.metallib..."
+xcrun -sdk macosx metallib "$BUILD_DIR"/*.air -o "$BUILD_DIR/shaders.metallib"
+
+if [ $? -eq 0 ]; then
+    echo "Compilation complete."
+    echo "Metallib located at: $BUILD_DIR/shaders.metallib"
+else
+    echo "Metallib creation failed."
+    exit 1
+fi

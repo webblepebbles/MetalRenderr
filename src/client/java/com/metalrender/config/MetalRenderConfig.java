@@ -7,13 +7,15 @@ public final class MetalRenderConfig {
     private static volatile boolean swapTranslucent = false;
     private static volatile boolean aggressiveFrustumCulling = true;
     private static volatile boolean occlusionCulling = false;
-    // Dynamic quality and resolution scale
-    private static volatile boolean dynamicQuality = false;
-    private static volatile float resolutionScale = 1.0f; // 1.0 = native
+    private static volatile boolean dynamicQuality = true;
+    private static volatile float resolutionScale = 1.0f; 
     private static volatile float dqMinScale = 0.7f;
     private static volatile float dqMaxScale = 1.0f;
     private static volatile float dqScaleStep = 0.05f;
-    private static volatile double dqTargetFrameMs = 8.0; // target ~120 FPS by default
+    private static volatile double dqTargetFrameMs = 3.0; 
+    private static volatile int dqMinViewDistance = 8;
+    private static volatile int dqMaxViewDistance = 24;
+    private static volatile int dqViewDistanceStep = 2;
 
     private MetalRenderConfig() {}
 
@@ -53,6 +55,15 @@ public final class MetalRenderConfig {
     public static double dqTargetFrameMs() {
         return dqTargetFrameMs;
     }
+    public static int dqMinViewDistance() {
+        return dqMinViewDistance;
+    }
+    public static int dqMaxViewDistance() {
+        return dqMaxViewDistance;
+    }
+    public static int dqViewDistanceStep() {
+        return dqViewDistanceStep;
+    }
 
     public static void setMirrorUploads(boolean v) {
         mirrorUploads = v;
@@ -90,6 +101,15 @@ public final class MetalRenderConfig {
     public static void setDqTargetFrameMs(double v) {
         dqTargetFrameMs = v;
     }
+    public static void setDqMinViewDistance(int v) {
+        dqMinViewDistance = Math.max(2, v);
+    }
+    public static void setDqMaxViewDistance(int v) {
+        dqMaxViewDistance = Math.max(dqMinViewDistance, v);
+    }
+    public static void setDqViewDistanceStep(int v) {
+        dqViewDistanceStep = Math.max(1, v);
+    }
 
     public static void loadFromSystemProperties() {
         mirrorUploads = getBool("metalrender.mirror", mirrorUploads);
@@ -104,6 +124,9 @@ public final class MetalRenderConfig {
         dqMaxScale = getFloat("metalrender.dynamic.scale.max", dqMaxScale);
         dqScaleStep = getFloat("metalrender.dynamic.scale.step", dqScaleStep);
         dqTargetFrameMs = getDouble("metalrender.dynamic.targetMs", dqTargetFrameMs);
+        setDqMinViewDistance((int) getFloat("metalrender.dynamic.distance.min", dqMinViewDistance));
+        setDqMaxViewDistance((int) getFloat("metalrender.dynamic.distance.max", dqMaxViewDistance));
+        setDqViewDistanceStep((int) getFloat("metalrender.dynamic.distance.step", dqViewDistanceStep));
     }
 
     private static boolean getBool(String key, boolean def) {

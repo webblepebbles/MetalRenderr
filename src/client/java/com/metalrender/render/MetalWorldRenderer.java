@@ -2,10 +2,9 @@ package com.metalrender.render;
 
 import com.metalrender.config.MetalRenderConfig;
 import com.metalrender.nativebridge.NativeBridge;
-import com.metalrender.performance.DynamicScaler;
+import com.metalrender.performance.PerformanceController;
 import com.metalrender.performance.RenderOptimizer;
 import com.metalrender.util.MetalLogger;
-import com.metalrender.util.PerformanceLogger;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.Camera;
 import org.joml.Matrix4f;
@@ -14,8 +13,6 @@ public class MetalWorldRenderer {
     private long handle;
     private volatile boolean ready;
     private final RenderOptimizer renderOptimizer = RenderOptimizer.getInstance();
-    private final PerformanceLogger perfLogger = new PerformanceLogger();
-    private final DynamicScaler dynamicScaler = new DynamicScaler();
     private int lastWidth = 16, lastHeight = 16;
     private float lastScale = 1.0f;
 
@@ -46,8 +43,6 @@ public class MetalWorldRenderer {
     public void renderFrame(Object viewport, Object matrices, double x, double y, double z) {
         if (!ready || handle == 0L)
             return;
-
-        perfLogger.startFrame();
 
         try {
             // Get camera and view-projection matrix for culling
@@ -82,10 +77,8 @@ public class MetalWorldRenderer {
             // Get performance stats
             RenderOptimizer.PerformanceStats stats = renderOptimizer.getFrameStats();
             int drawn = Math.max(0, stats.totalChunks - stats.frustumCulled - stats.occlusionCulled);
-            perfLogger.endFrame(stats.totalChunks, drawn, stats.frustumCulled, stats.occlusionCulled);
-
-            // Feed scaler after frame to adjust toward target time
-            dynamicScaler.onFrameEnd(perfLogger.getAvgFrameTime());
+            PerformanceController.accumulateChunkStats(
+                stats.totalChunks, drawn, stats.frustumCulled, stats.occlusionCulled);
 
         } catch (Throwable t) {
             MetalLogger.error("renderFrame failed", t);

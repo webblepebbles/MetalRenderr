@@ -6,13 +6,22 @@ import org.slf4j.Logger;
 public class MetalLogger {
     private static final Logger LOGGER = LogUtils.getLogger();
 
+    private static String format(String msg, Object... args) {
+        if (args == null || args.length == 0)
+            return msg;
+        return String.format(msg, args);
+    }
+
     public static void info(String msg, Object... args) {
-        LOGGER.info("[MetalRender] " + msg, args);
+        LOGGER.info("[MetalRender] {}", format(msg, args));
+    }
+    public static void debug(String msg, Object... args) {
+        LOGGER.debug("[MetalRender] {}", format(msg, args));
     }
     public static void warn(String msg, Object... args) {
-        LOGGER.warn("[MetalRender] " + msg, args);
+        LOGGER.warn("[MetalRender] {}", format(msg, args));
     }
     public static void error(String msg, Object... args) {
-        LOGGER.error("[MetalRender] " + msg, args);
+        LOGGER.error("[MetalRender] {}", format(msg, args));
     }
 }

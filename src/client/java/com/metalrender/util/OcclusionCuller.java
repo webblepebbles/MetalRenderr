@@ -2,7 +2,6 @@ package com.metalrender.util;
 
 import net.minecraft.client.render.Camera;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
 
 /**
  * Lightweight camera-centric angular occlusion grid.
@@ -21,12 +20,16 @@ public class OcclusionCuller {
     private static final float MARGIN = 2.0f; // meters margin to avoid over-occlusion
 
     private final float[] depthGrid = new float[AZIMUTH_BINS * ELEVATION_BINS];
-    private Vec3d camPos = Vec3d.ZERO;
+    private double camX, camY, camZ;
 
     public void beginFrame(Camera camera) {
         // Reset grid to "far"
         for (int i = 0; i < depthGrid.length; i++) depthGrid[i] = Float.POSITIVE_INFINITY;
-        camPos = camera.getPos();
+        // Only reference Vec3d here, after Minecraft is loaded
+        net.minecraft.util.math.Vec3d pos = camera.getPos();
+        camX = pos.x;
+        camY = pos.y;
+        camZ = pos.z;
     }
 
     public boolean isChunkOccluded(BlockPos chunkPos, Camera camera) {
@@ -35,9 +38,9 @@ public class OcclusionCuller {
         double cy = chunkPos.getY();
         double cz = (chunkPos.getZ() << 4) + 8.0;
 
-        double dx = cx - camPos.x;
-        double dy = cy - camPos.y;
-        double dz = cz - camPos.z;
+        double dx = cx - camX;
+        double dy = cy - camY;
+        double dz = cz - camZ;
 
         double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (dist < 1e-3)

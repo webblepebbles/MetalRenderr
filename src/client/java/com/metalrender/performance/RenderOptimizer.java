@@ -14,13 +14,14 @@ import org.joml.Matrix4f;
 public final class RenderOptimizer {
     private static final RenderOptimizer INSTANCE = new RenderOptimizer();
 
-    private final FrustumCuller frustumCuller = new FrustumCuller();
-    private final OcclusionCuller occlusionCuller = new OcclusionCuller();
+    private FrustumCuller frustumCuller;
+    private OcclusionCuller occlusionCuller;
 
     private int frustumCulledThisFrame = 0;
     private int occlusionCulledThisFrame = 0;
     private int totalChunksThisFrame = 0;
     private long currentFrame = 0;
+    private boolean initialized = false;
 
     private RenderOptimizer() {}
 
@@ -33,6 +34,13 @@ public final class RenderOptimizer {
      * Call this before any chunk visibility tests.
      */
     public void updateFrame(Camera camera, Matrix4f viewProjectionMatrix) {
+        // Lazy initialization - only create cullers when first needed (after Minecraft classes are loaded)
+        if (!initialized) {
+            frustumCuller = new FrustumCuller();
+            occlusionCuller = new OcclusionCuller();
+            initialized = true;
+        }
+
         currentFrame++;
 
         if (MetalRenderConfig.aggressiveFrustumCulling()) {

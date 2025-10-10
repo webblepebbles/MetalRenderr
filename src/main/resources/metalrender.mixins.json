@@ -5,12 +5,7 @@
   "compatibilityLevel": "JAVA_21",
   "refmap": "metalrender.refmap.json",
   "mixins": [],
-  "client": [
-    "SodiumRendererMixin",
-    "SodiumWorldRendererMixin",
-    "ChunkRenderManagerMixin",
-    "sodiumhook.SodiumWorldRendererMixin_CM"
-  ],
+  "client": ["MinecraftClientMixin", "SodiumRendererMixin"],
   "injectors": {
     "defaultRequire": 1
   },
