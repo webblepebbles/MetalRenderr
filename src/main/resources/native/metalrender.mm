@@ -1,6 +1,6 @@
 #import <Metal/Metal.h>
 #import <MetalKit/MetalKit.h>
-// JNI headers
+
 #include <jni.h>
 #include <unordered_map>
 #include <vector>
@@ -10,7 +10,6 @@
 #include <thread>
 
 
-// Forward declarations
 static id<MTLBuffer> get_buffer(uint64_t h);
 
 #ifndef dispatch_get_active_cpu_count
@@ -28,17 +27,12 @@ static uint64_t g_nextHandle = 1;
 static id<MTLRenderPipelineState> g_pipelineOpaque = nil;
 static id<MTLRenderPipelineState> g_pipelineCutout = nil;
 static id<MTLRenderPipelineState> g_pipelineTranslucent = nil;
-// ...existing code...
-
-
-// Offscreen render target (to enable valid passes without MC drawable hookup yet)
 static id<MTLTexture> g_color = nil;
 static id<MTLTexture> g_depth = nil;
 static int g_rtWidth = 16;
 static int g_rtHeight = 16;
 static float g_scale = 1.0f;
 
-// ...existing code...
 
 static void ensure_device()
 {
@@ -73,7 +67,7 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_metalrender_nativebridge_NativeBr
 
 extern "C" JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_NativeBridge_nInit
 	(JNIEnv*, jclass, jint width, jint height, jfloat scale) {
-		// Return a non-zero handle to indicate init success (dummy)
+
 		ensure_device();
 	g_rtWidth = (int)width; g_rtHeight = (int)height; g_scale = scale;
 	ensure_offscreen();
@@ -128,10 +122,6 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_metalrender_nativebridge_NativeBr
 		return JNI_TRUE;
 }
 
-// =========================
-
-// --- MetalBackend JNI stubs ---
-// package: com.metalrender.nativebridge.MetalBackend
 
 static uint64_t store_buffer(id<MTLBuffer> buf) {
 	if (!buf) return 0;
@@ -158,7 +148,6 @@ extern "C" JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalBackend
 	void* ptr = env->GetDirectBufferAddress(vertexData);
 	jlong cap = env->GetDirectBufferCapacity(vertexData);
 	(void)ptr; (void)cap;
-	// No-op stub: would create MTLBuffer and stage upload here.
 }
 
 extern "C" JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalBackend_resize(JNIEnv*, jclass, jlong handle, jint width, jint height) {
@@ -193,7 +182,6 @@ extern "C" JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_MetalBackend
 		rp.depthAttachment.clearDepth = 1.0;
 
 		id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rp];
-		// TODO: Replace with actual draw calls; for now, no draw queue
 		[enc endEncoding];
 		[cb commit];
 	}

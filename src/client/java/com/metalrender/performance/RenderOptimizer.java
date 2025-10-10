@@ -29,12 +29,7 @@ public final class RenderOptimizer {
         return INSTANCE;
     }
 
-    /**
-     * Update culling systems for the current frame.
-     * Call this before any chunk visibility tests.
-     */
     public void updateFrame(Camera camera, Matrix4f viewProjectionMatrix) {
-        // Lazy initialization - only create cullers when first needed (after Minecraft classes are loaded)
         if (!initialized) {
             frustumCuller = new FrustumCuller();
             occlusionCuller = new OcclusionCuller();
@@ -55,20 +50,14 @@ public final class RenderOptimizer {
         totalChunksThisFrame = 0;
     }
 
-    /**
-     * Test if a chunk should be rendered.
-     * Returns false if the chunk is outside the frustum or occluded.
-     */
     public boolean shouldRenderChunk(BlockPos chunkPos, Camera camera) {
         totalChunksThisFrame++;
 
-        // Convert chunk coordinates to region coordinates for frustum test
         int regionX = chunkPos.getX() >> 4;
         int regionZ = chunkPos.getZ() >> 4;
         int minY = Math.max(chunkPos.getY() - 16, -64);
         int maxY = Math.min(chunkPos.getY() + 16, 320);
 
-        // Frustum culling (fast)
         boolean frustumVisible = true;
         if (MetalRenderConfig.aggressiveFrustumCulling()) {
             frustumVisible = frustumCuller.isRegionVisible(regionX, regionZ, minY, maxY);
@@ -78,7 +67,6 @@ public final class RenderOptimizer {
             }
         }
 
-        // Occlusion culling (slower, only if enabled and frustum passed)
         if (MetalRenderConfig.occlusionCulling() && frustumVisible) {
             boolean occluded = occlusionCuller.isChunkOccluded(chunkPos, camera);
             if (occluded) {
@@ -87,23 +75,15 @@ public final class RenderOptimizer {
             }
         }
 
-        // Chunk is visible
         return true;
     }
 
-    /**
-     * Get performance stats for this frame.
-     */
     public PerformanceStats getFrameStats() {
         return new PerformanceStats(totalChunksThisFrame, frustumCulledThisFrame, occlusionCulledThisFrame, 0,
-            currentFrame); // Simplified without cache
+            currentFrame); 
     }
 
-    /**
-     * Reset culling state (call when world changes significantly).
-     */
     public void invalidateCache() {
-        // Simplified implementation without cache
         frustumCulledThisFrame = 0;
         occlusionCulledThisFrame = 0;
         totalChunksThisFrame = 0;

@@ -32,10 +32,7 @@ public final class NativeMemory {
     }
 
     public static ByteBuffer wrap(long addr, int size) {
-        // Allocate a direct buffer and set address/limit via Unsafe. This is development-only util.
         ByteBuffer buf = ByteBuffer.allocateDirect(size);
-        // We cannot set address safely without JDK internals; return a fresh buffer instead.
-        // For JNI interop, prefer passing long addresses directly.
         return buf;
     }
 

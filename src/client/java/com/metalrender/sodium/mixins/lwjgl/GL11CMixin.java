@@ -12,11 +12,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class GL11CMixin {
     @Inject(method = "glDrawElements", at = @At("HEAD"), remap = false)
     private static void metalrender$onDrawElements(int mode, int count, int type, long indicesOffset, CallbackInfo ci) {
-        // Fast path: avoid method call overhead when draw swap is disabled (hottest path!)
         if (com.metalrender.config.MetalRenderConfig.swapOpaque()
             || com.metalrender.config.MetalRenderConfig.swapCutout()
             || com.metalrender.config.MetalRenderConfig.swapTranslucent()) {
-            // We don't have a view-projection here; provide null. The backend will ignore begin/end if so.
             GLIntercept.onDrawElements(mode, count, type, indicesOffset, null);
         }
     }

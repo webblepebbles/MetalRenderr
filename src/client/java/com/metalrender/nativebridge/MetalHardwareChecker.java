@@ -1,7 +1,6 @@
 package com.metalrender.nativebridge;
 
 import com.mojang.logging.LogUtils;
-// Removed unused imports after refactor
 import org.slf4j.Logger;
 
 public final class MetalHardwareChecker {
@@ -13,10 +12,7 @@ public final class MetalHardwareChecker {
         scheduleCheck();
         return compatible == null || compatible;
     }
-
-    // Disabled: showIncompatibleScreen() to avoid referencing Screen classes at init
     public static void showIncompatibleScreen() {
-        // No-op: avoid referencing net.minecraft.client.gui.screen.Screen at entrypoint
     }
 
     private static void scheduleCheck() {
@@ -24,13 +20,11 @@ public final class MetalHardwareChecker {
             return;
         checkScheduled = true;
         try {
-            // Avoid referencing MinecraftClient or Screen classes at entrypoint
-            compatible = true; // Assume compatible for now
+            compatible = true;
         } catch (UnsatisfiedLinkError | IllegalArgumentException e) {
             compatible = true;
             LOGGER.warn("[MetalRender] Could not schedule GL capability check, allowing fallback", e);
         }
     }
 
-    // Removed: IncompatibleHardwareScreen (no longer used)
 }

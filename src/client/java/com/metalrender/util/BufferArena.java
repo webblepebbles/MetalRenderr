@@ -27,7 +27,7 @@ public class BufferArena {
         if (prev + bytes > capacityBytes)
             return -1;
         used.addAndGet(bytes);
-        return prev; // pretend this is an offset/handle
+        return prev; 
     }
 
     public void free(long handle, long bytes) {
@@ -35,12 +35,10 @@ public class BufferArena {
     }
 
     public ByteBuffer acquire() {
-        // Return a temporary direct buffer sized to a block for staging uploads
         return ByteBuffer.allocateDirect(blockSize).order(ByteOrder.LITTLE_ENDIAN);
     }
 
     public void release(ByteBuffer buf) {
-        // GC will reclaim direct buffer; no-op for now
     }
 
     public long getUsedBytes() {
@@ -51,7 +49,6 @@ public class BufferArena {
     }
 
     public long upload(ByteBuffer data) {
-        // Stub: returns a fake device pointer/offset
         return 0L;
     }
 }

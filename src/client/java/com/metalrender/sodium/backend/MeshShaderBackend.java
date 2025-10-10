@@ -19,7 +19,7 @@ public class MeshShaderBackend {
 
     public void uploadChunkMeshAsync(
         BlockPos chunkPos, ByteBuffer buf, int vertexCount, int stride, Object arg0, int arg1, int arg2) {
-        // Stub: will forward to native later
+
     }
 
     public void removeChunkMesh(BlockPos chunkPos) {}

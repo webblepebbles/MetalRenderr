@@ -14,7 +14,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class GL15CMixin {
     @Inject(method = "glBindBuffer", at = @At("HEAD"), remap = false)
     private static void metalrender$onBindBuffer(int target, int buffer, CallbackInfo ci) {
-        // Fast path: avoid method call overhead when MetalRender is disabled
         if (com.metalrender.config.MetalRenderConfig.mirrorUploads()) {
             GLIntercept.onBindBuffer(target, buffer);
         }
@@ -22,7 +21,6 @@ public class GL15CMixin {
 
     @Inject(method = "glBufferData", at = @At("HEAD"), remap = false)
     private static void metalrender$onBufferDataBB(int target, ByteBuffer data, int usage, CallbackInfo ci) {
-        // Fast path: avoid method call overhead when MetalRender is disabled (hottest path!)
         if (com.metalrender.config.MetalRenderConfig.mirrorUploads()) {
             GLIntercept.onBufferData(target, data, usage, 32);
         }
@@ -33,7 +31,6 @@ public class GL15CMixin {
 
     @Inject(method = "glDeleteBuffers", at = @At("HEAD"), remap = false)
     private static void metalrender$onDeleteBuffers(IntBuffer buffers, CallbackInfo ci) {
-        // Fast path: avoid method call overhead when MetalRender is disabled
         if (com.metalrender.config.MetalRenderConfig.mirrorUploads() && buffers != null) {
             while (buffers.hasRemaining()) {
                 GLIntercept.onDeleteBuffer(buffers.get());
