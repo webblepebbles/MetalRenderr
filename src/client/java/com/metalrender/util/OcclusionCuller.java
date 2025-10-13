@@ -1,145 +1,64 @@
 package com.metalrender.util;
 
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.Camera;
-import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
-import net.minecraft.block.BlockState;
-import java.util.Map;
-import java.util.HashMap;
 
 public class OcclusionCuller {
-    private final Map<BlockPos, Boolean> occlusionCache = new HashMap<>();
-    private Vec3d lastCameraPos = Vec3d.ZERO;
-    private long lastUpdateTime = 0;
-    private static final long CACHE_DURATION_MS = 100;
-    private static final int MAX_RAY_DISTANCE = 64;
-    private static final int RAY_STEP_SIZE = 2;
+    private static final int AZIMUTH_BINS = 72;
+    private static final int ELEVATION_BINS = 36;
+    private static final float MARGIN = 2.0F;
+    private final float[] depthGrid = new float[2592];
+    private double camX;
+    private double camY;
+    private double camZ;
+
+    public void beginFrame(Camera camera) {
+        for (int i = 0; i < this.depthGrid.length; ++i) {
+            this.depthGrid[i] = Float.POSITIVE_INFINITY;
+        }
+
+        Vec3d pos = camera.getPos();
+        this.camX = pos.x;
+        this.camY = pos.y;
+        this.camZ = pos.z;
+    }
 
     public boolean isChunkOccluded(BlockPos chunkPos, Camera camera) {
-        if (camera == null) return false;
-
-        Vec3d cameraPos = camera.getPos();
-        long currentTime = System.currentTimeMillis();
-
-        if (lastCameraPos.distanceTo(cameraPos) > 5.0 || currentTime - lastUpdateTime > CACHE_DURATION_MS) {
-            occlusionCache.clear();
-            lastCameraPos = cameraPos;
-            lastUpdateTime = currentTime;
+        double cx = (double) (chunkPos.getX() << 4) + 8.0D;
+        double cy = (double) chunkPos.getY();
+        double cz = (double) (chunkPos.getZ() << 4) + 8.0D;
+        double dx = cx - this.camX;
+        double dy = cy - this.camY;
+        double dz = cz - this.camZ;
+        double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (dist < 0.001D) {
+            dist = 0.001D;
         }
 
-        Boolean cached = occlusionCache.get(chunkPos);
-        if (cached != null) {
-            return cached;
+        double az = Math.atan2(dz, dx);
+        double el = Math.asin(dy / dist);
+        int ai = (int) Math.floor((az + 3.141592653589793D) / 6.283185307179586D * 72.0D);
+        int ei = (int) Math.floor((el + 1.5707963267948966D) / 3.141592653589793D * 36.0D);
+        if (ai < 0) {
+            ai = 0;
+        } else if (ai >= 72) {
+            ai = 71;
         }
 
-        boolean occluded = performOcclusionTest(chunkPos, cameraPos);
-        occlusionCache.put(chunkPos, occluded);
+        if (ei < 0) {
+            ei = 0;
+        } else if (ei >= 36) {
+            ei = 35;
+        }
+
+        int idx = ei * 72 + ai;
+        float nearest = this.depthGrid[idx];
+        boolean occluded = nearest + 2.0F < (float) dist;
+        if (!occluded && (float) dist < nearest) {
+            this.depthGrid[idx] = (float) dist;
+        }
 
         return occluded;
-    }
-
-    private boolean performOcclusionTest(BlockPos chunkPos, Vec3d cameraPos) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc == null || mc.world == null) return false;
-
-        ClientWorld world = mc.world;
-
-        Vec3d chunkCenter = new Vec3d(
-            (chunkPos.getX() << 4) + 8,
-            chunkPos.getY() + 64,
-            (chunkPos.getZ() << 4) + 8
-        );
-
-        Vec3d direction = chunkCenter.subtract(cameraPos).normalize();
-        double distance = cameraPos.distanceTo(chunkCenter);
-
-        if (distance < 32.0) {
-            return false;
-        }
-
-        distance = Math.min(distance, MAX_RAY_DISTANCE);
-
-        int solidBlocksHit = 0;
-        int totalSteps = (int) (distance / RAY_STEP_SIZE);
-
-        for (int step = 1; step < totalSteps; step++) {
-            double t = (step * RAY_STEP_SIZE) / distance;
-            Vec3d testPos = cameraPos.add(direction.multiply(distance * t));
-
-            BlockPos blockPos = BlockPos.ofFloored(testPos);
-            BlockState state = world.getBlockState(blockPos);
-
-            if (!state.isAir() && state.isOpaque()) {
-                solidBlocksHit++;
-                if (solidBlocksHit >= 3) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    public boolean isChunkOccludedAdvanced(BlockPos chunkPos, Camera camera) {
-        if (camera == null) return false;
-
-        Vec3d cameraPos = camera.getPos();
-
-        Vec3d[] testPoints = {
-            new Vec3d((chunkPos.getX() << 4) + 2, chunkPos.getY() + 32, (chunkPos.getZ() << 4) + 2),
-            new Vec3d((chunkPos.getX() << 4) + 14, chunkPos.getY() + 32, (chunkPos.getZ() << 4) + 2),
-            new Vec3d((chunkPos.getX() << 4) + 2, chunkPos.getY() + 32, (chunkPos.getZ() << 4) + 14),
-            new Vec3d((chunkPos.getX() << 4) + 14, chunkPos.getY() + 32, (chunkPos.getZ() << 4) + 14),
-            new Vec3d((chunkPos.getX() << 4) + 8, chunkPos.getY() + 64, (chunkPos.getZ() << 4) + 8),
-            new Vec3d((chunkPos.getX() << 4) + 8, chunkPos.getY() + 16, (chunkPos.getZ() << 4) + 8)
-        };
-
-        int visiblePoints = 0;
-
-        for (Vec3d testPoint : testPoints) {
-            if (!isPointOccluded(testPoint, cameraPos)) {
-                visiblePoints++;
-                if (visiblePoints >= 1) {
-                    return false;
-                }
-            }
-        }
-
-        return true;
-    }
-
-    private boolean isPointOccluded(Vec3d point, Vec3d cameraPos) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        if (mc == null || mc.world == null) return false;
-
-        ClientWorld world = mc.world;
-        Vec3d direction = point.subtract(cameraPos).normalize();
-        double distance = cameraPos.distanceTo(point);
-
-        int steps = (int) (distance / RAY_STEP_SIZE);
-
-        for (int step = 1; step < steps; step++) {
-            double t = (step * RAY_STEP_SIZE) / distance;
-            Vec3d testPos = cameraPos.add(direction.multiply(distance * t));
-
-            BlockPos blockPos = BlockPos.ofFloored(testPos);
-            BlockState state = world.getBlockState(blockPos);
-
-            if (!state.isAir() && state.isOpaque()) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    public void clearCache() {
-        occlusionCache.clear();
-    }
-
-    public int getCacheSize() {
-        return occlusionCache.size();
     }
 }

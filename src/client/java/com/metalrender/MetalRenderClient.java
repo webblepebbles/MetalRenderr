@@ -1,80 +1,38 @@
 package com.metalrender;
 
 import com.metalrender.config.MetalRenderConfig;
+import com.metalrender.nativebridge.MetalHardwareChecker;
+import com.metalrender.render.MetalWorldRenderer;
 import com.metalrender.sodium.backend.MeshShaderBackend;
-import com.metalrender.sodium.backend.MetalRendererBackend;
 import com.metalrender.util.MetalLogger;
 import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
-import java.util.concurrent.atomic.AtomicBoolean;
 
-public class MetalRenderClient implements ClientModInitializer {
-    private static MetalRendererBackend fallbackBackend;
-    private static MeshShaderBackend meshBackend;
-    private static boolean usingMesh = false;
-    private static int ticksElapsed = 0;
+public final class MetalRenderClient implements ClientModInitializer {
+    private static volatile boolean ENABLED = false;
+    private static volatile MetalWorldRenderer WORLD;
+    private static volatile MeshShaderBackend MESH_BACKEND;
 
-    @Override
     public void onInitializeClient() {
-        MetalLogger.info("scheduling MetalRender client initialization on CLIENT_STARTED");
-        AtomicBoolean initialized = new AtomicBoolean(false);
-        boolean forceFallback = true; // you can set this to true to load it regularly using mesh shaders
-                                      // if applicable. T
-        ClientLifecycleEvents.CLIENT_STARTED.register(client -> {
-            if (initialized.getAndSet(true))
-                return;
-            try {
-                MetalLogger.info("starting MetalRenderClient (CLIENT_STARTED)");
-                String osName = System.getProperty("os.name").toLowerCase();
-                if (!osName.contains("mac")) {
-                    MetalLogger.warn("MetalRender: Your computer does not support Metal.");
-                    return;
-                }
-                if (forceFallback) {
-                    MetalLogger.info("Force fallback: using MetalRendererBackend for testing");
-                    initFallback();
-                    return;
-                }
-                MetalRenderConfig cfg = MetalRenderConfig.get();
-                if (cfg.getAdvancedMetalFeatures().isMeshShadersEnabled()) {
-                    MetalLogger.info("Mesh shaders added via config");
-                    meshBackend = new MeshShaderBackend();
-                    if (meshBackend.initIfNeeded() && meshBackend.isMeshEnabled()) {
-                        usingMesh = true;
-                        MetalLogger.info("MeshShaderBackend on");
-                    } else {
-                        MetalLogger.warn("Mesh shaders are not available, using MetalRendererBackend");
-                        meshBackend = null;
-                        initFallback();
-                    }
-                } else {
-                    initFallback();
-                }
-            } catch (UnsatisfiedLinkError | IllegalArgumentException e) {
-                MetalLogger.error("Error during MetalRender client init: " + e);
-            }
-        });
-    }
-
-    private void initFallback() {
-        fallbackBackend = new MetalRendererBackend();
-        if (fallbackBackend.initIfNeeded()) {
-            usingMesh = false;
-            MetalLogger.info("Fallback MetalRendererBackend active");
+        MetalRenderConfig.loadFromSystemProperties();
+        ENABLED = MetalHardwareChecker.isCompatible();
+        if (ENABLED) {
+            WORLD = new MetalWorldRenderer();
+            MESH_BACKEND = new MeshShaderBackend();
+            MetalLogger.info("MetalRender initialized (Sodium integration active)");
         } else {
-            MetalLogger.error("Failed to initialize MetalRendererBackend!");
+            MetalLogger.warn("MetalRender disabled due to incompatible hardware");
         }
     }
 
-    public static boolean isUsingMeshShaders() {
-        return usingMesh;
+    public static boolean isEnabled() {
+        return ENABLED;
+    }
+
+    public static MetalWorldRenderer getWorldRenderer() {
+        return WORLD;
     }
 
     public static MeshShaderBackend getMeshBackend() {
-        return meshBackend;
-    }
-
-    public static MetalRendererBackend getFallbackBackend() {
-        return fallbackBackend;
+        return MESH_BACKEND;
     }
 }

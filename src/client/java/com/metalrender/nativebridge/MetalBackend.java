@@ -1,43 +1,35 @@
 package com.metalrender.nativebridge;
 
-import net.minecraft.client.MinecraftClient;
-
-import java.nio.ByteBuffer;
+import java.nio.Buffer;
 
 public final class MetalBackend {
-    public static long init(long windowHandle, boolean someFlag) {
+    private MetalBackend() {}
 
-        if (!NativeBridge.load()) {
-            return 0L;
-        }
-        if (!MetalHardwareChecker.isCompatible()) {
-            MinecraftClient.getInstance().execute(() -> MetalHardwareChecker.showIncompatibleScreen());
-            return 0L;
-        }
-        return initNative(windowHandle, someFlag);
-    }
+    public static native long initNative(long var0, boolean var2);
 
-    private static native long initNative(long windowHandle, boolean someFlag);
+    public static native void uploadStaticMesh(long var0, Buffer var2, int var3, int var4);
 
-    public static native void uploadStaticMesh(long handle, ByteBuffer vertexData, int vertexCount, int stride);
+    public static native void resize(long var0, int var2, int var3);
 
-    public static native void resize(long handle, int width, int height);
+    public static native void setCamera(long var0, float[] var2);
 
-    public static native void setCamera(long handle, float[] viewProj4x4);
+    public static native void render(long var0, float var2);
 
-    public static native void render(long handle, float timeSeconds);
-
-    public static native void destroy(long handle);
+    public static native void destroy(long var0);
 
     public static native boolean supportsMeshShaders();
 
-    public static String getLastInitError() {
-        try {
-            return getLastInitErrorNative();
-        } catch (UnsatisfiedLinkError | IllegalArgumentException e) {
-            return null;
-        }
-    }
+    public static native String getLastInitErrorNative();
 
-    private static native String getLastInitErrorNative();
+    public static native long createVertexBuffer(long var0, Buffer var2, int var3);
+
+    public static native long createIndexBuffer(long var0, Buffer var2, int var3);
+
+    public static native void destroyBuffer(long var0, long var2);
+
+    public static native boolean createTerrainPipelines(long var0);
+
+    public static native boolean isPipelineReady(long var0, int var2);
+
+    public static native void drawIndexed(long var0, long var2, long var4, int var6, int var7, int var8, int var9);
 }

@@ -1,18 +1,28 @@
 package com.metalrender.util;
 
-import org.slf4j.Logger;
 import com.mojang.logging.LogUtils;
+import org.slf4j.Logger;
 
 public class MetalLogger {
     private static final Logger LOGGER = LogUtils.getLogger();
 
-    public static void info(String msg) {
-        LOGGER.info("[MetalRender] " + msg);
+    private static String format(String msg, Object... args) {
+        return args != null && args.length != 0 ? String.format(msg, args) : msg;
     }
-    public static void warn(String msg) {
-        LOGGER.warn("[MetalRender] " + msg);
+
+    public static void info(String msg, Object... args) {
+        LOGGER.info("[MetalRender] {}", format(msg, args));
     }
-    public static void error(String msg) {
-        LOGGER.error("[MetalRender] " + msg);
+
+    public static void debug(String msg, Object... args) {
+        LOGGER.debug("[MetalRender] {}", format(msg, args));
+    }
+
+    public static void warn(String msg, Object... args) {
+        LOGGER.warn("[MetalRender] {}", format(msg, args));
+    }
+
+    public static void error(String msg, Object... args) {
+        LOGGER.error("[MetalRender] {}", format(msg, args));
     }
 }

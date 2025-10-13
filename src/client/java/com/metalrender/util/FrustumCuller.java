@@ -1,84 +1,78 @@
 package com.metalrender.util;
 
-import net.minecraft.client.render.Camera;
-import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
-import org.joml.Vector4f;
 
 public class FrustumCuller {
-    private final Vector4f[] frustumPlanes = new Vector4f[6];
-    private boolean frustumValid = false;
+    private final float[][] planes = new float[6][4];
+    private boolean valid;
 
-    public FrustumCuller() {
-        for (int i = 0; i < 6; i++) {
-            frustumPlanes[i] = new Vector4f();
+    public void update(Matrix4f viewProjection) {
+        if (viewProjection == null) {
+            this.valid = false;
+        } else {
+            this.extractPlanes(viewProjection);
+            this.valid = true;
         }
     }
 
-    public void updateFrustum(Matrix4f viewProjectionMatrix) {
-        frustumPlanes[0].set(
-            viewProjectionMatrix.m30() + viewProjectionMatrix.m00(),
-            viewProjectionMatrix.m31() + viewProjectionMatrix.m01(),
-            viewProjectionMatrix.m32() + viewProjectionMatrix.m02(),
-            viewProjectionMatrix.m33() + viewProjectionMatrix.m03()
-        );
+    private void extractPlanes(Matrix4f m) {
+        this.setPlane(0, m.m30() + m.m00(), m.m31() + m.m01(), m.m32() + m.m02(), m.m33() + m.m03());
+        this.setPlane(1, m.m30() - m.m00(), m.m31() - m.m01(), m.m32() - m.m02(), m.m33() - m.m03());
+        this.setPlane(2, m.m30() + m.m10(), m.m31() + m.m11(), m.m32() + m.m12(), m.m33() + m.m13());
+        this.setPlane(3, m.m30() - m.m10(), m.m31() - m.m11(), m.m32() - m.m12(), m.m33() - m.m13());
+        this.setPlane(4, m.m30() + m.m20(), m.m31() + m.m21(), m.m32() + m.m22(), m.m33() + m.m23());
+        this.setPlane(5, m.m30() - m.m20(), m.m31() - m.m21(), m.m32() - m.m22(), m.m33() - m.m23());
 
-        frustumPlanes[1].set(
-            viewProjectionMatrix.m30() - viewProjectionMatrix.m00(),
-            viewProjectionMatrix.m31() - viewProjectionMatrix.m01(),
-            viewProjectionMatrix.m32() - viewProjectionMatrix.m02(),
-            viewProjectionMatrix.m33() - viewProjectionMatrix.m03()
-        );
-
-        frustumPlanes[2].set(
-            viewProjectionMatrix.m30() - viewProjectionMatrix.m10(),
-            viewProjectionMatrix.m31() - viewProjectionMatrix.m11(),
-            viewProjectionMatrix.m32() - viewProjectionMatrix.m12(),
-            viewProjectionMatrix.m33() - viewProjectionMatrix.m13()
-        );
-
-        frustumPlanes[3].set(
-            viewProjectionMatrix.m30() + viewProjectionMatrix.m10(),
-            viewProjectionMatrix.m31() + viewProjectionMatrix.m11(),
-            viewProjectionMatrix.m32() + viewProjectionMatrix.m12(),
-            viewProjectionMatrix.m33() + viewProjectionMatrix.m13()
-        );
-
-        frustumPlanes[4].set(
-            viewProjectionMatrix.m30() + viewProjectionMatrix.m20(),
-            viewProjectionMatrix.m31() + viewProjectionMatrix.m21(),
-            viewProjectionMatrix.m32() + viewProjectionMatrix.m22(),
-            viewProjectionMatrix.m33() + viewProjectionMatrix.m23()
-        );
-
-        frustumPlanes[5].set(
-            viewProjectionMatrix.m30() - viewProjectionMatrix.m20(),
-            viewProjectionMatrix.m31() - viewProjectionMatrix.m21(),
-            viewProjectionMatrix.m32() - viewProjectionMatrix.m22(),
-            viewProjectionMatrix.m33() - viewProjectionMatrix.m23()
-        );
-
-        for (Vector4f plane : frustumPlanes) {
-            float length = (float) Math.sqrt(plane.x * plane.x + plane.y * plane.y + plane.z * plane.z);
-            if (length > 0) {
-                plane.div(length);
-            }
+        for (int i = 0; i < 6; ++i) {
+            this.normalizePlane(i);
         }
-
-        frustumValid = true;
     }
 
-    public boolean isAABBVisible(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
-        if (!frustumValid) {
+    private void setPlane(int idx, float a, float b, float c, float d) {
+        this.planes[idx][0] = a;
+        this.planes[idx][1] = b;
+        this.planes[idx][2] = c;
+        this.planes[idx][3] = d;
+    }
+
+    private void normalizePlane(int idx) {
+        float a = this.planes[idx][0];
+        float b = this.planes[idx][1];
+        float c = this.planes[idx][2];
+        float d = this.planes[idx][3];
+        float len = (float) Math.sqrt((double) (a * a + b * b + c * c));
+        if (len > 1.0E-6F) {
+            this.planes[idx][0] = a / len;
+            this.planes[idx][1] = b / len;
+            this.planes[idx][2] = c / len;
+            this.planes[idx][3] = d / len;
+        }
+    }
+
+    public boolean isRegionVisible(int regionX, int regionZ, int minY, int maxY) {
+        if (!this.valid) {
             return true;
+        } else {
+            float minX = (float) regionX * 16.0F;
+            float minZ = (float) regionZ * 16.0F;
+            float maxX = minX + 16.0F;
+            float maxZ = minZ + 16.0F;
+            float minYf = (float) minY;
+            float maxYf = (float) maxY;
+            return this.aabbIntersectsFrustum(minX, minYf, minZ, maxX, maxYf, maxZ);
         }
+    }
 
-        for (Vector4f plane : frustumPlanes) {
-            float px = plane.x >= 0 ? maxX : minX;
-            float py = plane.y >= 0 ? maxY : minY;
-            float pz = plane.z >= 0 ? maxZ : minZ;
-
-            if (plane.x * px + plane.y * py + plane.z * pz + plane.w < 0) {
+    public boolean aabbIntersectsFrustum(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
+        for (int i = 0; i < 6; ++i) {
+            float a = this.planes[i][0];
+            float b = this.planes[i][1];
+            float c = this.planes[i][2];
+            float d = this.planes[i][3];
+            float px = a >= 0.0F ? maxX : minX;
+            float py = b >= 0.0F ? maxY : minY;
+            float pz = c >= 0.0F ? maxZ : minZ;
+            if (a * px + b * py + c * pz + d < 0.0F) {
                 return false;
             }
         }
@@ -86,33 +80,14 @@ public class FrustumCuller {
         return true;
     }
 
-    public boolean isChunkVisible(int chunkX, int chunkZ, int minY, int maxY) {
-        float minX = chunkX * 16.0f;
-        float maxX = minX + 16.0f;
-        float minZ = chunkZ * 16.0f;
-        float maxZ = minZ + 16.0f;
+    public static enum MovementState {
+        STANDING,
+        WALKING,
+        FLYING;
 
-        return isAABBVisible(minX, minY, minZ, maxX, maxY, maxZ);
-    }
-
-    public void updateFromCamera(Camera camera, Matrix4f projectionMatrix) {
-        if (camera == null) return;
-
-        Vec3d cameraPos = camera.getPos();
-
-        Matrix4f viewMatrix = new Matrix4f();
-        viewMatrix.identity();
-        viewMatrix.rotateX((float) Math.toRadians(-camera.getPitch()));
-        viewMatrix.rotateY((float) Math.toRadians(-camera.getYaw() + 180));
-        viewMatrix.translate(-(float)cameraPos.x, -(float)cameraPos.y, -(float)cameraPos.z);
-
-        Matrix4f viewProjection = new Matrix4f(projectionMatrix);
-        viewProjection.mul(viewMatrix);
-
-        updateFrustum(viewProjection);
-    }
-
-    public boolean isFrustumValid() {
-        return frustumValid;
+        // $FF: synthetic method
+        private static FrustumCuller.MovementState[] $values() {
+            return new FrustumCuller.MovementState[] {STANDING, WALKING, FLYING};
+        }
     }
 }
