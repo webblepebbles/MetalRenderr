@@ -1,48 +1,120 @@
 package com.metalrender.culling;
 
+import com.metalrender.util.FrustumCuller;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import net.minecraft.util.math.BlockPos;
 
-public class RegionManager {
-   private final Map<Long, Float> density = new ConcurrentHashMap();
+public final class RegionManager {
+    private static final int REGION_CHUNK_SIZE = 16;
+    private static final int REGION_BLOCK_SIZE = REGION_CHUNK_SIZE * 16;
+    private static final int VISIBILITY_HISTORY_FRAMES = 6;
 
-   public void setRegionDensity(int rx, int ry, int rz, float d) {
-      this.density.put(pack(rx, ry, rz), clamp01(d));
-   }
+    private final Map<Long, Region> regions = new HashMap<>();
+    private int frameIndex;
 
-   public float getRegionDensity(int rx, int ry, int rz) {
-      return (Float)this.density.getOrDefault(pack(rx, ry, rz), 0.0F);
-   }
+    public void beginFrame() {
+        ++this.frameIndex;
+        if (this.frameIndex == Integer.MAX_VALUE) {
+            this.frameIndex = VISIBILITY_HISTORY_FRAMES;
+        }
+    }
 
-   public void clear() {
-      this.density.clear();
-   }
+    public RegionVisibility evaluate(BlockPos chunkOrigin, int minBlockY, int maxBlockY, FrustumCuller frustum) {
+        Region region = this.getOrCreateRegion(chunkOrigin);
+        region.expandVerticalRange(minBlockY, maxBlockY);
+        if (region.lastEvaluatedFrame == this.frameIndex) {
+            return region.cachedVisibility;
+        }
 
-   private static long pack(int x, int y, int z) {
-      return (long)x & 2097151L | ((long)y & 16383L) << 21 | ((long)z & 2097151L) << 35;
-   }
+        region.lastEvaluatedFrame = this.frameIndex;
+        boolean frustumVisible = frustum == null
+            || frustum.aabbIntersectsFrustum(region.minBlockX, region.minBlockY, region.minBlockZ, region.maxBlockX,
+                region.maxBlockY, region.maxBlockZ);
+        if (!frustumVisible) {
+            region.cachedVisibility = RegionVisibility.FRUSTUM_CULLED;
+            region.wasVisible = false;
+            return region.cachedVisibility;
+        }
 
-   private static float clamp01(float v) {
-      return v < 0.0F ? 0.0F : (v > 1.0F ? 1.0F : v);
-   }
+        if (region.wasVisible && region.lastVisibleFrame + VISIBILITY_HISTORY_FRAMES > this.frameIndex) {
+            region.cachedVisibility = RegionVisibility.VISIBLE_CACHED;
+        } else {
+            region.cachedVisibility = RegionVisibility.VISIBLE_REQUIRES_CHUNK_TESTS;
+        }
+        return region.cachedVisibility;
+    }
 
-   public int countBlockersAlongRay(double ox, double oy, double oz, double dx, double dy, double dz, double maxDist) {
-      double step = 8.0D;
-      float threshold = 0.65F;
-      int count = 0;
+    public void markRegionVisible(BlockPos chunkOrigin) {
+        Region region = this.getOrCreateRegion(chunkOrigin);
+        region.wasVisible = true;
+        region.lastVisibleFrame = this.frameIndex;
+        region.cachedVisibility = RegionVisibility.VISIBLE_CACHED;
+    }
 
-      for(double t = 0.0D; t < maxDist && count < 8; t += 8.0D) {
-         double x = ox + dx * t;
-         double y = oy + dy * t;
-         double z = oz + dz * t;
-         int rx = (int)Math.floor(x / 16.0D);
-         int ry = (int)Math.floor(y / 16.0D);
-         int rz = (int)Math.floor(z / 16.0D);
-         if (this.getRegionDensity(rx, ry, rz) > 0.65F) {
-            ++count;
-         }
-      }
+    public void markRegionHidden(BlockPos chunkOrigin) {
+        Region region = this.getOrCreateRegion(chunkOrigin);
+        region.wasVisible = false;
+        region.cachedVisibility = RegionVisibility.FRUSTUM_CULLED;
+    }
 
-      return count;
-   }
+    public void sweep() {
+        if (this.regions.size() <= 4096) {
+            return;
+        }
+        int threshold = this.frameIndex - 240;
+        this.regions.values().removeIf(region -> region.lastTouchedFrame < threshold);
+    }
+
+    private Region getOrCreateRegion(BlockPos chunkOrigin) {
+        int chunkX = chunkOrigin.getX() >> 4;
+        int chunkZ = chunkOrigin.getZ() >> 4;
+        int regionX = chunkX >> 4;
+        int regionZ = chunkZ >> 4;
+        long key = (((long) regionX) << 32) ^ ((long) regionZ & 0xFFFFFFFFL);
+        Region region = this.regions.get(key);
+        if (region == null) {
+            region = new Region(regionX, regionZ);
+            this.regions.put(key, region);
+        }
+        region.lastTouchedFrame = this.frameIndex;
+        return region;
+    }
+
+    public enum RegionVisibility { FRUSTUM_CULLED, VISIBLE_REQUIRES_CHUNK_TESTS, VISIBLE_CACHED }
+
+    private static final class Region {
+        final float minBlockX;
+        final float minBlockZ;
+        final float maxBlockX;
+        final float maxBlockZ;
+        float minBlockY;
+        float maxBlockY;
+        int lastEvaluatedFrame;
+        int lastVisibleFrame;
+        int lastTouchedFrame;
+        boolean wasVisible;
+        RegionVisibility cachedVisibility;
+
+        Region(int regionX, int regionZ) {
+            float baseX = regionX * (float) REGION_BLOCK_SIZE;
+            float baseZ = regionZ * (float) REGION_BLOCK_SIZE;
+            this.minBlockX = baseX;
+            this.minBlockZ = baseZ;
+            this.maxBlockX = baseX + REGION_BLOCK_SIZE;
+            this.maxBlockZ = baseZ + REGION_BLOCK_SIZE;
+            this.minBlockY = Float.POSITIVE_INFINITY;
+            this.maxBlockY = Float.NEGATIVE_INFINITY;
+            this.cachedVisibility = RegionVisibility.VISIBLE_REQUIRES_CHUNK_TESTS;
+        }
+
+        void expandVerticalRange(int minY, int maxY) {
+            if (minY < this.minBlockY) {
+                this.minBlockY = minY;
+            }
+            if (maxY > this.maxBlockY) {
+                this.maxBlockY = maxY;
+            }
+        }
+    }
 }
