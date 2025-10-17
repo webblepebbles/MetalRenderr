@@ -16,7 +16,7 @@ public final class MetalRenderConfig {
   private static volatile float dqMinScale = 0.7F;
   private static volatile float dqMaxScale = 1.0F;
   private static volatile float dqScaleStep = 0.05F;
-  private static volatile double dqTargetFrameMs = 3.0D;
+  private static volatile double dqTargetFrameMs = 6.67D;
   private static volatile int dqMinViewDistance = 8;
   private static volatile int dqMaxViewDistance = 24;
   private static volatile int dqViewDistanceStep = 2;

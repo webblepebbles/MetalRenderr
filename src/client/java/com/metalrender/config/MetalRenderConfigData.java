@@ -13,7 +13,7 @@ public final class MetalRenderConfigData {
   public boolean meshShadersEnabled = true;
   public boolean mirrorUploads = false;
 
-  public double dqTargetFrameMs = 14.0D;
+  public double dqTargetFrameMs = 6.67D;
   public float dqMinScale = 0.85F;
   public float dqMaxScale = 1.0F;
   public float dqScaleStep = 0.05F;

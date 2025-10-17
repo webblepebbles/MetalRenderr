@@ -252,7 +252,7 @@ public final class MetalRenderCommand {
       MetalRenderConfig.setDqMinScale(0.5F);
       MetalRenderConfig.setDqMaxScale(1.0F);
       MetalRenderConfig.setDqScaleStep(0.05F);
-      MetalRenderConfig.setDqTargetFrameMs(16.0F);
+      MetalRenderConfig.setDqTargetFrameMs(6.67F);
       MetalRenderConfig.setTemporalUpscaleTarget(1.5F);
       MetalRenderConfig.setTemporalBlendFactor(0.1F);
       MetalRenderConfig.setLodDistanceThreshold(15);
