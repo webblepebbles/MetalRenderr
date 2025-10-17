@@ -1,6 +1,6 @@
+
 #include <metal_stdlib>
 using namespace metal;
-
 fragment float4 fragment_main(float3 normal [[stage_in]]) {
     float3 lightDir = normalize(float3(0.5, 1.0, 0.7));
     float diff = max(dot(normal, lightDir), 0.2);

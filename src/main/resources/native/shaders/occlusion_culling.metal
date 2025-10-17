@@ -1,20 +1,14 @@
+
 #include <metal_stdlib>
 using namespace metal;
-
 struct Aabb {
     float3 minBounds;
     float3 maxBounds;
 };
-
 struct OcclusionConstants {
     uint count;
 };
-
-kernel void occlusion_test(const device Aabb* aabbs [[buffer(0)]],
-                           constant float4x4& viewProj [[buffer(1)]],
-                           device uchar* results [[buffer(2)]],
-                           constant OcclusionConstants& constants [[buffer(3)]],
-                           uint id [[thread_position_in_grid]]) {
+kernel void occlusion_test(const device Aabb* aabbs [[buffer(0)]], constant float4x4& viewProj [[buffer(1)]], device uchar* results [[buffer(2)]], constant OcclusionConstants& constants [[buffer(3)]], uint id [[thread_position_in_grid]]) {
     if (id >= constants.count) return;
     Aabb box = aabbs[id];
     float3 corners[8];
@@ -35,8 +29,7 @@ kernel void occlusion_test(const device Aabb* aabbs [[buffer(0)]],
         float3 ndc = clip.xyz / clip.w;
         minDepth = min(minDepth, ndc.z);
         maxDepth = max(maxDepth, ndc.z);
-        if (ndc.x >= -1.05f && ndc.x <= 1.05f && ndc.y >= -1.05f && ndc.y <= 1.05f && ndc.z >= -1.05f
-            && ndc.z <= 1.05f) {
+        if (ndc.x >= -1.05f && ndc.x <= 1.05f && ndc.y >= -1.05f && ndc.y <= 1.05f && ndc.z >= -1.05f && ndc.z <= 1.05f) {
             visible = true;
         }
     }

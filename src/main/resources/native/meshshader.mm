@@ -41,9 +41,8 @@ static id<MTLCommandQueue> gCommandQueue = nil;
 
 static id<CAMetalDrawable> gDrawable = nil;
 static MTLRenderPassDescriptor *gRenderPass = nil;
-static id<MTLRenderCommandEncoder> gCurrentEncoder =
-    nil; // Reuse encoder across multiple draws
-static id<MTLCommandBuffer> gCurrentCommandBuffer = nil; // Reuse command buffer
+static id<MTLRenderCommandEncoder> gCurrentEncoder = nil;
+static id<MTLCommandBuffer> gCurrentCommandBuffer = nil;
 static std::string gShadersPath;
 
 struct NativeChunkMesh {
@@ -515,8 +514,6 @@ Java_com_metalrender_nativebridge_MeshShaderNative_drawNativeChunkMesh(
     if (!mesh || !mesh->vertexBuffer)
       return;
 
-    // Create encoder only if we don't have one yet (batch all draws into one
-    // encoder)
     if (!gCurrentEncoder) {
       if (!gCurrentCommandBuffer) {
         gCurrentCommandBuffer = [gCommandQueue commandBuffer];
@@ -532,8 +529,6 @@ Java_com_metalrender_nativebridge_MeshShaderNative_drawNativeChunkMesh(
       }
       [gCurrentEncoder setRenderPipelineState:gPipeline];
     }
-
-    // Draw this chunk into the existing encoder (no commit per chunk!)
     [gCurrentEncoder setVertexBuffer:mesh->vertexBuffer offset:0 atIndex:0];
     if (mesh->indexBuffer) {
       MTLIndexType it =
@@ -548,7 +543,6 @@ Java_com_metalrender_nativebridge_MeshShaderNative_drawNativeChunkMesh(
                           vertexStart:0
                           vertexCount:mesh->vertexCount];
     }
-    // Note: encoder is NOT ended here - it stays open for the next chunk
   }
 }
 
