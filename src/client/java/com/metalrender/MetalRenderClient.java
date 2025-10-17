@@ -8,31 +8,32 @@ import com.metalrender.util.MetalLogger;
 import net.fabricmc.api.ClientModInitializer;
 
 public final class MetalRenderClient implements ClientModInitializer {
-    private static volatile boolean ENABLED = false;
-    private static volatile MetalWorldRenderer WORLD;
-    private static volatile MeshShaderBackend MESH_BACKEND;
+   private static volatile boolean ENABLED = false;
+   private static volatile MetalWorldRenderer WORLD;
+   private static volatile MeshShaderBackend MESH_BACKEND;
 
-    public void onInitializeClient() {
-        MetalRenderConfig.loadFromSystemProperties();
-        ENABLED = MetalHardwareChecker.isCompatible();
-        if (ENABLED) {
-            WORLD = new MetalWorldRenderer();
-            MESH_BACKEND = new MeshShaderBackend();
-            MetalLogger.info("MetalRender initialized (Sodium integration active)");
-        } else {
-            MetalLogger.warn("MetalRender disabled due to incompatible hardware");
-        }
-    }
+   public void onInitializeClient() {
+      MetalRenderConfig.loadFromSystemProperties();
+      ENABLED = MetalHardwareChecker.isCompatible();
+      if (ENABLED) {
+         WORLD = new MetalWorldRenderer();
+         MESH_BACKEND = new MeshShaderBackend();
+         MetalLogger.info("MetalRender initialized (Sodium integration active)");
+      } else {
+         MetalLogger.warn("MetalRender disabled due to incompatible hardware");
+      }
 
-    public static boolean isEnabled() {
-        return ENABLED;
-    }
+   }
 
-    public static MetalWorldRenderer getWorldRenderer() {
-        return WORLD;
-    }
+   public static boolean isEnabled() {
+      return ENABLED;
+   }
 
-    public static MeshShaderBackend getMeshBackend() {
-        return MESH_BACKEND;
-    }
+   public static MetalWorldRenderer getWorldRenderer() {
+      return WORLD;
+   }
+
+   public static MeshShaderBackend getMeshBackend() {
+      return MESH_BACKEND;
+   }
 }

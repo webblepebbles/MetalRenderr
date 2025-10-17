@@ -4,6 +4,14 @@
   "package": "com.metalrender.sodium.mixins",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "SodiumRendererMixin"
+    "MinecraftClientMixin",
+    "SodiumRendererMixin",
+    "ChunkRenderManagerMixin",
+    "BuilderTaskOutputMixin",
+    "SodiumWorldRendererMixin",
+    "RenderSectionMixin",
+    "ScreenAccessor",
+    "sodiumhook.SodiumWorldRendererMixin_CM",
+    "lwjgl.GL11CMixin"
   ]
 }

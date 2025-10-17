@@ -4,7 +4,7 @@ set -euo pipefail
 JAVA_HOME=${JAVA_HOME:-$(/usr/libexec/java_home -v 21)}
 
 mkdir -p build/native
-clang++ -fobjc-arc -shared \
+clang++ -fobjc-arc -shared -mmacosx-version-min=13.0 \
   -o build/native/libmetalrender.dylib \
   src/main/resources/native/metalrender.mm \
   src/main/resources/native/meshshader.mm \

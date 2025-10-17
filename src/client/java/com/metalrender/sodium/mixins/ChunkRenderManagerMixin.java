@@ -9,12 +9,15 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Pseudo
-@Mixin(targets = { "me.jellysquid.mods.sodium.client.render.chunk.ChunkRenderManager" })
+@Mixin(
+   targets = {"me.jellysquid.mods.sodium.client.render.chunk.ChunkRenderManager"}
+)
 public class ChunkRenderManagerMixin {
-   @Inject(method = {
-         "uploadChunkBuildResult(Lme/jellysquid/mods/sodium/client/render/chunk/compile/ChunkBuildOutput;)V",
-         "upload(Lme/jellysquid/mods/sodium/client/render/chunk/compile/ChunkBuildOutput;)V" }, at = {
-               @At("HEAD") }, require = 0)
+   @Inject(
+      method = {"uploadChunkBuildResult(Lme/jellysquid/mods/sodium/client/render/chunk/compile/ChunkBuildOutput;)V", "upload(Lme/jellysquid/mods/sodium/client/render/chunk/compile/ChunkBuildOutput;)V"},
+      at = {@At("HEAD")},
+      require = 0
+   )
    private void metalrender$onUpload(@Coerce Object result, CallbackInfo ci) {
       if (MetalRenderClient.isEnabled() && MetalRenderClient.getWorldRenderer() != null) {
          MetalRenderClient.getWorldRenderer().uploadBuildResult(result);
