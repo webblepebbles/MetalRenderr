@@ -12,6 +12,7 @@
     "RenderSectionMixin",
     "ScreenAccessor",
     "sodiumhook.SodiumWorldRendererMixin_CM",
-    "lwjgl.GL11CMixin"
+    "lwjgl.GL11CMixin",
+    "lwjgl.GL15Mixin"
   ]
 }

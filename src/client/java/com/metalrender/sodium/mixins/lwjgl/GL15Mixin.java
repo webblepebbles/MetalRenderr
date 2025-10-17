@@ -11,8 +11,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Pseudo
-@Mixin(targets = {"org.lwjgl.opengl.GL15C"})
-public class GL15CMixin {
+@Mixin(targets = {"org.lwjgl.opengl.GL15"}) // the only non-native glBindBuffer is in GL15, not in GL15C
+public class GL15Mixin {
     @Inject(method = {"glBindBuffer"}, at = { @At("HEAD") }, remap = false)
     private static void metalrender$onBindBuffer(int target, int buffer, CallbackInfo ci) {
         if (MetalRenderConfig.mirrorUploads()) {
@@ -20,7 +20,7 @@ public class GL15CMixin {
         }
     }
 
-    @Inject(method = {"glBufferData"}, at = { @At("HEAD") }, remap = false)
+    @Inject(method = {"glBufferData(ILjava/nio/ByteBuffer;I)V"}, at = { @At("HEAD") }, remap = false)
     private static void metalrender$onBufferDataBB(int target, ByteBuffer data, int usage, CallbackInfo ci) {
         if (MetalRenderConfig.mirrorUploads()) {
             GLIntercept.onBufferData(target, data, usage, 32);
