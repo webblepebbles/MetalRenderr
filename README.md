@@ -8,42 +8,45 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 
 ## Dependencies
 
-| Dependency | Necessity | Where to get |
-|---|---|---|
-| Sodium | Necessary | [Modrinth](https://modrinth.com/mod/sodium) |
-| Fabric | Necessary | [Fabric's official page](https://fabricmc.net/use/installer/) |
-| Fabric API | Necessary | [Modrinth](https://modrinth.com/mod/fabric-api) |
-| Ramen noodles | Necessary for survival | Find it yourself |
-| Java JVM 21 | Necessary | [Oracle](https://www.oracle.com/au/java/technologies/downloads/#java21) |
+| Dependency    | Necessity              | Where to get                                                            |
+| ------------- | ---------------------- | ----------------------------------------------------------------------- |
+| Sodium        | Necessary              | [Modrinth](https://modrinth.com/mod/sodium)                             |
+| Fabric        | Necessary              | [Fabric's official page](https://fabricmc.net/use/installer/)           |
+| Fabric API    | Necessary              | [Modrinth](https://modrinth.com/mod/fabric-api)                         |
+| Ramen noodles | Necessary for survival | Find it yourself                                                        |
+| Java JVM 21   | Necessary              | [Oracle](https://www.oracle.com/au/java/technologies/downloads/#java21) |
+| ModMenu.      | Necessary for versions v0.1.6+ | [Modrinth](https://modrinth.com/mod/modmenu)
 
 ## Features
 
-- Uses **Metal** for rendering on macOS  
-- Works with **Fabric Loader** and **Sodium**  
-- Checks your hardware before starting  
-- Turns off safely if Metal is not supported  
+- Uses **Metal** for rendering on macOS
+- Works with **Fabric Loader** and **Sodium**
+- Checks your hardware before starting
+- Turns off safely if Metal is not supported
 
 ---
 
 # Notes
+
 - Only works on Metal (macOS)
 - Will still load on other GPUs but won't offer any additional benefits or changes
 - Shaders are not yet supported yet, they might be added in the future
 - This should be compatible with most other mods, if it isn't please add a Issue
 - MarioMastr helped me a ton by making a fork that addressed some MAJOR issues in native code! Thank them too!
-  
+
 ---
 
 # FAQs
+
 - Why is this version diffrent from the Modrinth version?
-  
+
   It is diffrent because I can't make a new version for every bug fix, performance buff or Library edit. It is inefficent so I would make a new version for Modrinth
   every stable release and major bug clearance (a group of bugs that I fixed) or a new feature etc etc. I cannot flood the Modrinth page with 20 new releases every 5
   days or so.
 
 - When will Forge/Neoforge/Quilt be added?
 
-  I probably won't make support for other loaders in the future but for now, only Fabric is supported because its the most lightweight and popular. 
+  I probably won't make support for other loaders in the future but for now, only Fabric is supported because its the most lightweight and popular.
 
 - Can I run MetalRender on non-Apple Silicon hardware?
 
@@ -59,16 +62,17 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 
   As long as your launcher doesn't mess with display libraries, GLFW or EGL (like Prism does), it would work. It has been verifyed to NOT work on Prism launcher. The
   Offical Mojang launcher works.
+
 ---
 
 ## Install
 
-1. Download the latest release from [Releases](../../releases).  
-2. Put the `.jar` file in your Minecraft `mods/` folder.  
+1. Download the latest release from [Releases](../../releases).
+2. Put the `.jar` file in your Minecraft `mods/` folder.
 3. Make sure you have:
-   - Minecraft **1.21.8+**  
-   - Fabric Loader **0.15+**  
-   - Fabric API **0.131.0+**  
+   - Minecraft **1.21.8+**
+   - Fabric Loader **0.15+**
+   - Fabric API **0.131.0+**
 
 ---
 
@@ -78,3 +82,4 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 git clone https://github.com/webblepebbles/metalrender.git
 cd metalrender
 ./gradlew build
+```
