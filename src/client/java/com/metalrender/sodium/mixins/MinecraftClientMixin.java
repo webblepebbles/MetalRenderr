@@ -10,17 +10,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin({MinecraftClient.class})
 public class MinecraftClientMixin {
-    @Inject(method = {"render"}, at = { @At("HEAD") })
-    private void metalrender$startFrame(boolean tick, CallbackInfo ci) {
-        if (MetalRenderClient.isEnabled()) {
-            PerformanceController.startFrame();
-        }
+  @Inject(method = {"render"}, at = { @At("HEAD") })
+  private void metalrender$startFrame(boolean tick, CallbackInfo ci) {
+    if (MetalRenderClient.isEnabled()) {
+      PerformanceController.startFrame();
     }
+  }
 
-    @Inject(method = {"render"}, at = { @At("TAIL") })
-    private void metalrender$endFrame(boolean tick, CallbackInfo ci) {
-        if (MetalRenderClient.isEnabled()) {
-            PerformanceController.endFrame();
-        }
+  @Inject(method = {"render"}, at = { @At("TAIL") })
+  private void metalrender$endFrame(boolean tick, CallbackInfo ci) {
+    if (MetalRenderClient.isEnabled()) {
+      PerformanceController.endFrame();
     }
+  }
 }

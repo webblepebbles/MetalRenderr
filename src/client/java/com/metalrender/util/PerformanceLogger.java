@@ -1,10 +1,11 @@
 package com.metalrender.util;
 
 import com.metalrender.config.MetalRenderConfig;
+import com.metalrender.performance.RenderingMetrics;
 import net.minecraft.client.MinecraftClient;
 
 public final class PerformanceLogger {
-  private long frameCount = 0L;
+  private static long frameCount = 0L;
   private long totalChunksProcessed = 0L;
   private long totalChunksDrawn = 0L;
   private long totalFrustumCulled = 0L;
@@ -14,8 +15,8 @@ public final class PerformanceLogger {
   private double lastFrameTime = 0.0D;
   private double avgFrameTime = 0.0D;
   private double currentFPS = 0.0D;
-  private long lastLogTime = System.currentTimeMillis();
-  private static final long LOG_INTERVAL = 1000L;
+  private static long lastLogTime = System.currentTimeMillis();
+  private static final long LOG_INTERVAL = 60000L;
 
   public void startFrame() {
     this.frameStartTime = System.nanoTime();
@@ -37,7 +38,7 @@ public final class PerformanceLogger {
       frameTime = (double)(frameEndTime - this.frameStartTime) / 1000000.0D;
     }
 
-    ++this.frameCount;
+    ++PerformanceLogger.frameCount;
     this.totalChunksProcessed += (long)chunksProcessed;
     this.totalChunksDrawn += (long)chunksDrawn;
     this.totalFrustumCulled += (long)frustumCulled;
@@ -45,9 +46,9 @@ public final class PerformanceLogger {
     this.avgFrameTime = this.avgFrameTime * 0.95D + frameTime * 0.05D;
     this.currentFPS = 1000.0D / Math.max(this.avgFrameTime, 0.1D);
     long currentTime = System.currentTimeMillis();
-    if (currentTime - this.lastLogTime >= 1000L) {
+    if (currentTime - PerformanceLogger.lastLogTime >= LOG_INTERVAL) {
       this.logPerformanceStats();
-      this.lastLogTime = currentTime;
+      PerformanceLogger.lastLogTime = currentTime;
     }
   }
 
@@ -57,8 +58,8 @@ public final class PerformanceLogger {
             ? (double)(this.totalFrustumCulled + this.totalOcclusionCulled) /
                   (double)this.totalChunksProcessed * 100.0D
             : 0.0D;
-    MetalLogger.info("[PERF] FPS: %.1f | FrameTime: %.2fms | Chunks: P:%d " +
-                     "D:%d | Culled: F:%d O:%d (%.1f%%)",
+    MetalLogger.info("[PERF] FPS: %.1f | FrameTime: %.2fms | Chunks: P:%d "
+                         + "D:%d | Culled: F:%d O:%d (%.1f%%)",
                      this.currentFPS, this.avgFrameTime,
                      this.totalChunksProcessed, this.totalChunksDrawn,
                      this.totalFrustumCulled, this.totalOcclusionCulled,
@@ -69,6 +70,7 @@ public final class PerformanceLogger {
         MetalRenderConfig.dqTargetFrameMs(),
         MetalRenderConfig.resolutionScale(),
         MinecraftClient.getInstance().options.getViewDistance().getValue());
+    MetalLogger.info("[PERF][MESH] %s", RenderingMetrics.getMetricsString());
     if (this.currentFPS < 150.0D) {
       MetalLogger.info(
           "[PERF] Performance below 150 FPS - LOD system adjusting.");
@@ -92,5 +94,5 @@ public final class PerformanceLogger {
     return this.lastFrameTime > 0.0D ? this.lastFrameTime : this.avgFrameTime;
   }
 
-  public long getFrameCount() { return this.frameCount; }
+  public long getFrameCount() { return PerformanceLogger.frameCount; }
 }

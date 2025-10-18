@@ -51,7 +51,6 @@ public final class LODGenerator {
     }
 
     int stride = VertexCompressor.OUTPUT_STRIDE;
-    // Add 10% safety margin to prevent buffer overflow with rounding
     int estimated = Math.max(3, (vertexCount + step - 1) / step);
     int allocSize = (int)Math.ceil(estimated * 1.1) * stride;
     ByteBuffer target =

@@ -38,7 +38,6 @@ public final class MetalRenderConfigScreen extends Screen {
   public MetalRenderConfigScreen(Screen parent) {
     super(Text.literal("MetalRender Settings"));
     this.parent = parent;
-    // Always sync config data from runtime when opening the screen
     com.metalrender.config.MetalRenderConfigManager.syncFromRuntime(false);
   }
 

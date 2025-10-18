@@ -6,6 +6,7 @@ import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.lit
 import com.metalrender.MetalRenderClient;
 import com.metalrender.config.MetalRenderConfig;
 import com.metalrender.config.MetalRenderConfigManager;
+import com.metalrender.performance.RenderingMetrics;
 import com.metalrender.render.MetalWorldRenderer;
 import com.metalrender.sodium.backend.MeshShaderBackend;
 import com.mojang.brigadier.CommandDispatcher;
@@ -81,9 +82,9 @@ public final class MetalRenderCommand {
 
   private static int lodReset(CommandContext<FabricClientCommandSource> ctx) {
     try {
-      MetalRenderConfig.setLodDistanceThreshold(15);
-      MetalRenderConfig.setLodFarDistance(28);
-      MetalRenderConfig.setLodDistantScale(0.20F);
+      MetalRenderConfig.setLodDistanceThreshold(8);
+      MetalRenderConfig.setLodFarDistance(16);
+      MetalRenderConfig.setLodDistantScale(0.10F);
       MetalRenderConfig.setDistanceLodEnabled(true);
 
       MetalRenderConfigManager.syncFromRuntime(true);
@@ -91,7 +92,7 @@ public final class MetalRenderCommand {
       ctx.getSource().sendFeedback(
           Text.literal("§a✓ LOD settings reset to defaults"));
       ctx.getSource().sendFeedback(
-          Text.literal("Near: 15 chunks, Far: 28 chunks, Scale: 0.20"));
+          Text.literal("Near: 8 chunks, Far: 16 chunks, Scale: 0.10"));
       return 1;
     } catch (Exception e) {
       ctx.getSource().sendError(
@@ -205,7 +206,17 @@ public final class MetalRenderCommand {
                        MetalRenderConfig.lodDistanceThreshold() + " chunks"));
       ctx.getSource().sendFeedback(Text.literal(
           "§7LOD Far: §f" + MetalRenderConfig.lodFarDistance() + " chunks"));
+      ctx.getSource().sendFeedback(Text.literal(
+          String.format("§7LOD Distribution: §fL0: %d | L1: %d | L2: %d",
+                        RenderingMetrics.getChunksAtLod0(),
+                        RenderingMetrics.getChunksAtLod1(),
+                        RenderingMetrics.getChunksAtLod2())));
     }
+
+    ctx.getSource().sendFeedback(
+        Text.literal(String.format("§7GPU Load: §f%,d vertices in %d draws",
+                                   RenderingMetrics.getTotalVertices(),
+                                   RenderingMetrics.getTotalDrawCommands())));
 
     return 1;
   }
@@ -242,9 +253,9 @@ public final class MetalRenderCommand {
     try {
       MetalRenderConfig.setMetalRenderEnabled(true);
       MetalRenderConfig.setMirrorUploads(true);
-      MetalRenderConfig.setAggressiveFrustumCulling(false);
-      MetalRenderConfig.setOcclusionCulling(false);
-      MetalRenderConfig.setDynamicQuality(false);
+      MetalRenderConfig.setAggressiveFrustumCulling(true);
+      MetalRenderConfig.setOcclusionCulling(true);
+      MetalRenderConfig.setDynamicQuality(true);
       MetalRenderConfig.setMeshShadersEnabled(true);
       MetalRenderConfig.setTemporalAAEnabled(false);
       MetalRenderConfig.setDistanceLodEnabled(true);
@@ -255,9 +266,9 @@ public final class MetalRenderCommand {
       MetalRenderConfig.setDqTargetFrameMs(6.67F);
       MetalRenderConfig.setTemporalUpscaleTarget(1.5F);
       MetalRenderConfig.setTemporalBlendFactor(0.1F);
-      MetalRenderConfig.setLodDistanceThreshold(15);
-      MetalRenderConfig.setLodFarDistance(28);
-      MetalRenderConfig.setLodDistantScale(0.20F);
+      MetalRenderConfig.setLodDistanceThreshold(8);
+      MetalRenderConfig.setLodFarDistance(16);
+      MetalRenderConfig.setLodDistantScale(0.10F);
 
       MetalRenderConfigManager.syncFromRuntime(true);
 

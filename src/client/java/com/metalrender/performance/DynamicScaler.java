@@ -13,10 +13,8 @@ public final class DynamicScaler {
   private boolean announcedEnable = false;
   private final TemporalUpscaler temporalUpscaler = new TemporalUpscaler();
 
-  // Phase 1A: Batch dynamic quality updates (only apply every N frames)
   private int frameCounter = 0;
-  private static final int UPDATE_FREQUENCY =
-      3; // Apply scale changes every 3 frames
+  private static final int UPDATE_FREQUENCY = 3;
 
   public void onFrameEnd(double frameMs) {
     if (!(frameMs <= 0.0D)) {
@@ -49,16 +47,10 @@ public final class DynamicScaler {
         boolean scaleChanged = false;
         float scaleDrop;
         float newScale;
-
-        // Phase 1A: Only apply scale changes every UPDATE_FREQUENCY frames
-        // Reduces GPU pipeline stalls from constant resolution changes
         frameCounter++;
         boolean shouldApplyChange = (frameCounter % UPDATE_FREQUENCY == 0);
 
-        // Only compute and apply changes when on an update frame (prevents stale data)
         if (shouldApplyChange) {
-          // Phase 1B: Conservative thresholds (1.15x/0.80x instead of 1.05x/0.9x)
-          // Reduces thrashing from micro-adjustments
           if (ratio > 1.15D) {
             scaleDrop = scaleStep;
             if (ratio > 1.35D) {
@@ -75,7 +67,7 @@ public final class DynamicScaler {
               currScale = newScale;
             }
             this.fastFrameStreak = 0;
-          } else if (ratio < 0.80D) { // Changed from 0.9D to 0.80D
+          } else if (ratio < 0.80D) {
             scaleDrop = scaleStep;
             if (ratio < 0.6D) {
               scaleDrop = scaleStep * 2.0F;
@@ -90,13 +82,11 @@ public final class DynamicScaler {
           } else {
             this.fastFrameStreak = Math.max(0, this.fastFrameStreak - 1);
           }
-
-          // Apply the scale change if it actually changed
           if (scaleChanged) {
             MetalRenderConfig.setResolutionScale(currScale);
             MetalLogger.debug(
-                "[DQ] Adjusted resolution scale to %.2f (ratio=%.2f)", currScale,
-                ratio);
+                "[DQ] Adjusted resolution scale to %.2f (ratio=%.2f)",
+                currScale, ratio);
           }
         }
       }

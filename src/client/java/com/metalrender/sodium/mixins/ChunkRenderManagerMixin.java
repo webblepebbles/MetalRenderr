@@ -9,6 +9,5 @@ import org.spongepowered.asm.mixin.Pseudo;
         {"net.caffeinemc.mods.sodium.client.render.chunk.RenderSectionManager",
          "me.jellysquid.mods.sodium.client.render.chunk.ChunkRenderManager"})
 public class ChunkRenderManagerMixin {
-  // This mixin is kept for potential future use but currently unused
-  // since BuilderTaskOutputMixin directly intercepts chunk builds
+  // this is just kept for future use if needed
 }

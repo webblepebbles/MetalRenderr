@@ -91,7 +91,6 @@ kernel void occlusion_test(const device Aabb* aabbs [[buffer(0)]],
 		if (clip.w <= 0.001f) continue;
 		float3 ndc = clip.xyz / clip.w;
 		
-		// Check if any corner is in front of camera
 		if (ndc.z < 1.0f) allBehind = false;
 		if (ndc.x >= -1.0f && ndc.x <= 1.0f && ndc.y >= -1.0f && ndc.y <= 1.0f) allClipped = false;
 		
@@ -102,28 +101,23 @@ kernel void occlusion_test(const device Aabb* aabbs [[buffer(0)]],
 		nearestZ = min(nearestZ, ndc.z);
 	}
 	
-	// Frustum culling: outside view frustum or all behind camera
 	if (allBehind || allClipped || maxX < -1.0f || minX > 1.0f || maxY < -1.0f || minY > 1.0f) {
 		results[id] = 1;
 		return;
 	}
 	
-	// Convert NDC to screen space [0,1]
 	float2 screenMin = float2((minX + 1.0f) * 0.5f, (1.0f - maxY) * 0.5f);
 	float2 screenMax = float2((maxX + 1.0f) * 0.5f, (1.0f - minY) * 0.5f);
 	screenMin = clamp(screenMin, float2(0.0f), float2(1.0f));
 	screenMax = clamp(screenMax, float2(0.0f), float2(1.0f));
 	
-	// Calculate appropriate HiZ mip level based on screen area
 	float2 screenSize = (screenMax - screenMin) * constants.hiZSize;
 	float maxDim = max(screenSize.x, screenSize.y);
 	float mipLevel = max(0.0f, floor(log2(maxDim)));
 	
-	// Sample HiZ texture at the calculated mip level
 	float2 samplePos = (screenMin + screenMax) * 0.5f;
 	float hiZDepth = hiZTexture.sample(hiZSampler, samplePos, level(mipLevel)).r;
 	
-	// Occluded if the nearest corner is further than HiZ depth
 	bool occluded = (nearestZ > hiZDepth + 0.0001f);
 	results[id] = occluded ? 1 : 0;
 }
@@ -297,15 +291,12 @@ static bool supportsMetalFX(id<MTLDevice> device) {
     envLogged = true;
   }
 
-  // Check if explicitly disabled (0, false, no, off)
   if (isFalsyFlag(envValue)) {
     fprintf(
         stderr,
         "[MetalRender] MetalFX explicitly disabled via environment variable\n");
     return false;
   }
-
-  // Enabled by default (if not set or if set to truthy value)
   if (@available(macOS 13.0, *)) {
     bool deviceSupported =
         [MTLFXTemporalScalerDescriptor supportsDevice:device];
@@ -709,9 +700,7 @@ Java_com_metalrender_nativebridge_NativeBridge_nSetMetalFXEnabled(
 
 JNIEXPORT void JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nConfigureMetalFX(
-    JNIEnv *, jclass, jlong handle, jint width, jint height, jfloat scale) {
-  // MetalFX removed - no-op
-}
+    JNIEnv *, jclass, jlong handle, jint width, jint height, jfloat scale) {}
 
 JNIEXPORT jlong JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nEnsureHiZ(JNIEnv *, jclass,
@@ -782,8 +771,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nOcclusionEvaluate(
   if (!aabbPtr || !resultPtr) {
     return;
   }
-
-  // Update constants buffer to include HiZ dimensions
   struct OcclusionConstants {
     uint32_t count;
     float hiZWidth;
@@ -828,7 +815,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nOcclusionEvaluate(
   [encoder setBytes:matrixPtr length:sizeof(float) * 16 atIndex:1];
   [encoder setBuffer:ctx->occlusionResultBuffer offset:0 atIndex:2];
 
-  // Bind HiZ texture if available
   if (hiz && hiz->pyramidTexture) {
     [encoder setTexture:hiz->pyramidTexture atIndex:0];
   }
@@ -843,7 +829,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nOcclusionEvaluate(
   [commandBuffer commit];
   [commandBuffer waitUntilCompleted];
 
-  // Copy results after GPU has finished
   memcpy(resultPtr, [ctx->occlusionResultBuffer contents], queryCount);
 }
 
@@ -946,8 +931,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nExecuteIndirect(JNIEnv *,
   if (ctx->currentIndirectCount == 0)
     return 0;
 
-  // Create and submit command buffer asynchronously - do NOT wait for
-  // completion
   id<MTLCommandBuffer> commandBuffer = [ctx->graphicsQueue commandBuffer];
   if (!commandBuffer)
     return 0;
@@ -970,8 +953,7 @@ Java_com_metalrender_nativebridge_NativeBridge_nExecuteIndirect(JNIEnv *,
     id<MTLRenderCommandEncoder> encoder =
         [commandBuffer renderCommandEncoderWithDescriptor:passDesc];
     if (encoder) {
-      // TODO: bind actual terrain pipeline and encoders when geometry upload is
-      // ready
+
       [encoder endEncoding];
     }
 
@@ -992,12 +974,7 @@ Java_com_metalrender_nativebridge_NativeBridge_nExecuteIndirect(JNIEnv *,
     return static_cast<jint>(ctx->currentIndirectCount);
   }
 #endif
-
-  // TODO: Set up render pass, pipeline, and bind persistentBuffer/indirectArgs
-  // for actual draw For now, just commit asynchronously without blocking
   [commandBuffer commit];
-
-  // Return immediately without waiting - let GPU work in parallel with CPU
   return static_cast<jint>(ctx->currentIndirectCount);
 }
 

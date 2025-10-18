@@ -68,7 +68,7 @@ public class FrustumCuller {
     ++this.totalTestsThisFrame;
 
     if (!this.valid) {
-      ++this.cullsThisFrame; // Not valid = show everything, treat as "visible"
+      ++this.cullsThisFrame;
       return true;
     }
 

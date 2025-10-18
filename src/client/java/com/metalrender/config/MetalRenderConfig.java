@@ -7,7 +7,7 @@ public final class MetalRenderConfig {
   private static volatile boolean swapCutout = false;
   private static volatile boolean swapTranslucent = false;
   private static volatile boolean aggressiveFrustumCulling = true;
-  private static volatile boolean occlusionCulling = false;
+  private static volatile boolean occlusionCulling = true;
   private static volatile boolean dynamicQuality = true;
   private static volatile boolean meshShadersEnabled = true;
   private static volatile boolean temporalAAEnabled = true;
@@ -22,9 +22,9 @@ public final class MetalRenderConfig {
   private static volatile int dqViewDistanceStep = 2;
   private static volatile float temporalUpscaleTarget = 0.85F;
   private static volatile float temporalBlendFactor = 0.12F;
-  private static volatile int lodDistanceThreshold = 15;
-  private static volatile int lodFarDistance = 28;
-  private static volatile float lodDistantScale = 0.20F;
+  private static volatile int lodDistanceThreshold = 8;
+  private static volatile int lodFarDistance = 16;
+  private static volatile float lodDistantScale = 0.10F;
 
   private MetalRenderConfig() {}
 

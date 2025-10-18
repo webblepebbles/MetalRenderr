@@ -7,8 +7,8 @@ import net.fabricmc.api.Environment;
 
 @Environment(EnvType.CLIENT)
 public final class MetalRenderModMenuIntegration implements ModMenuApi {
-    @Override
-    public ConfigScreenFactory<?> getModConfigScreenFactory() {
-        return MetalRenderConfigScreen::new;
-    }
+  @Override
+  public ConfigScreenFactory<?> getModConfigScreenFactory() {
+    return MetalRenderConfigScreen::new;
+  }
 }

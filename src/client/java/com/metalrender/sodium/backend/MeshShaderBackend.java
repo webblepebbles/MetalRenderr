@@ -5,6 +5,7 @@ import com.metalrender.lod.LODGenerator;
 import com.metalrender.lod.LODGenerator.LevelData;
 import com.metalrender.nativebridge.NativeBridge;
 import com.metalrender.performance.RenderOptimizer;
+import com.metalrender.performance.RenderingMetrics;
 import com.metalrender.util.MetalLogger;
 import com.metalrender.util.PersistentBufferArena;
 import com.metalrender.util.VertexCompressor;
@@ -25,9 +26,12 @@ import net.minecraft.util.math.Vec3d;
 
 public final class MeshShaderBackend {
   private static final int MAX_LOD_LEVELS = 3;
+  private static final int MAX_CHUNK_CACHE_SIZE = 8192;
+  private static final double MAX_CHUNK_DISTANCE = 1024.0;
 
   private final boolean meshSupported;
   private final Map<Long, ChunkMesh> chunkMeshes = new ConcurrentHashMap<>();
+  private long lastCleanupFrame = 0;
 
   public MeshShaderBackend() {
     this.meshSupported = NativeBridge.nSupportsMeshShaders();
@@ -39,7 +43,7 @@ public final class MeshShaderBackend {
   public boolean isMeshEnabled() {
     boolean enabled =
         this.meshSupported && MetalRenderConfig.meshShadersEnabled();
-    if (Math.random() < 0.001) { // Log occasionally to avoid spam
+    if (Math.random() < 0.001) {
       MetalLogger.info(
           "[MeshBackend] isMeshEnabled() = %s (supported=%s, config=%s)",
           enabled, this.meshSupported, MetalRenderConfig.meshShadersEnabled());
@@ -98,8 +102,8 @@ public final class MeshShaderBackend {
 
       ByteBuffer persistent = arena.buffer();
       if (persistent == null) {
-        MetalLogger.warn("[MetalRender] Persistent buffer unavailable; " +
-                         "skipping chunk upload at {}",
+        MetalLogger.warn("[MetalRender] Persistent buffer unavailable; "
+                             + "skipping chunk upload at {}",
                          origin);
         continue;
       }
@@ -122,8 +126,8 @@ public final class MeshShaderBackend {
 
         int offset = arena.allocate(bytes);
         if (offset < 0) {
-          MetalLogger.warn("[MetalRender] Persistent buffer exhausted while " +
-                           "uploading chunk {}",
+          MetalLogger.warn("[MetalRender] Persistent buffer exhausted while "
+                               + "uploading chunk {}",
                            origin);
           break;
         }
@@ -151,10 +155,44 @@ public final class MeshShaderBackend {
     }
   }
 
+  private void cleanupDistantChunks(Camera camera) {
+    if (this.chunkMeshes.size() < MAX_CHUNK_CACHE_SIZE) {
+      return;
+    }
+
+    Vec3d cameraPos = camera.getPos();
+    java.util.List<Long> toRemove = new java.util.ArrayList<>();
+
+    for (ChunkMesh mesh : this.chunkMeshes.values()) {
+      double distance = mesh.distanceTo(cameraPos);
+      if (distance > MAX_CHUNK_DISTANCE) {
+        toRemove.add(mesh.origin.asLong());
+      }
+    }
+
+    for (Long key : toRemove) {
+      this.chunkMeshes.remove(key);
+    }
+
+    if (!toRemove.isEmpty()) {
+      MetalLogger.info(
+          "[MeshBackend] Cleaned up {} distant chunks (cache size: {} -> {})",
+          toRemove.size(), this.chunkMeshes.size() + toRemove.size(),
+          this.chunkMeshes.size());
+    }
+  }
+
   public int emitDraws(long nativeHandle, RenderOptimizer optimizer,
                        Camera camera) {
     if (this.chunkMeshes.isEmpty()) {
       return 0;
+    }
+
+    RenderingMetrics.resetFrame();
+    long currentFrame = System.nanoTime() / 16_666_666L;
+    if (currentFrame - this.lastCleanupFrame > 60) {
+      this.cleanupDistantChunks(camera);
+      this.lastCleanupFrame = currentFrame;
     }
 
     Vec3d cameraPos = camera.getPos();
@@ -188,6 +226,8 @@ public final class MeshShaderBackend {
         draws = mesh.drawsForLevel(0);
       }
 
+      RenderingMetrics.recordLodUsage(lodLevel, 0, 0);
+
       boolean applyDistanceScale =
           lodEnabled && lodLevel == mesh.levelCount() - 1;
       for (DrawCommand draw : draws) {
@@ -196,6 +236,8 @@ public final class MeshShaderBackend {
           vertexCount = Math.max(3, (int)(vertexCount * distantScale));
         }
 
+        RenderingMetrics.addVertices(vertexCount);
+        RenderingMetrics.addDrawCommand();
         NativeBridge.nQueueIndirectDraw(nativeHandle, commandIndex++,
                                         draw.vertexOffset, 0L, vertexCount, 0,
                                         0, 1, 0, (float)worldDistance);

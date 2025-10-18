@@ -7,5 +7,6 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 
 @Mixin(Screen.class)
 public interface ScreenAccessor {
-    @Invoker("addDrawableChild")<T extends Element> T metalrender$addDrawableChild(T widget);
+  @Invoker("addDrawableChild")
+  <T extends Element> T metalrender$addDrawableChild(T widget);
 }

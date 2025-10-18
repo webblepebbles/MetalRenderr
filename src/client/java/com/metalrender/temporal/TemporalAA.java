@@ -34,9 +34,6 @@ public final class TemporalAA {
         Math.floorMod(this.frameIndex.incrementAndGet(), SAMPLE_COUNT);
     float rawJitterX = halton(sampleIndex + 1, HALTON_DENOM_BASE2) - 0.5F;
     float rawJitterY = halton(sampleIndex + 1, HALTON_DENOM_BASE3) - 0.5F;
-
-    // Keep optimal ±0.5px jitter for proper TAA statistical distribution
-    // rawJitterX/Y are already in [-0.5, 0.5] range (±0.5px optimal for TAA)
     this.jitterX = rawJitterX / Math.max(1.0F, viewportWidth);
     this.jitterY = rawJitterY / Math.max(1.0F, viewportHeight);
     this.blendFactor = MetalRenderConfig.temporalBlendFactor();
@@ -47,8 +44,7 @@ public final class TemporalAA {
       return;
     }
 
-    float jitterScale = 2.0F; // matches the typical clip-space scale factor for
-                              // perspective jitter
+    float jitterScale = 2.0F;
     projection.m20(projection.m20() + this.jitterX * jitterScale);
     projection.m21(projection.m21() + this.jitterY * jitterScale);
   }

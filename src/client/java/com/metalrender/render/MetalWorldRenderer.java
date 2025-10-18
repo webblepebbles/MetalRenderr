@@ -43,8 +43,8 @@ public class MetalWorldRenderer {
                          NativeBridge.nGetDeviceName(this.handle));
         if (this.ready) {
           if (!this.persistentArena.initialize(this.handle)) {
-            MetalLogger.warn("Persistent buffer arena failed to initialize; " +
-                             "falling back to transient uploads");
+            MetalLogger.warn("Persistent buffer arena failed to initialize; "
+                             + "falling back to transient uploads");
           }
           this.pipelineCache = PipelineCache.create(this.handle);
           if (this.pipelineCache != null) {
