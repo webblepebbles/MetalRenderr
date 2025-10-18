@@ -55,8 +55,18 @@ public final class MetalRenderConfigScreen extends Screen {
         left, y, toggleWidth, "MetalRender", data.metalRenderEnabled, value -> {
           MetalLogger.info("[Config UI] MetalRender: %s -> %s",
                            data.metalRenderEnabled, value);
-          MetalRenderConfigManager.update(
-              cfg -> cfg.metalRenderEnabled = value);
+          MetalRenderConfigManager.update(cfg -> {
+            cfg.metalRenderEnabled = value;
+            if (!value) {
+              cfg.meshShadersEnabled = false;
+              cfg.dynamicQuality = false;
+              cfg.distanceLodEnabled = false;
+              cfg.occlusionCulling = false;
+              cfg.aggressiveFrustumCulling = false;
+              cfg.temporalAAEnabled = false;
+              cfg.mirrorUploads = false;
+            }
+          });
           MetalRenderClient.refreshEnabledState();
         });
     y += 24;
