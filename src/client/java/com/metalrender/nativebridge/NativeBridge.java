@@ -78,6 +78,8 @@ public final class NativeBridge {
   public static native void nConfigureMetalFX(long var0, int var2, int var3,
                                               float var4);
 
+  public static native void nSetParallelEncoding(long var0, boolean var2);
+
   static {
     try {
       System.loadLibrary("metalrender");

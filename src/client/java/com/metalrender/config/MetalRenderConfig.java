@@ -12,6 +12,7 @@ public final class MetalRenderConfig {
   private static volatile boolean meshShadersEnabled = true;
   private static volatile boolean temporalAAEnabled = true;
   private static volatile boolean distanceLodEnabled = true;
+  private static volatile boolean parallelEncoding = true;
   private static volatile float resolutionScale = 1.0F;
   private static volatile float dqMinScale = 0.7F;
   private static volatile float dqMaxScale = 1.0F;
@@ -51,6 +52,8 @@ public final class MetalRenderConfig {
   public static boolean temporalAAEnabled() { return temporalAAEnabled; }
 
   public static boolean distanceLodEnabled() { return distanceLodEnabled; }
+
+  public static boolean parallelEncoding() { return parallelEncoding; }
 
   public static float resolutionScale() { return resolutionScale; }
 
@@ -131,6 +134,8 @@ public final class MetalRenderConfig {
   public static void setDistanceLodEnabled(boolean v) {
     distanceLodEnabled = v;
   }
+
+  public static void setParallelEncoding(boolean v) { parallelEncoding = v; }
 
   public static void setTemporalUpscaleTarget(float v) {
     temporalUpscaleTarget = clamp(v, 0.5F, 1.0F);
@@ -226,6 +231,7 @@ public final class MetalRenderConfig {
     data.meshShadersEnabled = meshShadersEnabled;
     data.temporalAAEnabled = temporalAAEnabled;
     data.distanceLodEnabled = distanceLodEnabled;
+    data.parallelEncoding = parallelEncoding;
     data.resolutionScale = resolutionScale;
     data.dqMinScale = dqMinScale;
     data.dqMaxScale = dqMaxScale;
@@ -251,6 +257,7 @@ public final class MetalRenderConfig {
     meshShadersEnabled = data.meshShadersEnabled;
     temporalAAEnabled = data.temporalAAEnabled;
     distanceLodEnabled = data.distanceLodEnabled;
+    parallelEncoding = data.parallelEncoding;
     resolutionScale = data.resolutionScale;
     dqMinScale = data.dqMinScale;
     dqMaxScale = data.dqMaxScale;

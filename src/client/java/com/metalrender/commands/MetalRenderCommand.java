@@ -53,6 +53,11 @@ public final class MetalRenderCommand {
             .then(literal("performance")
                       .then(literal("reset").executes(
                           MetalRenderCommand::performanceReset)))
+            .then(literal("parallel")
+                      .then(literal("enable").executes(
+                          MetalRenderCommand::parallelEnable))
+                      .then(literal("disable").executes(
+                          MetalRenderCommand::parallelDisable)))
             .then(literal("help").executes(MetalRenderCommand::showHelp)));
   }
 
@@ -196,6 +201,10 @@ public final class MetalRenderCommand {
         Text.literal("§7Temporal AA: §f" +
                      (MetalRenderConfig.temporalAAEnabled() ? "§a✓ Enabled"
                                                             : "§c✗ Disabled")));
+    ctx.getSource().sendFeedback(
+        Text.literal("§7Parallel Encoding: §f" +
+                     (MetalRenderConfig.parallelEncoding() ? "§a✓ Enabled"
+                                                           : "§c✗ Disabled")));
     ctx.getSource().sendFeedback(Text.literal(
         "§7Resolution Scale: §f" +
         String.format("%.2f", MetalRenderConfig.resolutionScale())));
@@ -206,11 +215,12 @@ public final class MetalRenderCommand {
                        MetalRenderConfig.lodDistanceThreshold() + " chunks"));
       ctx.getSource().sendFeedback(Text.literal(
           "§7LOD Far: §f" + MetalRenderConfig.lodFarDistance() + " chunks"));
-      ctx.getSource().sendFeedback(Text.literal(
-          String.format("§7LOD Distribution: §fL0: %d | L1: %d | L2: %d",
-                        RenderingMetrics.getChunksAtLod0(),
-                        RenderingMetrics.getChunksAtLod1(),
-                        RenderingMetrics.getChunksAtLod2())));
+      ctx.getSource().sendFeedback(Text.literal(String.format(
+          "§7LOD Distribution: §fL0: %d | L1: %d | L2: %d | L3: %d",
+          RenderingMetrics.getChunksAtLod0(),
+          RenderingMetrics.getChunksAtLod1(),
+          RenderingMetrics.getChunksAtLod2(),
+          RenderingMetrics.getChunksAtLod3())));
     }
 
     ctx.getSource().sendFeedback(
@@ -305,6 +315,34 @@ public final class MetalRenderCommand {
     }
   }
 
+  private static int
+  parallelEnable(CommandContext<FabricClientCommandSource> ctx) {
+    if (MetalRenderConfig.metalRenderEnabled()) {
+      MetalRenderConfig.setParallelEncoding(true);
+      MetalRenderConfigManager.syncFromRuntime(true);
+      MetalRenderClient.refreshEnabledState();
+      ctx.getSource().sendFeedback(
+          Text.literal("§a✓ Parallel encoding enabled"));
+    } else {
+      MetalRenderConfig.setParallelEncoding(false);
+      MetalRenderConfigManager.syncFromRuntime(true);
+      MetalRenderClient.refreshEnabledState();
+      ctx.getSource().sendFeedback(Text.literal(
+          "§c✗ MetalRender is disabled. Parallel encoding cannot be enabled."));
+    }
+    return 1;
+  }
+
+  private static int
+  parallelDisable(CommandContext<FabricClientCommandSource> ctx) {
+    MetalRenderConfig.setParallelEncoding(false);
+    MetalRenderConfigManager.syncFromRuntime(true);
+    MetalRenderClient.refreshEnabledState();
+    ctx.getSource().sendFeedback(
+        Text.literal("§a✓ Parallel encoding disabled"));
+    return 1;
+  }
+
   private static int showHelp(CommandContext<FabricClientCommandSource> ctx) {
     ctx.getSource().sendFeedback(
         Text.literal("§e§l━━━ MetalRender Commands ━━━"));
@@ -338,6 +376,12 @@ public final class MetalRenderCommand {
     ctx.getSource().sendFeedback(Text.literal("§e§lPerformance:"));
     ctx.getSource().sendFeedback(Text.literal(
         "§6/metalrender performance reset §7- Reset perf settings"));
+    ctx.getSource().sendFeedback(Text.literal(""));
+    ctx.getSource().sendFeedback(Text.literal("§e§lParallel Encoding:"));
+    ctx.getSource().sendFeedback(Text.literal(
+        "§6/metalrender parallel enable §7- Enable parallel encoding"));
+    ctx.getSource().sendFeedback(Text.literal(
+        "§6/metalrender parallel disable §7- Disable parallel encoding"));
     return 1;
   }
 }

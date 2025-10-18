@@ -50,6 +50,8 @@ public class MetalWorldRenderer {
           if (this.pipelineCache != null) {
             this.pipelineCache.prewarm();
           }
+          NativeBridge.nSetParallelEncoding(
+              this.handle, MetalRenderConfig.parallelEncoding());
         }
       } else {
         this.ready = false;
@@ -74,6 +76,8 @@ public class MetalWorldRenderer {
             Math.max(1, mc.getWindow().getFramebufferWidth());
         int framebufferHeight =
             Math.max(1, mc.getWindow().getFramebufferHeight());
+
+        this.persistentArena.advanceFrame();
         this.temporalUpscaler.updateScale();
         if (framebufferWidth != this.lastWidth ||
             framebufferHeight != this.lastHeight) {
@@ -189,5 +193,12 @@ public class MetalWorldRenderer {
       this.handle = 0L;
     }
     this.ready = false;
+  }
+
+  public void updateParallelEncoding(boolean enabled) {
+    if (this.handle != 0L) {
+      NativeBridge.nSetParallelEncoding(this.handle, enabled);
+      MetalLogger.info("Parallel encoding updated: " + enabled);
+    }
   }
 }

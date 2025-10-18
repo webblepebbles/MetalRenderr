@@ -12,6 +12,7 @@ public final class MetalRenderConfigData {
   public boolean temporalAAEnabled = true;
   public boolean meshShadersEnabled = true;
   public boolean mirrorUploads = false;
+  public boolean parallelEncoding = true;
 
   public double dqTargetFrameMs = 6.67D;
   public float dqMinScale = 0.85F;

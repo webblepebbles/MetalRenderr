@@ -26,6 +26,7 @@ public final class MetalRenderConfigScreen extends Screen {
   private ToggleControl temporalToggle;
   private ToggleControl meshShaderToggle;
   private ToggleControl mirrorUploadsToggle;
+  private ToggleControl parallelEncodingToggle;
 
   private RangeSlider dqTargetSlider;
   private RangeSlider dqMinSlider;
@@ -65,6 +66,14 @@ public final class MetalRenderConfigScreen extends Screen {
               cfg.aggressiveFrustumCulling = false;
               cfg.temporalAAEnabled = false;
               cfg.mirrorUploads = false;
+            } else {
+              cfg.meshShadersEnabled = true;
+              cfg.dynamicQuality = true;
+              cfg.distanceLodEnabled = true;
+              cfg.occlusionCulling = true;
+              cfg.aggressiveFrustumCulling = true;
+              cfg.temporalAAEnabled = true;
+              cfg.mirrorUploads = true;
             }
           });
           MetalRenderClient.refreshEnabledState();
@@ -123,6 +132,16 @@ public final class MetalRenderConfigScreen extends Screen {
           MetalLogger.info("[Config UI] Mirror Uploads: %s -> %s",
                            data.mirrorUploads, value);
           MetalRenderConfigManager.update(cfg -> cfg.mirrorUploads = value);
+        });
+    this.parallelEncodingToggle = addToggle(
+        right, y, toggleWidth, "Parallel Encoding", data.parallelEncoding,
+        value -> {
+          MetalLogger.info("[Config UI] Parallel Encoding: %s -> %s",
+                           data.parallelEncoding, value);
+          MetalRenderConfigManager.update(cfg -> cfg.parallelEncoding = value);
+          if (MetalRenderClient.getWorldRenderer() != null) {
+            MetalRenderClient.getWorldRenderer().updateParallelEncoding(value);
+          }
         });
 
     int sliderY = y + 40;
@@ -265,6 +284,7 @@ public final class MetalRenderConfigScreen extends Screen {
   public void close() {
     MetalLogger.info("[Config UI] Closing config screen, saving changes");
     MetalRenderConfigManager.saveIfDirty();
+    MetalRenderClient.refreshEnabledState();
     MinecraftClient client = this.client;
     if (client != null) {
       client.setScreen(this.parent);
@@ -289,6 +309,7 @@ public final class MetalRenderConfigScreen extends Screen {
     this.temporalToggle.setValue(data.temporalAAEnabled);
     this.meshShaderToggle.setValue(data.meshShadersEnabled);
     this.mirrorUploadsToggle.setValue(data.mirrorUploads);
+    this.parallelEncodingToggle.setValue(data.parallelEncoding);
 
     this.dqTargetSlider.setRealValue(data.dqTargetFrameMs);
     this.dqMinSlider.setRealValue(data.dqMinScale);
