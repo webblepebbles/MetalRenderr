@@ -8,14 +8,14 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 
 ## Dependencies
 
-| Dependency    | Necessity              | Where to get                                                            |
-| ------------- | ---------------------- | ----------------------------------------------------------------------- |
-| Sodium        | Necessary              | [Modrinth](https://modrinth.com/mod/sodium)                             |
-| Fabric        | Necessary              | [Fabric's official page](https://fabricmc.net/use/installer/)           |
-| Fabric API    | Necessary              | [Modrinth](https://modrinth.com/mod/fabric-api)                         |
-| Ramen noodles | Necessary for survival | Find it yourself                                                        |
-| Java JVM 21   | Necessary              | [Oracle](https://www.oracle.com/au/java/technologies/downloads/#java21) |
-| ModMenu       | Necessary for versions v0.1.6+ | [Modrinth](https://modrinth.com/mod/modmenu)
+| Dependency    | Necessity                      | Where to get                                                            |
+| ------------- | ------------------------------ | ----------------------------------------------------------------------- |
+| Sodium        | Necessary                      | [Modrinth](https://modrinth.com/mod/sodium)                             |
+| Fabric        | Necessary                      | [Fabric's official page](https://fabricmc.net/use/installer/)           |
+| Fabric API    | Necessary                      | [Modrinth](https://modrinth.com/mod/fabric-api)                         |
+| Ramen noodles | Necessary for survival         | Find it yourself                                                        |
+| Java JVM 21   | Necessary                      | [Oracle](https://www.oracle.com/au/java/technologies/downloads/#java21) |
+| ModMenu       | Necessary for versions v0.1.6+ | [Modrinth](https://modrinth.com/mod/modmenu)                            |
 
 ## Features
 
@@ -60,7 +60,7 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 
 - Does it work with xxx launcher?
 
-  As long as your launcher doesn't mess with display libraries, GLFW or EGL (like Prism does), it would work. It has been verifyed to NOT work on Prism launcher.    The Offical Mojang launcher works.
+  As long as your launcher doesn't mess with display libraries, GLFW or EGL (like Prism does), it would work. It has been verifyed to NOT work on Prism launcher. The Offical Mojang launcher works.
 
 ---
 
@@ -68,9 +68,9 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 
 MetalRender commands allow you to configure MetalRender settings, check status and much more, all without opening the Config menu (avaliable in v0.1.6 with ModMenu!).
 
-## start here 
+## start here
 
-All commands start with `/metalrender` (or `/mr` for short if  configured).
+All commands start with `/metalrender` (or `/mr` for short if configured).
 
 ```
 /metalrender help
@@ -324,7 +324,6 @@ Enable LOD and adjust the threshold for your needs.
 
 Make sure MetalRender is installed and Fabric API is loaded.
 
-
 ### Changes Not Taking Effect
 
 Try:
@@ -334,7 +333,6 @@ Try:
 3. `/metalrender restart`
 4. Contact Apple support
 5. If Mac/Macbook is flaming, call emergency services immediately and discontinue use. Contact your Certified Apple Repair store.
-
 
 ---
 

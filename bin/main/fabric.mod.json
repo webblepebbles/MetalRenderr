@@ -7,6 +7,7 @@
   "name": "MetalRender",
   "description": "Experimental Metal-based renderer for Minecraft on macOS.",
   "environment": "client",
+  "icon": "metalrender.png",
   "entrypoints": {
     "client": ["com.metalrender.MetalRenderClient"],
     "modmenu": ["com.metalrender.config.gui.MetalRenderModMenuIntegration"]
@@ -18,5 +19,8 @@
     "fabric": "*",
     "sodium": ">=0.6.0",
     "modmenu": ">=16.0.0-rc.1"
+  },
+  "contact": {
+    "homepage": "https://github.com/webblepebbles/MetalRenderr"
   }
 }

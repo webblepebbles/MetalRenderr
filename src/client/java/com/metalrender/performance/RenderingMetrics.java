@@ -8,6 +8,7 @@ public final class RenderingMetrics {
   private static final AtomicLong chunksAtLod0 = new AtomicLong(0);
   private static final AtomicLong chunksAtLod1 = new AtomicLong(0);
   private static final AtomicLong chunksAtLod2 = new AtomicLong(0);
+  private static final AtomicLong chunksAtLod3 = new AtomicLong(0);
   private static final AtomicLong verticesReduced = new AtomicLong(0);
 
   private RenderingMetrics() {}
@@ -18,6 +19,7 @@ public final class RenderingMetrics {
     chunksAtLod0.set(0);
     chunksAtLod1.set(0);
     chunksAtLod2.set(0);
+    chunksAtLod3.set(0);
     verticesReduced.set(0);
   }
 
@@ -35,6 +37,8 @@ public final class RenderingMetrics {
       chunksAtLod1.incrementAndGet();
     } else if (lodLevel == 2) {
       chunksAtLod2.incrementAndGet();
+    } else if (lodLevel == 3) {
+      chunksAtLod3.incrementAndGet();
     }
     verticesReduced.addAndGet(originalVertices - actualVertices);
   }
@@ -49,6 +53,8 @@ public final class RenderingMetrics {
 
   public static long getChunksAtLod2() { return chunksAtLod2.get(); }
 
+  public static long getChunksAtLod3() { return chunksAtLod3.get(); }
+
   public static long getVerticesReduced() { return verticesReduced.get(); }
 
   public static double getAverageVerticesPerDraw() {
@@ -59,9 +65,11 @@ public final class RenderingMetrics {
   }
 
   public static String getMetricsString() {
-    return String.format(
-        "Verts: %,d | Draws: %,d | Avg: %.0f | L0: %d | L1: %d | L2: %d",
-        getTotalVertices(), getTotalDrawCommands(), getAverageVerticesPerDraw(),
-        getChunksAtLod0(), getChunksAtLod1(), getChunksAtLod2());
+    return String.format("Verts: %,d | Draws: %,d | Avg: %.0f | L0: %d | L1: " +
+                         "%d | L2: %d | L3: %d",
+                         getTotalVertices(), getTotalDrawCommands(),
+                         getAverageVerticesPerDraw(), getChunksAtLod0(),
+                         getChunksAtLod1(), getChunksAtLod2(),
+                         getChunksAtLod3());
   }
 }

@@ -551,14 +551,11 @@ Java_com_metalrender_nativebridge_MeshShaderNative_endMeshFrame(
     JNIEnv *env, jclass cls, jlong deviceHandle) {
   @autoreleasepool {
     std::lock_guard<std::mutex> lock(g_mutex);
-
-    // End the encoder if it's still open (batch commit!)
     if (gCurrentEncoder) {
       [gCurrentEncoder endEncoding];
       gCurrentEncoder = nil;
     }
 
-    // Commit the batched command buffer
     if (gCurrentCommandBuffer) {
       if (gDrawable) {
         [gCurrentCommandBuffer presentDrawable:gDrawable];

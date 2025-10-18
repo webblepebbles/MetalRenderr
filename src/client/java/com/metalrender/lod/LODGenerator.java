@@ -7,15 +7,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/**
- * Generates simplified LOD vertex buffers by sampling the compressed vertex
- * stream produced by {@link VertexCompressor}. The generator produces up to
- * three levels: full detail, medium (1/2 vertices) and far (1/4 vertices). The
- * output buffers preserve the original layout making them compatible with the
- * persistent buffer arena.
- */
 public final class LODGenerator {
-  private static final int MAX_LEVELS = 3;
+  private static final int MAX_LEVELS = 4;
 
   private LODGenerator() {}
 
@@ -25,20 +18,39 @@ public final class LODGenerator {
     }
 
     List<LevelData> levels = new ArrayList<>(MAX_LEVELS);
-    LevelData base = createLevel(mesh.buffer(), mesh.vertexCount, 1, 0);
+
+    int step0 = (int)Math.round(1.0 / 0.9); 
+    LevelData base =
+        createLevel(mesh.buffer(), mesh.vertexCount, Math.max(1, step0), 0);
     if (base.vertexCount > 0) {
       levels.add(base);
     }
 
-    LevelData half = createLevel(mesh.buffer(), mesh.vertexCount, 2, 1);
+    int step1 = (int)Math.round(1.0 / 0.45);
+    LevelData half =
+        createLevel(mesh.buffer(), mesh.vertexCount, Math.max(1, step1), 1);
     if (half.vertexCount > 0) {
       levels.add(half);
     }
 
-    LevelData quarter = createLevel(mesh.buffer(), mesh.vertexCount, 4, 2);
+    int step2 = (int)Math.round(1.0 / 0.225);
+    LevelData quarter =
+        createLevel(mesh.buffer(), mesh.vertexCount, Math.max(1, step2), 2);
     if (quarter.vertexCount > 0) {
       levels.add(quarter);
     }
+
+    LevelData eighth = createLevel(mesh.buffer(), mesh.vertexCount, 8, 3);
+    if (eighth.vertexCount > 0) {
+      levels.add(eighth);
+    }
+
+    LevelData thirtySecond =
+        createLevel(mesh.buffer(), mesh.vertexCount, 32, 4);
+    if (thirtySecond.vertexCount > 0) {
+      levels.add(thirtySecond);
+    }
+
     return levels;
   }
 

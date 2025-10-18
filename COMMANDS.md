@@ -2,9 +2,9 @@
 
 MetalRender commands allow you to configure MetalRender settings, check status and much more, all without opening the Config menu (avaliable in v0.1.6 with ModMenu!).
 
-## start here 
+## start here
 
-All commands start with `/metalrender` (or `/mr` for short if  configured).
+All commands start with `/metalrender` (or `/mr` for short if configured).
 
 ```
 /metalrender help
@@ -258,7 +258,6 @@ Enable LOD and adjust the threshold for your needs.
 
 Make sure MetalRender is installed and Fabric API is loaded.
 
-
 ### Changes Not Taking Effect
 
 Try:
@@ -268,7 +267,6 @@ Try:
 3. `/metalrender restart`
 4. Contact Apple support
 5. If Mac/Macbook is flaming, call emergency services immediately and discontinue use. Contact your Certified Apple Repair store.
-
 
 ---
 
