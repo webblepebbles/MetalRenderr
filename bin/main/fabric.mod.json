@@ -1,24 +1,22 @@
 {
   "schemaVersion": 1,
   "id": "metalrender",
-  "version": "0.3",
+  "version": "0.1.6",
   "license": "Apache-2.0",
-  "authors": [
-    "pebbles_boon"
-  ],
+  "authors": ["pebbles_boon"],
   "name": "MetalRender",
   "description": "Experimental Metal-based renderer for Minecraft on macOS.",
   "environment": "client",
   "entrypoints": {
-    "client": [
-      "com.metalrender.MetalRenderClient"
-    ]
+    "client": ["com.metalrender.MetalRenderClient"],
+    "modmenu": ["com.metalrender.config.gui.MetalRenderModMenuIntegration"]
   },
   "mixins": ["metalrender.mixins.json"],
   "depends": {
     "fabricloader": ">=0.17.1",
     "minecraft": ">=1.21.8",
     "fabric": "*",
-    "sodium": ">=0.6.0"
+    "sodium": ">=0.6.0",
+    "modmenu": ">=16.0.0-rc.1"
   }
 }
