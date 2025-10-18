@@ -15,7 +15,7 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 | Fabric API    | Necessary              | [Modrinth](https://modrinth.com/mod/fabric-api)                         |
 | Ramen noodles | Necessary for survival | Find it yourself                                                        |
 | Java JVM 21   | Necessary              | [Oracle](https://www.oracle.com/au/java/technologies/downloads/#java21) |
-| ModMenu.      | Necessary for versions v0.1.6+ | [Modrinth](https://modrinth.com/mod/modmenu)
+| ModMenu       | Necessary for versions v0.1.6+ | [Modrinth](https://modrinth.com/mod/modmenu)
 
 ## Features
 
