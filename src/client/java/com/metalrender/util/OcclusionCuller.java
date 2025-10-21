@@ -5,9 +5,9 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 
 public class OcclusionCuller {
-  private static final int AZIMUTH_BINS = 72;
-  private static final int ELEVATION_BINS = 36;
-  private static final float MARGIN = 2.0F;
+  @SuppressWarnings("unused") private static final int AZIMUTH_BINS = 72;
+  @SuppressWarnings("unused") private static final int ELEVATION_BINS = 36;
+  @SuppressWarnings("unused") private static final float MARGIN = 2.0F;
   private final float[] depthGrid = new float[2592];
   private double camX;
   private double camY;

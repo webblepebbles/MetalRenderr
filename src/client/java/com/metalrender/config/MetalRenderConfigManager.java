@@ -22,7 +22,7 @@ public final class MetalRenderConfigManager {
   private static final Path CONFIG_PATH =
       FabricLoader.getInstance().getConfigDir().resolve("metalrender.json");
 
-  private static MetalRenderConfigData current = MetalRenderConfig.capture();
+  private static MetalRenderConfigData current = new MetalRenderConfigData();
   private static boolean dirty;
 
   private MetalRenderConfigManager() {}
@@ -39,18 +39,20 @@ public final class MetalRenderConfigManager {
     }
 
     if (loaded == null) {
-      loaded = MetalRenderConfig.capture();
+      loaded = new MetalRenderConfigData();
     }
 
     current = loaded;
-    MetalRenderConfig.apply(current);
+    // TODO: Implement MetalRenderConfig.apply() method
+    // MetalRenderConfig.apply(current);
     dirty = false;
   }
 
   public static synchronized void
   update(Consumer<MetalRenderConfigData> mutator) {
     mutator.accept(current);
-    MetalRenderConfig.apply(current);
+    // TODO: Implement MetalRenderConfig.apply() method
+    // MetalRenderConfig.apply(current);
     dirty = true;
     MetalLogger.debug("[ConfigManager] Config updated, marked as dirty");
   }
@@ -61,7 +63,8 @@ public final class MetalRenderConfigManager {
 
   public static synchronized void resetToDefaults() {
     current = new MetalRenderConfigData();
-    MetalRenderConfig.apply(current);
+    // TODO: Implement MetalRenderConfig.apply() method
+    // MetalRenderConfig.apply(current);
     dirty = true;
   }
 
@@ -74,7 +77,8 @@ public final class MetalRenderConfigManager {
   }
 
   public static synchronized void syncFromRuntime(boolean markDirty) {
-    current = MetalRenderConfig.capture();
+    // TODO: Implement MetalRenderConfig.capture() method
+    // current = MetalRenderConfig.capture();
     dirty = markDirty;
   }
 

@@ -1,7 +1,6 @@
 #include <metal_stdlib>
 using namespace metal;
 
-
 struct VertexIn {
     half4 position;
     half3 normal;
@@ -15,6 +14,6 @@ struct VertexOut {
 vertex VertexOut vertex_main(VertexIn in [[stage_in]]) {
     VertexOut out;
     out.position = in.position;
-    out.normal = in.normal;
+    out.normal = half3(in.normal);
     return out;
 }

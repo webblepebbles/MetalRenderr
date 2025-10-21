@@ -1,35 +1,63 @@
 package com.metalrender.config;
 
 public final class MetalRenderConfig {
+  public enum MetalFXQualityPreset {
+    PERFORMANCE(0.5F, "Performance - 50% resolution for max FPS"),
+    BALANCED(0.7F, "Balanced - 70% resolution"),
+    QUALITY(0.9F, "Quality - 90% resolution for best visuals"),
+    NATIVE(1.0F, "Native - Full resolution, no upscaling");
+
+    public final float scale;
+    public final String description;
+
+    MetalFXQualityPreset(float scale, String description) {
+      this.scale = scale;
+      this.description = description;
+    }
+  }
+
   private static volatile boolean metalRenderEnabled = true;
+
+  public static boolean metalRenderEnabled() { return metalRenderEnabled; }
+  public static void setMetalRenderEnabled(boolean v) {
+    metalRenderEnabled = v;
+  }
+  public static boolean metalFXEnabled() { return metalFXEnabled; }
+  public static float metalFXScale() { return metalFXScale; }
+  public static void setMetalFXEnabled(boolean v) { metalFXEnabled = v; }
+  public static void setMetalFXScale(float v) {
+    metalFXScale = clamp(v, 0.5F, 1.0F);
+  }
+  public static MetalFXQualityPreset metalFXQualityPreset() {
+    return metalFXQualityPreset;
+  }
+  public static void setMetalFXQualityPreset(MetalFXQualityPreset preset) {
+    if (preset != null) {
+      metalFXQualityPreset = preset;
+      setMetalFXScale(preset.scale);
+    }
+  }
+  private static volatile boolean metalFXEnabled = true;
+  private static volatile float metalFXScale = 1.0F;
+  private static volatile MetalFXQualityPreset metalFXQualityPreset =
+      MetalFXQualityPreset.BALANCED;
   private static volatile boolean mirrorUploads = false;
   private static volatile boolean swapOpaque = false;
   private static volatile boolean swapCutout = false;
   private static volatile boolean swapTranslucent = false;
   private static volatile boolean aggressiveFrustumCulling = true;
-  private static volatile boolean occlusionCulling = true;
+  private static volatile boolean occlusionCulling = false;
   private static volatile boolean dynamicQuality = true;
-  private static volatile boolean meshShadersEnabled = true;
-  private static volatile boolean temporalAAEnabled = true;
-  private static volatile boolean distanceLodEnabled = true;
-  private static volatile boolean parallelEncoding = true;
   private static volatile float resolutionScale = 1.0F;
   private static volatile float dqMinScale = 0.7F;
   private static volatile float dqMaxScale = 1.0F;
   private static volatile float dqScaleStep = 0.05F;
-  private static volatile double dqTargetFrameMs = 6.67D;
-  private static volatile int dqMinViewDistance = 8;
-  private static volatile int dqMaxViewDistance = 24;
+  private static volatile double dqTargetFrameMs = 3.0D;
+  private static volatile int dqMinViewDistance = 2;
+  private static volatile int dqMaxViewDistance = Integer.MAX_VALUE;
   private static volatile int dqViewDistanceStep = 2;
-  private static volatile float temporalUpscaleTarget = 0.85F;
-  private static volatile float temporalBlendFactor = 0.12F;
-  private static volatile int lodDistanceThreshold = 8;
-  private static volatile int lodFarDistance = 16;
-  private static volatile float lodDistantScale = 0.10F;
 
   private MetalRenderConfig() {}
-
-  public static boolean metalRenderEnabled() { return metalRenderEnabled; }
 
   public static boolean mirrorUploads() { return mirrorUploads; }
 
@@ -47,14 +75,6 @@ public final class MetalRenderConfig {
 
   public static boolean dynamicQuality() { return dynamicQuality; }
 
-  public static boolean meshShadersEnabled() { return meshShadersEnabled; }
-
-  public static boolean temporalAAEnabled() { return temporalAAEnabled; }
-
-  public static boolean distanceLodEnabled() { return distanceLodEnabled; }
-
-  public static boolean parallelEncoding() { return parallelEncoding; }
-
   public static float resolutionScale() { return resolutionScale; }
 
   public static float dqMinScale() { return dqMinScale; }
@@ -71,19 +91,13 @@ public final class MetalRenderConfig {
 
   public static int dqViewDistanceStep() { return dqViewDistanceStep; }
 
-  public static float temporalUpscaleTarget() { return temporalUpscaleTarget; }
+  public static boolean meshShadersEnabled() { return true; }
 
-  public static float temporalBlendFactor() { return temporalBlendFactor; }
+  public static boolean distanceLodEnabled() { return true; }
 
-  public static int lodDistanceThreshold() { return lodDistanceThreshold; }
+  public static int lodDistanceThreshold() { return 8; }
 
-  public static int lodFarDistance() { return lodFarDistance; }
-
-  public static float lodDistantScale() { return lodDistantScale; }
-
-  public static void setMetalRenderEnabled(boolean v) {
-    metalRenderEnabled = v;
-  }
+  public static int lodFarDistance() { return 16; }
 
   public static void setMirrorUploads(boolean v) { mirrorUploads = v; }
 
@@ -118,46 +132,17 @@ public final class MetalRenderConfig {
   }
 
   public static void setDqMaxViewDistance(int v) {
-    dqMaxViewDistance = Math.max(dqMinViewDistance, v);
+    dqMaxViewDistance = v < dqMinViewDistance
+                            ? dqMinViewDistance
+                            : (v <= 0 ? Integer.MAX_VALUE : v);
   }
 
   public static void setDqViewDistanceStep(int v) {
     dqViewDistanceStep = Math.max(1, v);
   }
 
-  public static void setMeshShadersEnabled(boolean v) {
-    meshShadersEnabled = v;
-  }
-
-  public static void setTemporalAAEnabled(boolean v) { temporalAAEnabled = v; }
-
-  public static void setDistanceLodEnabled(boolean v) {
-    distanceLodEnabled = v;
-  }
-
-  public static void setParallelEncoding(boolean v) { parallelEncoding = v; }
-
-  public static void setTemporalUpscaleTarget(float v) {
-    temporalUpscaleTarget = clamp(v, 0.5F, 1.0F);
-  }
-
-  public static void setTemporalBlendFactor(float v) {
-    temporalBlendFactor = clamp(v, 0.01F, 0.5F);
-  }
-
-  public static void setLodDistanceThreshold(int v) {
-    lodDistanceThreshold = Math.max(5, v);
-  }
-
-  public static void setLodFarDistance(int v) {
-    lodFarDistance = Math.max(lodDistanceThreshold, v);
-  }
-
-  public static void setLodDistantScale(float v) {
-    lodDistantScale = clamp(v, 0.05F, 1.0F);
-  }
-
   public static void loadFromSystemProperties() {
+    metalRenderEnabled = getBool("metalrender.enabled", metalRenderEnabled);
     mirrorUploads = getBool("metalrender.mirror", mirrorUploads);
     swapOpaque = getBool("metalrender.swap.opaque", swapOpaque);
     swapCutout = getBool("metalrender.swap.cutout", swapCutout);
@@ -180,6 +165,16 @@ public final class MetalRenderConfig {
                                        (float)dqMaxViewDistance));
     setDqViewDistanceStep((int)getFloat("metalrender.dynamic.distance.step",
                                         (float)dqViewDistanceStep));
+
+    String presetName = System.getProperty("metalrender.metalfx.preset");
+    if (presetName != null && !presetName.isEmpty()) {
+      try {
+        MetalFXQualityPreset preset =
+            MetalFXQualityPreset.valueOf(presetName.toUpperCase());
+        setMetalFXQualityPreset(preset);
+      } catch (IllegalArgumentException e) {
+      }
+    }
   }
 
   private static boolean getBool(String key, boolean def) {
@@ -220,53 +215,20 @@ public final class MetalRenderConfig {
   private static float clamp(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
   }
-
-  public static MetalRenderConfigData capture() {
-    MetalRenderConfigData data = new MetalRenderConfigData();
-    data.metalRenderEnabled = metalRenderEnabled;
-    data.mirrorUploads = mirrorUploads;
-    data.aggressiveFrustumCulling = aggressiveFrustumCulling;
-    data.occlusionCulling = occlusionCulling;
-    data.dynamicQuality = dynamicQuality;
-    data.meshShadersEnabled = meshShadersEnabled;
-    data.temporalAAEnabled = temporalAAEnabled;
-    data.distanceLodEnabled = distanceLodEnabled;
-    data.parallelEncoding = parallelEncoding;
-    data.resolutionScale = resolutionScale;
-    data.dqMinScale = dqMinScale;
-    data.dqMaxScale = dqMaxScale;
-    data.dqScaleStep = dqScaleStep;
-    data.dqTargetFrameMs = dqTargetFrameMs;
-    data.temporalUpscaleTarget = temporalUpscaleTarget;
-    data.temporalBlendFactor = temporalBlendFactor;
-    data.lodDistanceThreshold = lodDistanceThreshold;
-    data.lodFarDistance = lodFarDistance;
-    data.lodDistantScale = lodDistantScale;
-    return data;
+  public static String temporalAAEnabled() {
+    // TODO Auto-generated method stub
+    throw new UnsupportedOperationException("Unimplemented method 'temporalAAEnabled'");
   }
-
-  public static void apply(MetalRenderConfigData data) {
-    if (data == null) {
-      return;
-    }
-    metalRenderEnabled = data.metalRenderEnabled;
-    mirrorUploads = data.mirrorUploads;
-    aggressiveFrustumCulling = data.aggressiveFrustumCulling;
-    occlusionCulling = data.occlusionCulling;
-    dynamicQuality = data.dynamicQuality;
-    meshShadersEnabled = data.meshShadersEnabled;
-    temporalAAEnabled = data.temporalAAEnabled;
-    distanceLodEnabled = data.distanceLodEnabled;
-    parallelEncoding = data.parallelEncoding;
-    resolutionScale = data.resolutionScale;
-    dqMinScale = data.dqMinScale;
-    dqMaxScale = data.dqMaxScale;
-    dqScaleStep = data.dqScaleStep;
-    dqTargetFrameMs = data.dqTargetFrameMs;
-    temporalUpscaleTarget = data.temporalUpscaleTarget;
-    temporalBlendFactor = data.temporalBlendFactor;
-    lodDistanceThreshold = data.lodDistanceThreshold;
-    lodFarDistance = data.lodFarDistance;
-    lodDistantScale = data.lodDistantScale;
+  public static MetalRenderConfigData capture() {
+    // TODO Auto-generated method stub
+    throw new UnsupportedOperationException("Unimplemented method 'capture'");
+  }
+  public static void apply(MetalRenderConfigData current) {
+    // TODO Auto-generated method stub
+    throw new UnsupportedOperationException("Unimplemented method 'apply'");
+  }
+  public static void setLodDistanceThreshold(int i) {
+    // TODO Auto-generated method stub
+    throw new UnsupportedOperationException("Unimplemented method 'setLodDistanceThreshold'");
   }
 }

@@ -6,7 +6,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class GLIntercept {
-  private static final int GL_ARRAY_BUFFER = 34962;
+  @SuppressWarnings("unused") private static final int GL_ARRAY_BUFFER = 34962;
+  @SuppressWarnings("unused")
   private static final int GL_ELEMENT_ARRAY_BUFFER = 34963;
   private static final ThreadLocal<Integer> boundVbo =
       ThreadLocal.withInitial(() -> { return 0; });
@@ -24,7 +25,6 @@ public final class GLIntercept {
     } else {
       RenderBackend b = backend;
       if (b == null) {
-        Class var1 = GLIntercept.class;
         synchronized (GLIntercept.class) {
           if (backend == null) {
             try {

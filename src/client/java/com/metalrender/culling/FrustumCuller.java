@@ -15,6 +15,7 @@ public class FrustumCuller {
     WALKING,
     FLYING;
 
+    @SuppressWarnings("unused")
     private static FrustumCuller.MovementState[] $values() {
       return new FrustumCuller.MovementState[] {STANDING, WALKING, FLYING};
     }

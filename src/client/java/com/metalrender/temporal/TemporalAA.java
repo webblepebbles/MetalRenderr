@@ -1,6 +1,5 @@
 package com.metalrender.temporal;
 
-import com.metalrender.config.MetalRenderConfig;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.joml.Matrix4f;
 
@@ -22,7 +21,8 @@ public final class TemporalAA {
   private boolean enabled;
 
   public void beginFrame(int viewportWidth, int viewportHeight) {
-    this.enabled = MetalRenderConfig.temporalAAEnabled();
+    // TODO: Implement temporalAAEnabled() and temporalBlendFactor()
+    this.enabled = false; // MetalRenderConfig.temporalAAEnabled();
     if (!this.enabled || viewportWidth <= 0 || viewportHeight <= 0) {
       this.jitterX = 0.0F;
       this.jitterY = 0.0F;
@@ -36,7 +36,7 @@ public final class TemporalAA {
     float rawJitterY = halton(sampleIndex + 1, HALTON_DENOM_BASE3) - 0.5F;
     this.jitterX = rawJitterX / Math.max(1.0F, viewportWidth);
     this.jitterY = rawJitterY / Math.max(1.0F, viewportHeight);
-    this.blendFactor = MetalRenderConfig.temporalBlendFactor();
+    this.blendFactor = 0.1F; // MetalRenderConfig.temporalBlendFactor();
   }
 
   public void applyJitter(Matrix4f projection) {

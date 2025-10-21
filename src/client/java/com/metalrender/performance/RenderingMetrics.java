@@ -65,8 +65,8 @@ public final class RenderingMetrics {
   }
 
   public static String getMetricsString() {
-    return String.format("Verts: %,d | Draws: %,d | Avg: %.0f | L0: %d | L1: " +
-                         "%d | L2: %d | L3: %d",
+    return String.format("Verts: %,d | Draws: %,d | Avg: %.0f | L0: %d | L1: "
+                             + "%d | L2: %d | L3: %d",
                          getTotalVertices(), getTotalDrawCommands(),
                          getAverageVerticesPerDraw(), getChunksAtLod0(),
                          getChunksAtLod1(), getChunksAtLod2(),
