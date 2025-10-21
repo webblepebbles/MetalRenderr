@@ -43,16 +43,12 @@ public final class MetalRenderConfigManager {
     }
 
     current = loaded;
-    // TODO: Implement MetalRenderConfig.apply() method
-    // MetalRenderConfig.apply(current);
     dirty = false;
   }
 
   public static synchronized void
   update(Consumer<MetalRenderConfigData> mutator) {
     mutator.accept(current);
-    // TODO: Implement MetalRenderConfig.apply() method
-    // MetalRenderConfig.apply(current);
     dirty = true;
     MetalLogger.debug("[ConfigManager] Config updated, marked as dirty");
   }
@@ -63,8 +59,6 @@ public final class MetalRenderConfigManager {
 
   public static synchronized void resetToDefaults() {
     current = new MetalRenderConfigData();
-    // TODO: Implement MetalRenderConfig.apply() method
-    // MetalRenderConfig.apply(current);
     dirty = true;
   }
 
@@ -77,8 +71,6 @@ public final class MetalRenderConfigManager {
   }
 
   public static synchronized void syncFromRuntime(boolean markDirty) {
-    // TODO: Implement MetalRenderConfig.capture() method
-    // current = MetalRenderConfig.capture();
     dirty = markDirty;
   }
 

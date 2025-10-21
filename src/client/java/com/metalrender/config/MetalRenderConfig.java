@@ -56,6 +56,12 @@ public final class MetalRenderConfig {
   private static volatile int dqMinViewDistance = 2;
   private static volatile int dqMaxViewDistance = Integer.MAX_VALUE;
   private static volatile int dqViewDistanceStep = 2;
+  private static volatile boolean temporalAAEnabled = true;
+  private static volatile float temporalUpscaleTarget = 0.85F;
+  private static volatile float temporalBlendFactor = 0.12F;
+  private static volatile int lodDistanceThreshold = 8;
+  private static volatile int lodFarDistance = 16;
+  private static volatile float lodDistantScale = 0.10F;
 
   private MetalRenderConfig() {}
 
@@ -95,9 +101,17 @@ public final class MetalRenderConfig {
 
   public static boolean distanceLodEnabled() { return true; }
 
-  public static int lodDistanceThreshold() { return 8; }
+  public static int lodDistanceThreshold() { return lodDistanceThreshold; }
 
-  public static int lodFarDistance() { return 16; }
+  public static int lodFarDistance() { return lodFarDistance; }
+
+  public static float lodDistantScale() { return lodDistantScale; }
+
+  public static boolean temporalAAEnabled() { return temporalAAEnabled; }
+
+  public static float temporalUpscaleTarget() { return temporalUpscaleTarget; }
+
+  public static float temporalBlendFactor() { return temporalBlendFactor; }
 
   public static void setMirrorUploads(boolean v) { mirrorUploads = v; }
 
@@ -166,6 +180,18 @@ public final class MetalRenderConfig {
     setDqViewDistanceStep((int)getFloat("metalrender.dynamic.distance.step",
                                         (float)dqViewDistanceStep));
 
+    temporalAAEnabled =
+        getBool("metalrender.temporal.enabled", temporalAAEnabled);
+    temporalUpscaleTarget =
+        getFloat("metalrender.temporal.upscale", temporalUpscaleTarget);
+    temporalBlendFactor =
+        getFloat("metalrender.temporal.blend", temporalBlendFactor);
+    setLodDistanceThreshold((int)getFloat("metalrender.lod.threshold",
+                                          (float)lodDistanceThreshold));
+    setLodFarDistance(
+        (int)getFloat("metalrender.lod.far", (float)lodFarDistance));
+    lodDistantScale = getFloat("metalrender.lod.scale", lodDistantScale);
+
     String presetName = System.getProperty("metalrender.metalfx.preset");
     if (presetName != null && !presetName.isEmpty()) {
       try {
@@ -215,20 +241,71 @@ public final class MetalRenderConfig {
   private static float clamp(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
   }
-  public static String temporalAAEnabled() {
-    // TODO Auto-generated method stub
-    throw new UnsupportedOperationException("Unimplemented method 'temporalAAEnabled'");
+
+  public static void setTemporalAAEnabled(boolean v) { temporalAAEnabled = v; }
+
+  public static void setTemporalUpscaleTarget(float v) {
+    temporalUpscaleTarget = clamp(v, 0.5F, 1.0F);
   }
+
+  public static void setTemporalBlendFactor(float v) {
+    temporalBlendFactor = clamp(v, 0.0F, 1.0F);
+  }
+
+  public static void setLodDistanceThreshold(int v) {
+    lodDistanceThreshold = Math.max(1, v);
+  }
+
+  public static void setLodFarDistance(int v) {
+    lodFarDistance = Math.max(lodDistanceThreshold, v);
+  }
+
+  public static void setLodDistantScale(float v) {
+    lodDistantScale = clamp(v, 0.0F, 1.0F);
+  }
+
   public static MetalRenderConfigData capture() {
-    // TODO Auto-generated method stub
-    throw new UnsupportedOperationException("Unimplemented method 'capture'");
+    MetalRenderConfigData data = new MetalRenderConfigData();
+    data.metalRenderEnabled = metalRenderEnabled;
+    data.dynamicQuality = dynamicQuality;
+    data.distanceLodEnabled = distanceLodEnabled();
+    data.occlusionCulling = occlusionCulling;
+    data.aggressiveFrustumCulling = aggressiveFrustumCulling;
+    data.temporalAAEnabled = temporalAAEnabled;
+    data.meshShadersEnabled = meshShadersEnabled();
+    data.mirrorUploads = mirrorUploads;
+    data.dqTargetFrameMs = dqTargetFrameMs;
+    data.dqMinScale = dqMinScale;
+    data.dqMaxScale = dqMaxScale;
+    data.dqScaleStep = dqScaleStep;
+    data.temporalUpscaleTarget = temporalUpscaleTarget;
+    data.temporalBlendFactor = temporalBlendFactor;
+    data.resolutionScale = resolutionScale;
+    data.lodDistanceThreshold = lodDistanceThreshold;
+    data.lodFarDistance = lodFarDistance;
+    data.lodDistantScale = lodDistantScale;
+    return data;
   }
-  public static void apply(MetalRenderConfigData current) {
-    // TODO Auto-generated method stub
-    throw new UnsupportedOperationException("Unimplemented method 'apply'");
-  }
-  public static void setLodDistanceThreshold(int i) {
-    // TODO Auto-generated method stub
-    throw new UnsupportedOperationException("Unimplemented method 'setLodDistanceThreshold'");
+
+  public static void apply(MetalRenderConfigData data) {
+    if (data == null) {
+      return;
+    }
+    setMetalRenderEnabled(data.metalRenderEnabled);
+    setDynamicQuality(data.dynamicQuality);
+    setOcclusionCulling(data.occlusionCulling);
+    setAggressiveFrustumCulling(data.aggressiveFrustumCulling);
+    setTemporalAAEnabled(data.temporalAAEnabled);
+    setMirrorUploads(data.mirrorUploads);
+    setDqTargetFrameMs(data.dqTargetFrameMs);
+    setDqMinScale(data.dqMinScale);
+    setDqMaxScale(data.dqMaxScale);
+    setDqScaleStep(data.dqScaleStep);
+    setTemporalUpscaleTarget(data.temporalUpscaleTarget);
+    setTemporalBlendFactor(data.temporalBlendFactor);
+    setResolutionScale(data.resolutionScale);
+    setLodDistanceThreshold(data.lodDistanceThreshold);
+    setLodFarDistance(data.lodFarDistance);
+    setLodDistantScale(data.lodDistantScale);
   }
 }

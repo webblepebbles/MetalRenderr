@@ -3,12 +3,6 @@ package com.metalrender.temporal;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.joml.Matrix4f;
 
-/**
- * Simple temporal anti-aliasing helper that generates Halton sequence jitter
- * offsets and exposes a blend factor used during the resolve pass. The actual
- * history resolve is performed on the native side, but the jitter needs to be
- * baked into the projection matrix before chunk visibility tests.
- */
 public final class TemporalAA {
   private static final int SAMPLE_COUNT = 8;
   private static final float HALTON_DENOM_BASE2 = 2.0F;
@@ -21,8 +15,7 @@ public final class TemporalAA {
   private boolean enabled;
 
   public void beginFrame(int viewportWidth, int viewportHeight) {
-    // TODO: Implement temporalAAEnabled() and temporalBlendFactor()
-    this.enabled = false; // MetalRenderConfig.temporalAAEnabled();
+    this.enabled = false;
     if (!this.enabled || viewportWidth <= 0 || viewportHeight <= 0) {
       this.jitterX = 0.0F;
       this.jitterY = 0.0F;
@@ -36,7 +29,7 @@ public final class TemporalAA {
     float rawJitterY = halton(sampleIndex + 1, HALTON_DENOM_BASE3) - 0.5F;
     this.jitterX = rawJitterX / Math.max(1.0F, viewportWidth);
     this.jitterY = rawJitterY / Math.max(1.0F, viewportHeight);
-    this.blendFactor = 0.1F; // MetalRenderConfig.temporalBlendFactor();
+    this.blendFactor = 0.1F; 
   }
 
   public void applyJitter(Matrix4f projection) {

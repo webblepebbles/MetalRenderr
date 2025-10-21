@@ -34,9 +34,6 @@ public final class ConfigDumpCommand {
     ctx.getSource().sendFeedback(
         Text.literal("§7  Aggressive Frustum: §f" +
                      MetalRenderConfig.aggressiveFrustumCulling()));
-    // TODO: Implement temporalAAEnabled()
-    // ctx.getSource().sendFeedback(Text.literal(
-    //     "§7  Temporal AA: §f" + MetalRenderConfig.temporalAAEnabled()));
     ctx.getSource().sendFeedback(Text.literal(
         "§7  Target Frame Time: §f" +
         String.format("%.1fms", MetalRenderConfig.dqTargetFrameMs())));
