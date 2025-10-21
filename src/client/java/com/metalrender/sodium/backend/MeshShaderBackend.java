@@ -12,10 +12,10 @@ import com.metalrender.util.VertexCompressor;
 import com.metalrender.util.VertexCompressor.CompressedMesh;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import net.caffeinemc.mods.sodium.client.render.chunk.RenderSection;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.ChunkBuildOutput;
 import net.caffeinemc.mods.sodium.client.render.chunk.data.BuiltSectionMeshParts;
@@ -25,9 +25,9 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 
 public final class MeshShaderBackend {
-  private static final int MAX_LOD_LEVELS = 5;
-  private static final int MAX_CHUNK_CACHE_SIZE = 7192;
-  private static final double MAX_CHUNK_DISTANCE = Double.MAX_VALUE;
+  private static final int MAX_LOD_LEVELS = 3;
+  private static final int MAX_CHUNK_CACHE_SIZE = 8192;
+  private static final double MAX_CHUNK_DISTANCE = 1024.0;
 
   private final boolean meshSupported;
   private final Map<Long, ChunkMesh> chunkMeshes = new ConcurrentHashMap<>();
@@ -41,7 +41,14 @@ public final class MeshShaderBackend {
   }
 
   public boolean isMeshEnabled() {
-    return this.meshSupported && MetalRenderConfig.meshShadersEnabled();
+    boolean enabled =
+        this.meshSupported && MetalRenderConfig.meshShadersEnabled();
+    if (Math.random() < 0.001) {
+      MetalLogger.info(
+          "[MeshBackend] isMeshEnabled() = %s (supported=%s, config=%s)",
+          enabled, this.meshSupported, MetalRenderConfig.meshShadersEnabled());
+    }
+    return enabled;
   }
 
   public void destroy() { this.chunkMeshes.clear(); }
@@ -177,88 +184,38 @@ public final class MeshShaderBackend {
 
   public int emitDraws(long nativeHandle, RenderOptimizer optimizer,
                        Camera camera) {
-    net.minecraft.client.MinecraftClient client =
-        net.minecraft.client.MinecraftClient.getInstance();
-    if (client.world == null || client.player == null ||
-        this.chunkMeshes.isEmpty()) {
+    if (this.chunkMeshes.isEmpty()) {
       return 0;
     }
 
     RenderingMetrics.resetFrame();
     long currentFrame = System.nanoTime() / 16_666_666L;
-
-    if (currentFrame - this.lastCleanupFrame > 5) {
+    if (currentFrame - this.lastCleanupFrame > 60) {
       this.cleanupDistantChunks(camera);
       this.lastCleanupFrame = currentFrame;
     }
 
     Vec3d cameraPos = camera.getPos();
-    double cameraX = cameraPos.x;
-    double cameraY = cameraPos.y;
-    double cameraZ = cameraPos.z;
-
     boolean lodEnabled = MetalRenderConfig.distanceLodEnabled();
     int lodNear = MetalRenderConfig.lodDistanceThreshold();
     int lodFar = MetalRenderConfig.lodFarDistance();
-
-    double lodThreshold1 = lodNear * 1.5;
-    double lodThreshold2 = lodFar * 1.5;
-    double lodThreshold3 = lodFar * 3.0;
-    double lodThreshold4 = lodFar * 5.0;
-    double distanceScaleThreshold = lodFar * 12.0;
-
-    double lodThreshold1Sq = lodThreshold1 * lodThreshold1;
-    double lodThreshold2Sq = lodThreshold2 * lodThreshold2;
-    double lodThreshold3Sq = lodThreshold3 * lodThreshold3;
-    double lodThreshold4Sq = lodThreshold4 * lodThreshold4;
-    double distanceScaleThresholdSq =
-        distanceScaleThreshold * distanceScaleThreshold;
+    float distantScale = MetalRenderConfig.lodDistantScale();
 
     int commandIndex = 0;
     for (ChunkMesh mesh : this.chunkMeshes.values()) {
-      double dx = mesh.origin.getX() + 8.0 - cameraX;
-      double dy = mesh.origin.getY() + 8.0 - cameraY;
-      double dz = mesh.origin.getZ() + 8.0 - cameraZ;
-      double distSq = dx * dx + dy * dy + dz * dz;
-
       if (!optimizer.shouldRenderChunk(mesh.origin, camera)) {
         continue;
       }
 
-      int lodLevel = 0;
-      boolean needsActualDistance = false;
-      if (lodEnabled && distSq > lodThreshold1Sq) {
-        if (distSq > lodThreshold4Sq) {
-          lodLevel = 4;
-        } else if (distSq > lodThreshold3Sq) {
-          lodLevel = 3;
-        } else if (distSq > lodThreshold2Sq) {
-          lodLevel = 2;
-        } else {
-          lodLevel = 1;
-        }
-        if (lodLevel >= mesh.levelCount()) {
-          lodLevel = mesh.levelCount() - 1;
-        }
-        needsActualDistance = distSq > distanceScaleThresholdSq;
-      }
-      double worldDistance = needsActualDistance ? Math.sqrt(distSq) : 0.0;
-      double chunkDistance = worldDistance / 16.0;
+      double worldDistance = mesh.distanceTo(cameraPos);
 
-      float resolutionScale = 460.0F / 720.0F;
-      float vertexFactor = resolutionScale;
-      if (chunkDistance > 22.0) {
-        resolutionScale = 50.0F / 720.0F;
-        vertexFactor = 0.2F;
-      } else if (chunkDistance > 20.0) {
-        resolutionScale = 95.0F / 720.0F;
-        vertexFactor = 0.3F;
-      } else if (chunkDistance > 18.0) {
-        resolutionScale = 140.0F / 720.0F;
-        vertexFactor = 0.4F;
-      } else if (chunkDistance > 14.0) {
-        resolutionScale = 260.0F / 720.0F;
-        vertexFactor = resolutionScale;
+      int lodLevel = 0;
+      if (lodEnabled) {
+        if (worldDistance > lodFar * 16.0) {
+          lodLevel = Math.min(mesh.levelCount() - 1, 2);
+        } else if (worldDistance > lodNear * 16.0) {
+          lodLevel = Math.min(mesh.levelCount() - 1, 1);
+        }
       }
 
       List<DrawCommand> draws = mesh.drawsForLevel(lodLevel);
@@ -269,28 +226,21 @@ public final class MeshShaderBackend {
         draws = mesh.drawsForLevel(0);
       }
 
-      if (draws.isEmpty()) {
-        continue;
-      }
+      RenderingMetrics.recordLodUsage(lodLevel, 0, 0);
 
+      boolean applyDistanceScale =
+          lodEnabled && lodLevel == mesh.levelCount() - 1;
       for (DrawCommand draw : draws) {
-        int originalVertexCount = draw.vertexCount;
-        int vertexCount = originalVertexCount;
-        if (vertexFactor < 0.999F) {
-          vertexCount =
-              Math.max(1, Math.round(originalVertexCount * vertexFactor));
+        int vertexCount = draw.vertexCount;
+        if (applyDistanceScale) {
+          vertexCount = Math.max(3, (int)(vertexCount * distantScale));
         }
-
-        RenderingMetrics.recordLodUsage(lodLevel, originalVertexCount,
-                                        vertexCount);
 
         RenderingMetrics.addVertices(vertexCount);
         RenderingMetrics.addDrawCommand();
-        float encodedDistance =
-            needsActualDistance ? (float)worldDistance : 0.0F;
         NativeBridge.nQueueIndirectDraw(nativeHandle, commandIndex++,
                                         draw.vertexOffset, 0L, vertexCount, 0,
-                                        0, 1, 0, encodedDistance);
+                                        0, 1, 0, (float)worldDistance);
       }
     }
 
@@ -300,10 +250,6 @@ public final class MeshShaderBackend {
   private static final class ChunkMesh {
     final BlockPos origin;
     final LODLevel[] levels;
-    private double cachedDistance = -1.0;
-    private double lastCameraX = Double.NaN;
-    private double lastCameraY = Double.NaN;
-    private double lastCameraZ = Double.NaN;
 
     ChunkMesh(BlockPos origin, int levelCount) {
       this.origin = origin;
@@ -333,19 +279,13 @@ public final class MeshShaderBackend {
     int levelCount() { return this.levels.length; }
 
     double distanceTo(Vec3d cameraPos) {
-      if (lastCameraX != cameraPos.x || lastCameraY != cameraPos.y ||
-          lastCameraZ != cameraPos.z) {
-        double centerX = (double)this.origin.getX() + 8.0 - cameraPos.x;
-        double centerY = (double)this.origin.getY() + 8.0 - cameraPos.y;
-        double centerZ = (double)this.origin.getZ() + 8.0 - cameraPos.z;
-        this.cachedDistance = Math.sqrt(centerX * centerX + centerY * centerY +
-                                        centerZ * centerZ);
-        this.lastCameraX = cameraPos.x;
-        this.lastCameraY = cameraPos.y;
-        this.lastCameraZ = cameraPos.z;
-      }
-      return this.cachedDistance;
+      double centerX = (double)this.origin.getX() + 8.0 - cameraPos.x;
+      double centerY = (double)this.origin.getY() + 8.0 - cameraPos.y;
+      double centerZ = (double)this.origin.getZ() + 8.0 - cameraPos.z;
+      return Math.sqrt(centerX * centerX + centerY * centerY +
+                       centerZ * centerZ);
     }
+
     private LODLevel level(int index) {
       int clamped = Math.max(0, Math.min(index, this.levels.length - 1));
       return this.levels[clamped];
@@ -353,7 +293,7 @@ public final class MeshShaderBackend {
   }
 
   private static final class LODLevel {
-    final List<DrawCommand> draws = new ArrayList<>();
+    final List<DrawCommand> draws = new CopyOnWriteArrayList<>();
 
     void add(DrawCommand command) { this.draws.add(command); }
   }

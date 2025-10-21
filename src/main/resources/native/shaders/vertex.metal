@@ -2,11 +2,11 @@
 #include <metal_stdlib>
 using namespace metal;
 struct VertexIn {
-    half4 position [[attribute(0)]];
+    float4 position [[attribute(0)]];
     half3 normal [[attribute(1)]];
 };
 struct VertexOut {
-    half4 position [[position]];
+    float4 position [[position]];
     half3 normal;
 };
 vertex VertexOut vertex_main(VertexIn in [[stage_in]]) {

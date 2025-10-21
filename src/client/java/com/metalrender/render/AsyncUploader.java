@@ -5,11 +5,9 @@ import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.ChunkBuildOutput;
 
 final class AsyncUploader {
@@ -23,23 +21,17 @@ final class AsyncUploader {
   private final AtomicInteger inFlight = new AtomicInteger();
   private final int maxInFlight;
   private final UploadTask task;
-  private final Lock flushLock = new ReentrantLock();
-  private final Condition flushCondition = flushLock.newCondition();
 
   AsyncUploader(int maxInFlight, UploadTask task) {
     this.maxInFlight = Math.max(1, maxInFlight);
     this.task = Objects.requireNonNull(task, "upload task");
-
-    int workerCount = Math.min(8, Runtime.getRuntime().availableProcessors());
     ThreadFactory factory = runnable -> {
       Thread thread = new Thread(runnable, "MetalRender-AsyncUploader");
       thread.setDaemon(true);
       thread.setPriority(Thread.NORM_PRIORITY - 1);
       return thread;
     };
-    this.executor = Executors.newFixedThreadPool(workerCount, factory);
-    MetalLogger.info("[AsyncUploader] Initialized with %d worker threads",
-                     workerCount);
+    this.executor = Executors.newSingleThreadExecutor(factory);
   }
 
   boolean submit(ChunkBuildOutput output) {
@@ -58,30 +50,20 @@ final class AsyncUploader {
       } catch (Throwable t) {
         MetalLogger.error("Async upload failed", t);
       } finally {
-        int remaining = this.inFlight.decrementAndGet();
-        if (remaining == 0) {
-          flushLock.lock();
-          try {
-            flushCondition.signalAll();
-          } finally {
-            flushLock.unlock();
-          }
-        }
+        this.inFlight.decrementAndGet();
       }
     });
     return true;
   }
 
   void flush() {
-    flushLock.lock();
-    try {
-      while (this.inFlight.get() > 0) {
-        flushCondition.await();
+    while (this.inFlight.get() > 0) {
+      try {
+        TimeUnit.MILLISECONDS.sleep(2L);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        break;
       }
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-    } finally {
-      flushLock.unlock();
     }
   }
 

@@ -7,7 +7,7 @@ public class MetalLogger {
   private static final Logger LOGGER = LogUtils.getLogger();
 
   private static String format(String msg, Object... args) {
-    return args.length != 0 ? String.format(msg, args) : msg;
+    return args != null && args.length != 0 ? String.format(msg, args) : msg;
   }
 
   public static void info(String msg, Object... args) {

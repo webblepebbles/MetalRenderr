@@ -3,7 +3,7 @@ package com.metalrender.render;
 import com.metalrender.util.MetalLogger;
 
 public class PipelineCache {
-  @SuppressWarnings("unused") private final long handle;
+  private final long handle;
   private boolean warmedUp = false;
 
   private PipelineCache(long handle) { this.handle = handle; }

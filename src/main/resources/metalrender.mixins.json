@@ -3,7 +3,6 @@
   "minVersion": "0.8",
   "package": "com.metalrender.sodium.mixins",
   "compatibilityLevel": "JAVA_21",
-  "remap": false,
   "client": [
     "MinecraftClientMixin",
     "SodiumRendererMixin",
@@ -11,6 +10,7 @@
     "BuilderTaskOutputMixin",
     "SodiumWorldRendererMixin",
     "RenderSectionMixin",
+    "ScreenAccessor",
     "sodiumhook.SodiumWorldRendererMixin_CM",
     "lwjgl.GL11CMixin"
   ]

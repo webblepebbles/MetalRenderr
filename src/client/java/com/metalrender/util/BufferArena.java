@@ -8,7 +8,6 @@ public class BufferArena {
   private final long capacityBytes;
   private final AtomicLong used;
   private final int blockSize;
-  private final ThreadLocal<ByteBuffer> threadLocalBuffer = new ThreadLocal<>();
 
   public BufferArena(long capacityBytes) { this(capacityBytes, 4096); }
 
@@ -23,25 +22,20 @@ public class BufferArena {
   }
 
   public long allocate(long bytes) {
-    long allocated = this.used.addAndGet(bytes);
-    if (allocated > this.capacityBytes) {
-      this.used.addAndGet(-bytes);
+    long prev = this.used.get();
+    if (prev + bytes > this.capacityBytes) {
       return -1L;
+    } else {
+      this.used.addAndGet(bytes);
+      return prev;
     }
-    return allocated - bytes;
   }
 
   public void free(long handle, long bytes) { this.used.addAndGet(-bytes); }
 
   public ByteBuffer acquire() {
-    ByteBuffer buffer = threadLocalBuffer.get();
-    if (buffer == null) {
-      buffer = ByteBuffer.allocateDirect(this.blockSize)
-                   .order(ByteOrder.LITTLE_ENDIAN);
-      threadLocalBuffer.set(buffer);
-    }
-    buffer.clear();
-    return buffer;
+    return ByteBuffer.allocateDirect(this.blockSize)
+        .order(ByteOrder.LITTLE_ENDIAN);
   }
 
   public void release(ByteBuffer buf) {}

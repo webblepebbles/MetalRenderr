@@ -10,8 +10,6 @@ public final class PersistentBufferArena {
   private int capacity;
   private int alignment = 256;
   private long contextHandle;
-  private int framesSinceLastClear = 0;
-  private static final int CLEAR_FREQUENCY = 15;
 
   public boolean initialize(long ctx) {
     if (ctx == 0L) {
@@ -31,16 +29,6 @@ public final class PersistentBufferArena {
 
   public void reset() { this.cursor.set(0); }
 
-  public void advanceFrame() {
-    framesSinceLastClear++;
-    if (framesSinceLastClear >= CLEAR_FREQUENCY) {
-      if (this.cursor.get() > this.capacity * 0.6) {
-        this.reset();
-        framesSinceLastClear = 0;
-      }
-    }
-  }
-
   public int capacity() { return this.capacity; }
 
   public int alignment() { return this.alignment; }
@@ -53,14 +41,12 @@ public final class PersistentBufferArena {
     }
     int aligned = align(length, this.alignment);
     int current = this.cursor.get();
-
     if (current + aligned > this.capacity) {
-      this.cursor.set(aligned);
       current = 0;
+      this.cursor.set(aligned);
     } else {
       this.cursor.addAndGet(aligned);
     }
-
     NativeBridge.nPersistentAdvance(this.contextHandle, this.cursor.get());
     return current;
   }

@@ -8,7 +8,7 @@ import net.minecraft.util.math.BlockPos;
 public final class RegionManager {
   private static final int REGION_CHUNK_SIZE = 16;
   private static final int REGION_BLOCK_SIZE = REGION_CHUNK_SIZE * 16;
-  private static final int VISIBILITY_HISTORY_FRAMES = 8;
+  private static final int VISIBILITY_HISTORY_FRAMES = 6;
 
   private final Map<Long, Region> regions = new HashMap<>();
   private int frameIndex;
@@ -63,10 +63,10 @@ public final class RegionManager {
   }
 
   public void sweep() {
-    if (this.regions.size() <= 1024) {
+    if (this.regions.size() <= 4096) {
       return;
     }
-    int threshold = this.frameIndex - 30;
+    int threshold = this.frameIndex - 240;
     this.regions.values().removeIf(
         region -> region.lastTouchedFrame < threshold);
   }
