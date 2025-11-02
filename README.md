@@ -60,7 +60,7 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 
 - Does it work with xxx launcher?
 
-  As long as your launcher doesn't mess with display libraries, GLFW or EGL (like Prism does), it would work. It has been verifyed to NOT work on Prism launcher. The Offical Mojang launcher works.
+ ~~As long as your launcher doesn't mess with display libraries, GLFW or EGL (like Prism does), it would work. It has been verifyed to NOT work on Prism launcher.   The Offical Mojang launcher works.~~ Irrelavent now, GLFW checks are removed
 
 ---
 
