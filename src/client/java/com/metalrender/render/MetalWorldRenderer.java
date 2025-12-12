@@ -164,7 +164,7 @@ public class MetalWorldRenderer {
     float yaw = (float)Math.toRadians(camera.getYaw() + 180.0F);
     view.rotateY(-yaw);
     view.rotateX(-pitch);
-    net.minecraft.util.math.Vec3d pos = camera.getPos();
+    net.minecraft.util.math.Vec3d pos = camera.getCameraPos();
     view.translate((float)-pos.x, (float)-pos.y, (float)-pos.z);
     return view;
   }

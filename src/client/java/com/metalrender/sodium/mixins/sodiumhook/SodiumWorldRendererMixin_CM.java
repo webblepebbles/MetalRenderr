@@ -1,5 +1,8 @@
 package com.metalrender.sodium.mixins.sodiumhook;
 
+import net.caffeinemc.mods.sodium.client.render.chunk.ChunkRenderMatrices;
+import net.minecraft.client.gl.GpuSampler;
+import net.minecraft.client.render.BlockRenderLayerGroup;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Pseudo;
 import org.spongepowered.asm.mixin.injection.At;
@@ -19,8 +22,6 @@ public class SodiumWorldRendererMixin_CM {
 
   @Inject(method = {"drawChunkLayer"}, at = { @At("HEAD") }, cancellable = true,
           require = 0)
-  private void metalrender$drawChunkLayer(@Coerce Object terrainPass,
-                                          @Coerce Object matrices, double x,
-                                          double y, double z, CallbackInfo ci) {
+  private void metalrender$drawChunkLayer(BlockRenderLayerGroup group, ChunkRenderMatrices matrices, double x, double y, double z, GpuSampler terrainSampler, CallbackInfo ci) {
   }
 }
