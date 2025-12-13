@@ -1,5 +1,5 @@
 plugins {
-    id 'fabric-loom' version '1.11-SNAPSHOT'
+    id 'fabric-loom' version '1.14-SNAPSHOT'
     id 'maven-publish'
 }
 
@@ -26,17 +26,17 @@ repositories {
         }
 }
 dependencies {
-    minecraft "com.mojang:minecraft:1.21.10"
-    mappings "net.fabricmc:yarn:1.21.10+build.1:v2"
-    modImplementation "net.fabricmc:fabric-loader:0.17.2"
-    modImplementation "net.fabricmc.fabric-api:fabric-api:0.135.0+1.21.10"
+    minecraft "com.mojang:minecraft:1.21.11"
+    mappings "net.fabricmc:yarn:1.21.11+build.3:v2"
+    modImplementation "net.fabricmc:fabric-loader:0.18.0"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:0.139.4+1.21.11"
     modImplementation "org.lwjgl:lwjgl:3.3.3"
     modImplementation "org.lwjgl:lwjgl-glfw:3.3.3"
     modImplementation "org.lwjgl:lwjgl:3.3.3:natives-macos"
     modImplementation "org.lwjgl:lwjgl-glfw:3.3.3:natives-macos"
     modImplementation 'org.joml:joml:1.10.5'
-    modImplementation "maven.modrinth:sodium:mc1.21.10-0.7.2-fabric"
-    modImplementation "maven.modrinth:modmenu:16.0.0-rc.1"
+    modImplementation "maven.modrinth:sodium:mc1.21.11-0.8.0-fabric"
+    modImplementation "maven.modrinth:modmenu:17.0.0-alpha.1"
 }
 
 loom {

@@ -28,8 +28,3 @@ compiled/
 #.gz
 #.log
 compile_commands.json
-/work files/
-*.metallib
-*.dylib
-*.air
-
