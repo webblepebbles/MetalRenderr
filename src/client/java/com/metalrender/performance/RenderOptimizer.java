@@ -22,14 +22,22 @@ public final class RenderOptimizer {
   private int viewportHeight = 1;
   private final float[] viewProjArray = new float[16];
 
-  private RenderOptimizer() {}
+  private RenderOptimizer() {
+  }
 
-  public static RenderOptimizer getInstance() { return INSTANCE; }
+  public static RenderOptimizer getInstance() {
+    return INSTANCE;
+  }
+
+  private boolean shouldInitialize() {
+    return MetalRenderConfig.aggressiveFrustumCulling() ||
+        MetalRenderConfig.occlusionCulling();
+  }
 
   public void updateFrame(long nativeHandle, Camera camera,
-                          Matrix4f viewProjectionMatrix, int width,
-                          int height) {
-    if (!this.initialized) {
+      Matrix4f viewProjectionMatrix, int width,
+      int height) {
+    if (!this.initialized && shouldInitialize()) {
       this.frustumCuller = new FrustumCuller();
       this.occlusionCuller = new OcclusionCuller();
       this.regionManager = new RegionManager();
@@ -39,17 +47,16 @@ public final class RenderOptimizer {
     ++this.currentFrame;
     this.viewportWidth = Math.max(1, width);
     this.viewportHeight = Math.max(1, height);
-    if (MetalRenderConfig.aggressiveFrustumCulling()) {
+
+    if (this.frustumCuller != null && MetalRenderConfig.aggressiveFrustumCulling()) {
       this.frustumCuller.update(viewProjectionMatrix);
     }
 
-    if (MetalRenderConfig.occlusionCulling()) {
+    if (this.occlusionCuller != null && MetalRenderConfig.occlusionCulling()) {
       viewProjectionMatrix.get(this.viewProjArray);
-      if (this.occlusionCuller != null) {
-        this.occlusionCuller.beginFrame(nativeHandle, camera,
-                                        this.viewProjArray, this.viewportWidth,
-                                        this.viewportHeight);
-      }
+      this.occlusionCuller.beginFrame(nativeHandle, camera,
+          this.viewProjArray, this.viewportWidth,
+          this.viewportHeight);
     }
 
     if (this.regionManager != null) {
@@ -64,25 +71,28 @@ public final class RenderOptimizer {
 
   public boolean shouldRenderChunk(BlockPos chunkPos, Camera camera) {
     ++this.totalChunksThisFrame;
+
+    if (!MetalRenderConfig.aggressiveFrustumCulling() &&
+        !MetalRenderConfig.occlusionCulling()) {
+      return true;
+    }
+
     int minY = Math.max(chunkPos.getY(), -64);
     int maxY = Math.min(chunkPos.getY() + 16, 320);
     boolean frustumVisible = true;
     boolean skipOcclusion = false;
 
     if (this.regionManager != null) {
-      RegionManager.RegionVisibility regionVisibility =
-          this.regionManager.evaluate(
-              chunkPos, minY, maxY,
-              MetalRenderConfig.aggressiveFrustumCulling() ? this.frustumCuller
-                                                           : null);
+      RegionManager.RegionVisibility regionVisibility = this.regionManager.evaluate(
+          chunkPos, minY, maxY,
+          MetalRenderConfig.aggressiveFrustumCulling() ? this.frustumCuller
+              : null);
       if (regionVisibility == RegionManager.RegionVisibility.FRUSTUM_CULLED) {
         ++this.frustumCulledThisFrame;
         return false;
       }
-      frustumVisible =
-          regionVisibility != RegionManager.RegionVisibility.FRUSTUM_CULLED;
-      skipOcclusion =
-          regionVisibility == RegionManager.RegionVisibility.VISIBLE_CACHED;
+      frustumVisible = regionVisibility != RegionManager.RegionVisibility.FRUSTUM_CULLED;
+      skipOcclusion = regionVisibility == RegionManager.RegionVisibility.VISIBLE_CACHED;
     } else if (MetalRenderConfig.aggressiveFrustumCulling()) {
       frustumVisible = this.frustumCuller.isRegionVisible(
           chunkPos.getX() >> 4, chunkPos.getZ() >> 4, minY, maxY);
@@ -93,10 +103,10 @@ public final class RenderOptimizer {
     }
 
     if (MetalRenderConfig.occlusionCulling() && frustumVisible) {
-      boolean occluded =
-          skipOcclusion
-              ? false
-              : this.occlusionCuller.isChunkOccluded(chunkPos, minY, maxY);
+      boolean occluded = false;
+      if (!skipOcclusion && this.occlusionCuller != null) {
+        occluded = this.occlusionCuller.isChunkOccluded(chunkPos, minY, maxY);
+      }
       if (occluded) {
         ++this.occlusionCulledThisFrame;
         if (this.regionManager != null) {
@@ -140,15 +150,14 @@ public final class RenderOptimizer {
     public final double cullPercentage;
 
     PerformanceStats(int total, int frustumCulled, int occlusionCulled,
-                     int cacheSize, long frame) {
+        int cacheSize, long frame) {
       this.totalChunks = total;
       this.frustumCulled = frustumCulled;
       this.occlusionCulled = occlusionCulled;
       this.cacheSize = cacheSize;
       this.currentFrame = frame;
       int culled = frustumCulled + occlusionCulled;
-      this.cullPercentage =
-          total > 0 ? (double)culled / (double)total * 100.0D : 0.0D;
+      this.cullPercentage = total > 0 ? (double) culled / (double) total * 100.0D : 0.0D;
     }
   }
 }
