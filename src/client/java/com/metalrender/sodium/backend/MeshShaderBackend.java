@@ -160,7 +160,7 @@ public final class MeshShaderBackend {
       return;
     }
 
-    Vec3d cameraPos = camera.getPos();
+    Vec3d cameraPos = camera.getCameraPos();
     java.util.List<Long> toRemove = new java.util.ArrayList<>();
 
     for (ChunkMesh mesh : this.chunkMeshes.values()) {
@@ -195,7 +195,7 @@ public final class MeshShaderBackend {
       this.lastCleanupFrame = currentFrame;
     }
 
-    Vec3d cameraPos = camera.getPos();
+    Vec3d cameraPos = camera.getCameraPos();
     boolean lodEnabled = MetalRenderConfig.distanceLodEnabled();
     int lodNear = MetalRenderConfig.lodDistanceThreshold();
     int lodFar = MetalRenderConfig.lodFarDistance();

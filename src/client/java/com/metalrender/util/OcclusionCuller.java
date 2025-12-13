@@ -18,7 +18,7 @@ public class OcclusionCuller {
       this.depthGrid[i] = Float.POSITIVE_INFINITY;
     }
 
-    Vec3d pos = camera.getPos();
+    Vec3d pos = camera.getCameraPos();
     this.camX = pos.x;
     this.camY = pos.y;
     this.camZ = pos.z;
