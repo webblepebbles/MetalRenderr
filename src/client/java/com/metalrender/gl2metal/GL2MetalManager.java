@@ -5,9 +5,19 @@ import com.metalrender.util.MetalLogger;
 /**
  * Manages the GL2Metal translation mode.
  * 
- * When enabled, intercepts OpenGL calls and translates them to Metal
- * equivalents.
- * All rendering is done through Metal and displayed on a native Metal window.
+ * GL2Metal intercepts OpenGL calls at the LWJGL level and translates them
+ * directly to Metal, bypassing Apple's OpenGL compatibility layer.
+ * 
+ * This is different from MetalRender which uses a custom rendering pipeline.
+ * GL2Metal maintains full compatibility with vanilla/modded rendering code
+ * since mods still think they're using OpenGL.
+ * 
+ * Configuration:
+ * - Enable via: -Dmetalrender.gl2metal=true
+ * - Enable full interception: -Dmetalrender.gl2metal.fullInterception=true
+ * - Debug logging: -Dmetalrender.gl2metal.debug=true
+ * 
+ * @see GL2MetalConfig for all configuration options
  */
 public class GL2MetalManager {
 
@@ -16,7 +26,6 @@ public class GL2MetalManager {
     private static int frameCount = 0;
     private static int windowWidth = 1920;
     private static int windowHeight = 1080;
-    private static boolean debugLogging = false;
 
     /**
      * Initialize the GL2Metal system and create the Metal window.
@@ -27,10 +36,21 @@ public class GL2MetalManager {
             return true;
         }
 
+        // Check if GL2Metal is enabled via config
+        if (!GL2MetalConfig.GL2METAL_ENABLED) {
+            MetalLogger.info("[GL2MetalManager] GL2Metal not enabled (use -Dmetalrender.gl2metal=true)");
+            return false;
+        }
+
         windowWidth = width;
         windowHeight = height;
 
         MetalLogger.info("[GL2MetalManager] Initializing with size {}x{}", width, height);
+        MetalLogger.info("[GL2MetalManager] Full interception mode: {}", GL2MetalConfig.FULL_INTERCEPTION);
+        
+        if (GL2MetalConfig.DEBUG_LOGGING) {
+            MetalLogger.info(GL2MetalConfig.getConfigSummary());
+        }
 
         // Create the Metal translation layer and window
         GL2MetalTranslator translator = GL2MetalTranslator.getInstance();
@@ -59,6 +79,10 @@ public class GL2MetalManager {
 
         enabled = true;
         MetalLogger.info("[GL2MetalManager] GL2Metal interception mode ENABLED");
+        MetalLogger.info("[GL2MetalManager] Interception categories: drawCalls={}, state={}, buffers={}, textures={}, shaders={}",
+                GL2MetalConfig.INTERCEPT_DRAW_CALLS, GL2MetalConfig.INTERCEPT_STATE,
+                GL2MetalConfig.INTERCEPT_BUFFERS, GL2MetalConfig.INTERCEPT_TEXTURES,
+                GL2MetalConfig.INTERCEPT_SHADERS);
     }
 
     /**
@@ -70,11 +94,42 @@ public class GL2MetalManager {
     }
 
     public static boolean isEnabled() {
-        return enabled;
+        return enabled && GL2MetalConfig.GL2METAL_ENABLED;
+    }
+
+    /**
+     * Check if full GL interception is enabled.
+     * When true, intercepts individual GL calls.
+     * When false, uses framebuffer capture approach.
+     */
+    public static boolean isFullInterceptionEnabled() {
+        return enabled && GL2MetalConfig.FULL_INTERCEPTION;
     }
 
     public static boolean isInitialized() {
         return initialized;
+    }
+
+    /**
+     * Check if a specific interception category is active.
+     */
+    public static boolean shouldIntercept(GL2MetalConfig.InterceptionCategory category) {
+        return enabled && GL2MetalConfig.isInterceptionEnabled(category);
+    }
+
+    /**
+     * Check if debug logging is enabled.
+     */
+    public static boolean isDebugLogging() {
+        return GL2MetalConfig.DEBUG_LOGGING;
+    }
+
+    /**
+     * Set debug logging at runtime.
+     */
+    public static void setDebugLogging(boolean debugLogging) {
+        GL2MetalConfig.DEBUG_LOGGING = debugLogging;
+        GL2MetalTranslator.getInstance().setDebugLogging(debugLogging);
     }
 
     /**
@@ -122,19 +177,6 @@ public class GL2MetalManager {
      */
     public static int getFrameCount() {
         return frameCount;
-    }
-
-    /**
-     * Set debug logging on/off.
-     */
-    public static void setDebugLogging(boolean enabled) {
-        debugLogging = enabled;
-        // Pass to translator for native-level debug logging
-        GL2MetalTranslator.getInstance().setDebugLogging(enabled);
-    }
-
-    public static boolean isDebugLogging() {
-        return debugLogging;
     }
 
     /**

@@ -816,15 +816,6 @@ public class GL2MetalTranslator {
     // Helper Functions
     // ========================================================================
 
-    private void applyRenderState() {
-        // Apply current GL state to Metal
-        nSetDepthTest(metalHandle, depthTestEnabled, depthFunc);
-        nSetBlend(metalHandle, blendEnabled, blendSrcRGB, blendDstRGB, blendSrcAlpha, blendDstAlpha);
-        nSetCullFace(metalHandle, cullFaceEnabled, cullFaceMode);
-        nSetViewport(metalHandle, currentViewport[0], currentViewport[1],
-                currentViewport[2], currentViewport[3]);
-    }
-
     private int translatePrimitive(int glMode) {
         return switch (glMode) {
             case 0x0000 -> 0; // GL_POINTS -> MTLPrimitiveTypePoint
@@ -896,19 +887,7 @@ public class GL2MetalTranslator {
 
     private static native void nDeleteBuffer(long handle, long bufHandle);
 
-    private static native void nSetDepthTest(long handle, boolean enabled, int func);
-
-    private static native void nSetBlend(long handle, boolean enabled, int srcRGB, int dstRGB, int srcA, int dstA);
-
-    private static native void nSetCullFace(long handle, boolean enabled, int mode);
-
-    private static native void nSetViewport(long handle, int x, int y, int width, int height);
-
-    private static native void nDrawArrays(long handle, int primitive, int first, int count);
-
-    private static native void nDrawElements(long handle, int primitive, int count, long indexBuffer, long offset);
-
-    // New draw functions that pass all state directly
+    // Draw functions that pass all state directly (preferred)
     private static native void nDrawArraysWithHandles(long handle, int primitive, int first, int count,
             long vertexBuffer, long texture,
             boolean depthTestEnabled, int depthFunc,
@@ -923,28 +902,6 @@ public class GL2MetalTranslator {
             boolean blendEnabled, int blendSrcRGB, int blendDstRGB, int blendSrcAlpha, int blendDstAlpha,
             boolean cullEnabled, int cullMode,
             int viewportX, int viewportY, int viewportW, int viewportH);
-
-    private static native void nBlitFramebuffer(long windowHandle, ByteBuffer pixels, int width, int height,
-            boolean flipY);
-
-    // ========================================================================
-    // Framebuffer Blit
-    // ========================================================================
-
-    /**
-     * Blit pixel data to the Metal window.
-     * Used to display OpenGL framebuffer content via Metal.
-     * 
-     * @param pixels BGRA pixel data from glReadPixels
-     * @param width  Width of the framebuffer
-     * @param height Height of the framebuffer
-     * @param flipY  Whether to flip Y (OpenGL has origin at bottom)
-     */
-    public void blitFramebuffer(ByteBuffer pixels, int width, int height, boolean flipY) {
-        if (!initialized || metalWindowHandle == 0)
-            return;
-        nBlitFramebuffer(metalWindowHandle, pixels, width, height, flipY);
-    }
 
     // ========================================================================
     // Resource Classes

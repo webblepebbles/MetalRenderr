@@ -82,12 +82,40 @@ public final class MetalRenderClient implements ClientModInitializer {
   }
 
   public static boolean isEnabled() {
-    // Disable MetalRender when GL2Metal interception mode is active
-    // GL2Metal mode intercepts all OpenGL calls and renders via Metal directly
+    // GL2Metal mode intercepts OpenGL calls and renders via Metal directly
+    // It's a different approach than MetalRender's custom rendering pipeline
+    // Both can be configured, but GL2Metal takes priority when enabled
     if (GL2MetalManager.isEnabled()) {
       return false;
     }
     return ENABLED;
+  }
+
+  /**
+   * Check if GL2Metal mode is active (OpenGL call interception → Metal)
+   */
+  public static boolean isGL2MetalMode() {
+    return GL2MetalManager.isEnabled();
+  }
+
+  /**
+   * Check if custom MetalRender mode is active (custom Metal rendering)
+   */
+  public static boolean isMetalRenderMode() {
+    return ENABLED && !GL2MetalManager.isEnabled();
+  }
+
+  /**
+   * Get a description of the current rendering mode.
+   */
+  public static String getRenderingModeDescription() {
+    if (GL2MetalManager.isEnabled()) {
+      return "GL2Metal (OpenGL→Metal interception)";
+    } else if (ENABLED) {
+      return "MetalRender (Custom Metal pipeline)";
+    } else {
+      return "Vanilla OpenGL";
+    }
   }
 
   public static MetalWorldRenderer getWorldRenderer() {

@@ -1,5 +1,6 @@
 package com.metalrender.gl2metal.mixin;
 
+import com.metalrender.gl2metal.GL2MetalConfig;
 import com.metalrender.gl2metal.GL2MetalManager;
 import com.metalrender.gl2metal.GL2MetalTranslator;
 import org.spongepowered.asm.mixin.Mixin;
@@ -12,18 +13,23 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 /**
  * GL11C interception for GL2Metal mode.
  * Intercepts basic OpenGL calls and routes them to Metal.
+ * 
+ * Categories intercepted:
+ * - STATE: glEnable, glDisable, glBlendFunc, glDepthFunc, etc.
+ * - DRAW_CALLS: glDrawArrays, glDrawElements
+ * - TEXTURES: glGenTextures, glBindTexture, etc.
  */
 @Pseudo
 @Mixin(targets = { "org.lwjgl.opengl.GL11C" })
 public class GL11CGL2MetalMixin {
 
     // ========================================================================
-    // State Enable/Disable
+    // State Enable/Disable (STATE category)
     // ========================================================================
 
     @Inject(method = "glEnable", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glEnable(int cap, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldIntercept(GL2MetalConfig.InterceptionCategory.STATE)) {
             GL2MetalTranslator.getInstance().glEnable(cap);
             ci.cancel();
         }
@@ -31,19 +37,19 @@ public class GL11CGL2MetalMixin {
 
     @Inject(method = "glDisable", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glDisable(int cap, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldIntercept(GL2MetalConfig.InterceptionCategory.STATE)) {
             GL2MetalTranslator.getInstance().glDisable(cap);
             ci.cancel();
         }
     }
 
     // ========================================================================
-    // Blend Functions
+    // Blend Functions (STATE category)
     // ========================================================================
 
     @Inject(method = "glBlendFunc", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glBlendFunc(int sfactor, int dfactor, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldIntercept(GL2MetalConfig.InterceptionCategory.STATE)) {
             GL2MetalTranslator.getInstance().glBlendFunc(sfactor, dfactor);
             ci.cancel();
         }
