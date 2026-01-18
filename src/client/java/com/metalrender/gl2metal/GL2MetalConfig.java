@@ -38,38 +38,45 @@ public class GL2MetalConfig {
     /**
      * Intercept draw calls (glDrawArrays, glDrawElements, etc.)
      * This is the core of the system - must be enabled for Metal rendering.
+     * Default: DISABLED until GL→Metal translation is complete
      */
-    public static boolean INTERCEPT_DRAW_CALLS = !Boolean.getBoolean("metalrender.gl2metal.no.drawcalls");
+    public static boolean INTERCEPT_DRAW_CALLS = Boolean.getBoolean("metalrender.gl2metal.drawcalls");
 
     /**
      * Intercept state calls (glEnable, glDisable, glBlendFunc, etc.)
+     * Default: DISABLED until GL→Metal translation is complete
      */
-    public static boolean INTERCEPT_STATE = !Boolean.getBoolean("metalrender.gl2metal.no.state");
+    public static boolean INTERCEPT_STATE = Boolean.getBoolean("metalrender.gl2metal.state");
 
     /**
      * Intercept buffer calls (glGenBuffers, glBufferData, etc.)
+     * Default: DISABLED - causes buffer mapping errors
      */
-    public static boolean INTERCEPT_BUFFERS = !Boolean.getBoolean("metalrender.gl2metal.no.buffers");
+    public static boolean INTERCEPT_BUFFERS = Boolean.getBoolean("metalrender.gl2metal.buffers");
 
     /**
      * Intercept texture calls (glGenTextures, glTexImage2D, etc.)
+     * Default: DISABLED until GL→Metal translation is complete
      */
-    public static boolean INTERCEPT_TEXTURES = !Boolean.getBoolean("metalrender.gl2metal.no.textures");
+    public static boolean INTERCEPT_TEXTURES = Boolean.getBoolean("metalrender.gl2metal.textures");
 
     /**
      * Intercept shader calls (glCreateProgram, glCompileShader, etc.)
+     * Default: DISABLED until GL→Metal translation is complete
      */
-    public static boolean INTERCEPT_SHADERS = !Boolean.getBoolean("metalrender.gl2metal.no.shaders");
+    public static boolean INTERCEPT_SHADERS = Boolean.getBoolean("metalrender.gl2metal.shaders");
 
     /**
      * Intercept framebuffer calls (glGenFramebuffers, glBindFramebuffer, etc.)
+     * Default: DISABLED until GL→Metal translation is complete
      */
-    public static boolean INTERCEPT_FBOS = !Boolean.getBoolean("metalrender.gl2metal.no.fbos");
+    public static boolean INTERCEPT_FBOS = Boolean.getBoolean("metalrender.gl2metal.fbos");
 
     /**
      * Intercept VAO calls (glGenVertexArrays, glBindVertexArray, etc.)
+     * Default: DISABLED until GL→Metal translation is complete
      */
-    public static boolean INTERCEPT_VAOS = !Boolean.getBoolean("metalrender.gl2metal.no.vaos");
+    public static boolean INTERCEPT_VAOS = Boolean.getBoolean("metalrender.gl2metal.vaos");
 
     // ========================================================================
     // Debug & Profiling

@@ -117,6 +117,40 @@ public class GL2MetalManager {
         return enabled && GL2MetalConfig.isInterceptionEnabled(category);
     }
 
+    // ========================================================================
+    // Category-specific interception checks (mixin-safe - no enum parameters)
+    // These methods avoid passing enum parameters which can cause class loading
+    // issues during mixin application.
+    // ========================================================================
+
+    public static boolean shouldInterceptState() {
+        return enabled && GL2MetalConfig.INTERCEPT_STATE;
+    }
+
+    public static boolean shouldInterceptDrawCalls() {
+        return enabled && GL2MetalConfig.INTERCEPT_DRAW_CALLS;
+    }
+
+    public static boolean shouldInterceptBuffers() {
+        return enabled && GL2MetalConfig.INTERCEPT_BUFFERS;
+    }
+
+    public static boolean shouldInterceptTextures() {
+        return enabled && GL2MetalConfig.INTERCEPT_TEXTURES;
+    }
+
+    public static boolean shouldInterceptShaders() {
+        return enabled && GL2MetalConfig.INTERCEPT_SHADERS;
+    }
+
+    public static boolean shouldInterceptFBOs() {
+        return enabled && GL2MetalConfig.INTERCEPT_FBOS;
+    }
+
+    public static boolean shouldInterceptVAOs() {
+        return enabled && GL2MetalConfig.INTERCEPT_VAOS;
+    }
+
     /**
      * Check if debug logging is enabled.
      */

@@ -10,11 +10,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
- * GL30C interception for GL2Metal mode.
+ * GL30 interception for GL2Metal mode.
  * Intercepts VAO and FBO calls and routes them to Metal.
+ * 
+ * NOTE: We target GL30 (wrapper class) instead of GL30C because GL30C methods are 
+ * native and cannot be injected into. GL30 wraps GL30C with regular Java methods.
  */
 @Pseudo
-@Mixin(targets = { "org.lwjgl.opengl.GL30C" })
+@Mixin(targets = { "org.lwjgl.opengl.GL30" })
 public class GL30CGL2MetalMixin {
 
     // ========================================================================
@@ -23,14 +26,14 @@ public class GL30CGL2MetalMixin {
 
     @Inject(method = "glGenVertexArrays()I", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glGenVertexArrays(CallbackInfoReturnable<Integer> cir) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptVAOs()) {
             cir.setReturnValue(GL2MetalTranslator.getInstance().glGenVertexArrays());
         }
     }
 
     @Inject(method = "glDeleteVertexArrays(I)V", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glDeleteVertexArrays(int array, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptVAOs()) {
             GL2MetalTranslator.getInstance().glDeleteVertexArrays(array);
             ci.cancel();
         }
@@ -38,7 +41,7 @@ public class GL30CGL2MetalMixin {
 
     @Inject(method = "glBindVertexArray", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glBindVertexArray(int array, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptVAOs()) {
             GL2MetalTranslator.getInstance().glBindVertexArray(array);
             ci.cancel();
         }
@@ -50,14 +53,14 @@ public class GL30CGL2MetalMixin {
 
     @Inject(method = "glGenFramebuffers()I", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glGenFramebuffers(CallbackInfoReturnable<Integer> cir) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptFBOs()) {
             cir.setReturnValue(GL2MetalTranslator.getInstance().glGenFramebuffers());
         }
     }
 
     @Inject(method = "glDeleteFramebuffers(I)V", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glDeleteFramebuffers(int framebuffer, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptFBOs()) {
             GL2MetalTranslator.getInstance().glDeleteFramebuffers(framebuffer);
             ci.cancel();
         }
@@ -65,7 +68,7 @@ public class GL30CGL2MetalMixin {
 
     @Inject(method = "glBindFramebuffer", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glBindFramebuffer(int target, int framebuffer, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptFBOs()) {
             GL2MetalTranslator.getInstance().glBindFramebuffer(target, framebuffer);
             ci.cancel();
         }
@@ -74,7 +77,7 @@ public class GL30CGL2MetalMixin {
     @Inject(method = "glFramebufferTexture2D", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glFramebufferTexture2D(int target, int attachment, int textarget, int texture,
             int level, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptFBOs()) {
             GL2MetalTranslator.getInstance().glFramebufferTexture2D(target, attachment, textarget, texture, level);
             ci.cancel();
         }
@@ -82,7 +85,7 @@ public class GL30CGL2MetalMixin {
 
     @Inject(method = "glCheckFramebufferStatus", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glCheckFramebufferStatus(int target, CallbackInfoReturnable<Integer> cir) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptFBOs()) {
             cir.setReturnValue(GL2MetalTranslator.getInstance().glCheckFramebufferStatus(target));
         }
     }
@@ -93,14 +96,14 @@ public class GL30CGL2MetalMixin {
 
     @Inject(method = "glGenRenderbuffers()I", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glGenRenderbuffers(CallbackInfoReturnable<Integer> cir) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptFBOs()) {
             cir.setReturnValue(GL2MetalTranslator.getInstance().glGenRenderbuffers());
         }
     }
 
     @Inject(method = "glDeleteRenderbuffers(I)V", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glDeleteRenderbuffers(int renderbuffer, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptFBOs()) {
             GL2MetalTranslator.getInstance().glDeleteRenderbuffers(renderbuffer);
             ci.cancel();
         }
@@ -108,7 +111,7 @@ public class GL30CGL2MetalMixin {
 
     @Inject(method = "glBindRenderbuffer", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glBindRenderbuffer(int target, int renderbuffer, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptFBOs()) {
             GL2MetalTranslator.getInstance().glBindRenderbuffer(target, renderbuffer);
             ci.cancel();
         }
@@ -117,7 +120,7 @@ public class GL30CGL2MetalMixin {
     @Inject(method = "glRenderbufferStorage", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glRenderbufferStorage(int target, int internalformat, int width, int height,
             CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptFBOs()) {
             GL2MetalTranslator.getInstance().glRenderbufferStorage(target, internalformat, width, height);
             ci.cancel();
         }
@@ -126,7 +129,7 @@ public class GL30CGL2MetalMixin {
     @Inject(method = "glFramebufferRenderbuffer", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glFramebufferRenderbuffer(int target, int attachment, int renderbuffertarget,
             int renderbuffer, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptFBOs()) {
             GL2MetalTranslator.getInstance().glFramebufferRenderbuffer(target, attachment, renderbuffertarget,
                     renderbuffer);
             ci.cancel();

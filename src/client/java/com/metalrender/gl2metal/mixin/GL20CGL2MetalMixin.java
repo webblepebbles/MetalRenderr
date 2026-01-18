@@ -12,11 +12,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 import java.nio.ByteBuffer;
 
 /**
- * GL20C interception for GL2Metal mode.
+ * GL20 interception for GL2Metal mode.
  * Intercepts shader and program calls and routes them to Metal.
+ * 
+ * NOTE: We target GL20 (wrapper class) instead of GL20C because GL20C methods are 
+ * native and cannot be injected into. GL20 wraps GL20C with regular Java methods.
  */
 @Pseudo
-@Mixin(targets = { "org.lwjgl.opengl.GL20C" })
+@Mixin(targets = { "org.lwjgl.opengl.GL20" })
 public class GL20CGL2MetalMixin {
 
     // ========================================================================
@@ -25,14 +28,14 @@ public class GL20CGL2MetalMixin {
 
     @Inject(method = "glCreateProgram", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glCreateProgram(CallbackInfoReturnable<Integer> cir) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptShaders()) {
             cir.setReturnValue(GL2MetalTranslator.getInstance().glCreateProgram());
         }
     }
 
     @Inject(method = "glUseProgram", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glUseProgram(int program, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptShaders()) {
             GL2MetalTranslator.getInstance().glUseProgram(program);
             ci.cancel();
         }
@@ -40,7 +43,7 @@ public class GL20CGL2MetalMixin {
 
     @Inject(method = "glDeleteProgram", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glDeleteProgram(int program, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptShaders()) {
             GL2MetalTranslator.getInstance().glDeleteProgram(program);
             ci.cancel();
         }
@@ -48,7 +51,7 @@ public class GL20CGL2MetalMixin {
 
     @Inject(method = "glLinkProgram", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glLinkProgram(int program, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptShaders()) {
             GL2MetalTranslator.getInstance().glLinkProgram(program);
             ci.cancel();
         }
@@ -60,14 +63,14 @@ public class GL20CGL2MetalMixin {
 
     @Inject(method = "glCreateShader", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glCreateShader(int type, CallbackInfoReturnable<Integer> cir) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptShaders()) {
             cir.setReturnValue(GL2MetalTranslator.getInstance().glCreateShader(type));
         }
     }
 
     @Inject(method = "glDeleteShader", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glDeleteShader(int shader, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptShaders()) {
             GL2MetalTranslator.getInstance().glDeleteShader(shader);
             ci.cancel();
         }
@@ -75,7 +78,7 @@ public class GL20CGL2MetalMixin {
 
     @Inject(method = "glAttachShader", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glAttachShader(int program, int shader, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptShaders()) {
             GL2MetalTranslator.getInstance().glAttachShader(program, shader);
             ci.cancel();
         }
@@ -83,7 +86,7 @@ public class GL20CGL2MetalMixin {
 
     @Inject(method = "glCompileShader", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glCompileShader(int shader, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptShaders()) {
             GL2MetalTranslator.getInstance().glCompileShader(shader);
             ci.cancel();
         }
@@ -91,19 +94,16 @@ public class GL20CGL2MetalMixin {
 
     // ========================================================================
     // Uniform Functions
+    // NOTE: Uniform location lookup has complex overloads - for now we skip these
+    // and let OpenGL handle them. The uniform values will still be intercepted.
     // ========================================================================
 
-    @Inject(method = "glGetUniformLocation", at = @At("HEAD"), cancellable = true, remap = false)
-    private static void metalrender$glGetUniformLocation(int program, CharSequence name,
-            CallbackInfoReturnable<Integer> cir) {
-        if (GL2MetalManager.isEnabled()) {
-            cir.setReturnValue(GL2MetalTranslator.getInstance().glGetUniformLocation(program, name.toString()));
-        }
-    }
+    // Skip glGetUniformLocation - complex overloads with ByteBuffer vs CharSequence
+    // TODO: Figure out proper signature matching for LWJGL wrapper methods
 
     @Inject(method = "glUniform1i", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glUniform1i(int location, int v0, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptShaders()) {
             GL2MetalTranslator.getInstance().glUniform1i(location, v0);
             ci.cancel();
         }
@@ -111,7 +111,7 @@ public class GL20CGL2MetalMixin {
 
     @Inject(method = "glUniform1f", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glUniform1f(int location, float v0, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptShaders()) {
             GL2MetalTranslator.getInstance().glUniform1f(location, v0);
             ci.cancel();
         }
@@ -119,7 +119,7 @@ public class GL20CGL2MetalMixin {
 
     @Inject(method = "glUniform2f", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glUniform2f(int location, float v0, float v1, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptShaders()) {
             GL2MetalTranslator.getInstance().glUniform2f(location, v0, v1);
             ci.cancel();
         }
@@ -127,7 +127,7 @@ public class GL20CGL2MetalMixin {
 
     @Inject(method = "glUniform3f", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glUniform3f(int location, float v0, float v1, float v2, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptShaders()) {
             GL2MetalTranslator.getInstance().glUniform3f(location, v0, v1, v2);
             ci.cancel();
         }
@@ -135,49 +135,31 @@ public class GL20CGL2MetalMixin {
 
     @Inject(method = "glUniform4f", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glUniform4f(int location, float v0, float v1, float v2, float v3, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptShaders()) {
             GL2MetalTranslator.getInstance().glUniform4f(location, v0, v1, v2, v3);
             ci.cancel();
         }
     }
 
     // ========================================================================
-    // Vertex Attribute Functions
+    // Vertex Attribute Functions - SKIPPED
+    // NOTE: GL20 wrapper uses ByteBuffer for pointer params, not long.
+    // These methods have signature mismatches and need special handling.
+    // TODO: Implement proper interception at a higher level (GlStateManager)
     // ========================================================================
 
-    @Inject(method = "glVertexAttribPointer", at = @At("HEAD"), cancellable = true, remap = false)
-    private static void metalrender$glVertexAttribPointer(int index, int size, int type, boolean normalized, int stride,
-            long pointer, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
-            GL2MetalTranslator.getInstance().glVertexAttribPointer(index, size, type, normalized, stride, pointer);
-            ci.cancel();
-        }
-    }
-
-    @Inject(method = "glEnableVertexAttribArray", at = @At("HEAD"), cancellable = true, remap = false)
-    private static void metalrender$glEnableVertexAttribArray(int index, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
-            GL2MetalTranslator.getInstance().glEnableVertexAttribArray(index);
-            ci.cancel();
-        }
-    }
-
-    @Inject(method = "glDisableVertexAttribArray", at = @At("HEAD"), cancellable = true, remap = false)
-    private static void metalrender$glDisableVertexAttribArray(int index, CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
-            GL2MetalTranslator.getInstance().glDisableVertexAttribArray(index);
-            ci.cancel();
-        }
-    }
+    // @Inject for glVertexAttribPointer - SKIPPED due to signature mismatch
+    // @Inject for glEnableVertexAttribArray - SKIPPED due to signature mismatch  
+    // @Inject for glDisableVertexAttribArray - SKIPPED due to signature mismatch
 
     // ========================================================================
-    // Blend Function Separate
+    // Blend Function Separate (STATE category)
     // ========================================================================
 
     @Inject(method = "glBlendFuncSeparate", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glBlendFuncSeparate(int srcRGB, int dstRGB, int srcAlpha, int dstAlpha,
             CallbackInfo ci) {
-        if (GL2MetalManager.isEnabled()) {
+        if (GL2MetalManager.shouldInterceptState()) {
             GL2MetalTranslator.getInstance().glBlendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha);
             ci.cancel();
         }
