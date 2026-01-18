@@ -467,9 +467,17 @@ public class GL2MetalTranslator {
     // Draw Functions
     // ========================================================================
 
+    private static int drawCallCount = 0;
+
     public void glDrawArrays(int mode, int first, int count) {
         if (!initialized)
             return;
+
+        drawCallCount++;
+        if (debugLogging && (drawCallCount <= 10 || drawCallCount % 1000 == 0)) {
+            MetalLogger.info("[GL2Metal] glDrawArrays #{} mode={} first={} count={}", 
+                    drawCallCount, mode, first, count);
+        }
 
         // Get the vertex buffer handle
         MetalBuffer vertexBuffer = buffers.get(boundArrayBuffer);
@@ -478,6 +486,11 @@ public class GL2MetalTranslator {
         // Get texture handle
         MetalTexture texture = textures.get(boundTexture2D);
         long textureHandle = (texture != null) ? texture.metalHandle : 0;
+
+        if (debugLogging && drawCallCount <= 10) {
+            MetalLogger.info("[GL2Metal]   vertexBuffer={} texture={} viewport={}x{}", 
+                    vertexBufferHandle, textureHandle, currentViewport[2], currentViewport[3]);
+        }
 
         // Translate primitive type
         int metalPrimitive = translatePrimitive(mode);
@@ -494,6 +507,12 @@ public class GL2MetalTranslator {
     public void glDrawElements(int mode, int count, int type, long indices) {
         if (!initialized)
             return;
+
+        drawCallCount++;
+        if (debugLogging && (drawCallCount <= 10 || drawCallCount % 1000 == 0)) {
+            MetalLogger.info("[GL2Metal] glDrawElements #{} mode={} count={} type={}", 
+                    drawCallCount, mode, count, type);
+        }
 
         // Get buffer handles
         MetalBuffer vertexBuffer = buffers.get(boundArrayBuffer);

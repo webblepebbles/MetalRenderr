@@ -25,9 +25,11 @@ public class GL2MetalConfig {
     /**
      * When true, use full GL interception mode (intercept all GL calls).
      * When false, use framebuffer capture mode (let GL render, then blit).
-     * Default: true (full interception is the goal)
+     * Default: true when GL2METAL_ENABLED (full interception is the goal)
+     * Can be disabled via -Dmetalrender.gl2metal.fullInterception=false
      */
-    public static boolean FULL_INTERCEPTION = Boolean.getBoolean("metalrender.gl2metal.fullInterception");
+    public static boolean FULL_INTERCEPTION = GL2METAL_ENABLED && 
+            !Boolean.getBoolean("metalrender.gl2metal.fullInterception.disabled");
 
     // ========================================================================
     // Per-Category Interception Toggles
@@ -151,7 +153,7 @@ public class GL2MetalConfig {
      */
     public static void reloadFromSystemProperties() {
         GL2METAL_ENABLED = Boolean.getBoolean("metalrender.gl2metal");
-        FULL_INTERCEPTION = Boolean.getBoolean("metalrender.gl2metal.fullInterception");
+        FULL_INTERCEPTION = GL2METAL_ENABLED && !Boolean.getBoolean("metalrender.gl2metal.fullInterception.disabled");
         INTERCEPT_DRAW_CALLS = !Boolean.getBoolean("metalrender.gl2metal.no.drawcalls");
         INTERCEPT_STATE = !Boolean.getBoolean("metalrender.gl2metal.no.state");
         INTERCEPT_BUFFERS = !Boolean.getBoolean("metalrender.gl2metal.no.buffers");
