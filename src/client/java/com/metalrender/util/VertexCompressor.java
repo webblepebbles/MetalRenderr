@@ -5,27 +5,46 @@ import java.nio.ByteOrder;
 import net.minecraft.util.math.BlockPos;
 
 public final class VertexCompressor {
-  /** Size of a vanilla chunk vertex in bytes. */
-  public static final int INPUT_STRIDE = 32;
+  /** Size of Sodium COMPACT vertex format in bytes. */
+  public static final int INPUT_STRIDE = 20;
 
   /** Size of the compressed vertex format in bytes. */
   public static final int OUTPUT_STRIDE = 24;
 
   private static final float POSITION_SCALE = 256.0F;
 
-  private VertexCompressor() {}
+  private VertexCompressor() {
+  }
 
+  /**
+   * Compress Sodium COMPACT vertex data to our format.
+   * 
+   * IMPORTANT: Sodium stores vertices as QUADS (4 vertices per face).
+   * We convert to TRIANGULAR format (6 vertices per quad: indices 0,1,2,2,3,0).
+   * So input of N vertices (N/4 quads) produces N*6/4 = N*1.5 output vertices.
+   */
   public static CompressedMesh compress(BlockPos origin, ByteBuffer source,
-                                        int vertexCount) {
-    if (vertexCount <= 0 || source == null) {
+      int inputVertexCount) {
+    if (inputVertexCount <= 0 || source == null) {
       return CompressedMesh.empty();
     }
+
+    // Sodium data is quads (4 vertices per face)
+    // Must be divisible by 4
+    int quadCount = inputVertexCount / 4;
+    if (inputVertexCount % 4 != 0) {
+      // Not aligned to quads - this shouldn't happen
+      quadCount = inputVertexCount / 4;
+    }
+
+    // Each quad becomes 2 triangles = 6 vertices
+    int outputVertexCount = quadCount * 6;
 
     ByteBuffer input = source.duplicate().order(ByteOrder.LITTLE_ENDIAN);
     input.clear();
 
-    ByteBuffer target = ByteBuffer.allocateDirect(vertexCount * OUTPUT_STRIDE)
-                            .order(ByteOrder.LITTLE_ENDIAN);
+    ByteBuffer target = ByteBuffer.allocateDirect(outputVertexCount * OUTPUT_STRIDE)
+        .order(ByteOrder.LITTLE_ENDIAN);
 
     float minX = Float.POSITIVE_INFINITY;
     float minY = Float.POSITIVE_INFINITY;
@@ -38,40 +57,103 @@ public final class VertexCompressor {
     int originY = origin.getY();
     int originZ = origin.getZ();
 
-    for (int vertexIndex = 0; vertexIndex < vertexCount; vertexIndex++) {
-      int base = vertexIndex * INPUT_STRIDE;
+    // Sodium COMPACT format constants
+    final int POSITION_MAX_VALUE = 1 << 20; // 1048576
+    final float MODEL_ORIGIN = 8.0f;
+    final float MODEL_RANGE = 32.0f;
+    final int TEXTURE_MAX_VALUE = 1 << 15; // 32768
 
-      float x = input.getFloat(base);
-      float y = input.getFloat(base + 4);
-      float z = input.getFloat(base + 8);
+    // Debug: log first few vertices
+    boolean doDebug = (quadCount > 0);
+    int debugLimit = 4; // vertices to debug
+    int debugCount = 0;
 
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      minZ = Math.min(minZ, z);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-      maxZ = Math.max(maxZ, z);
+    // Temporary storage for quad vertices
+    short[] qx = new short[4];
+    short[] qy = new short[4];
+    short[] qz = new short[4];
+    int[] colors = new int[4];
+    int[] uvs = new int[4];
+    int[] lights = new int[4];
+    int[] normals = new int[4];
 
-      short qx = quantizePosition(x - originX);
-      short qy = quantizePosition(y - originY);
-      short qz = quantizePosition(z - originZ);
+    for (int quadIndex = 0; quadIndex < quadCount; quadIndex++) {
+      // Read 4 vertices of this quad
+      for (int v = 0; v < 4; v++) {
+        int vertexIndex = quadIndex * 4 + v;
+        int base = vertexIndex * INPUT_STRIDE;
 
-      int normalPacked = packNormal(input.get(base + 28), input.get(base + 29),
-                                    input.get(base + 30));
-      int color = input.getInt(base + 12);
-      int uvPacked =
-          packHalf2(input.getFloat(base + 16), input.getFloat(base + 20));
-      int lightPacked =
-          packLight(input.getShort(base + 24), input.getShort(base + 26));
+        // Read Sodium COMPACT format (20 bytes):
+        int posHi = input.getInt(base + 0);
+        int posLo = input.getInt(base + 4);
+        int color = input.getInt(base + 8);
+        int texPacked = input.getInt(base + 12);
+        int lightData = input.getInt(base + 16);
 
-      target.putShort(qx);
-      target.putShort(qy);
-      target.putShort(qz);
-      target.putShort((short)0);
-      target.putInt(normalPacked);
-      target.putInt(color);
-      target.putInt(uvPacked);
-      target.putInt(lightPacked);
+        // Decode 20-bit positions
+        int qx20 = ((posHi >> 0) & 0x3FF) << 10 | ((posLo >> 0) & 0x3FF);
+        int qy20 = ((posHi >> 10) & 0x3FF) << 10 | ((posLo >> 10) & 0x3FF);
+        int qz20 = ((posHi >> 20) & 0x3FF) << 10 | ((posLo >> 20) & 0x3FF);
+
+        // Convert to world coordinates
+        float x = ((float) qx20 / POSITION_MAX_VALUE) * MODEL_RANGE - MODEL_ORIGIN + originX;
+        float y = ((float) qy20 / POSITION_MAX_VALUE) * MODEL_RANGE - MODEL_ORIGIN + originY;
+        float z = ((float) qz20 / POSITION_MAX_VALUE) * MODEL_RANGE - MODEL_ORIGIN + originZ;
+
+        // Debug output
+        if (doDebug && debugCount < debugLimit) {
+          MetalLogger.info("[VertexCompressor] v%d: color=0x%08X tex=0x%08X world=(%.2f,%.2f,%.2f)",
+              vertexIndex, color, texPacked, x, y, z);
+          debugCount++;
+          if (debugCount == debugLimit) {
+            doDebug = false;
+          }
+        }
+
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        minZ = Math.min(minZ, z);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+        maxZ = Math.max(maxZ, z);
+
+        // Re-quantize for our format (relative to section origin)
+        qx[v] = quantizePosition(x - originX);
+        qy[v] = quantizePosition(y - originY);
+        qz[v] = quantizePosition(z - originZ);
+
+        // Decode texture coordinates
+        int uRaw = texPacked & 0xFFFF;
+        int vRaw = (texPacked >> 16) & 0xFFFF;
+        float u = (uRaw & 0x7FFF) / (float) TEXTURE_MAX_VALUE;
+        float uv = (vRaw & 0x7FFF) / (float) TEXTURE_MAX_VALUE;
+        uvs[v] = packHalf2(u, uv);
+
+        // Decode light
+        int lightEncoded = lightData & 0xFFFF;
+        int blockLight = (lightEncoded >> 0) & 0xFF;
+        int skyLight = (lightEncoded >> 8) & 0xFF;
+        int blockOut = Math.max(0, (blockLight - 8) * 273);
+        int skyOut = Math.max(0, (skyLight - 8) * 273);
+        lights[v] = (blockOut & 0xFFFF) | ((skyOut & 0xFFFF) << 16);
+
+        colors[v] = color;
+        normals[v] = packNormal((byte) 0, (byte) 127, (byte) 0);
+      }
+
+      // Write 6 vertices for 2 triangles
+      // Try standard OpenGL quad triangulation: {0, 1, 2, 0, 2, 3}
+      int[] indices = { 0, 1, 2, 0, 2, 3 };
+      for (int idx : indices) {
+        target.putShort(qx[idx]);
+        target.putShort(qy[idx]);
+        target.putShort(qz[idx]);
+        target.putShort((short) 0);
+        target.putInt(normals[idx]);
+        target.putInt(colors[idx]);
+        target.putInt(uvs[idx]);
+        target.putInt(lights[idx]);
+      }
     }
 
     target.flip();
@@ -81,7 +163,7 @@ public final class VertexCompressor {
     }
 
     Bounds bounds = Bounds.from(minX, minY, minZ, maxX, maxY, maxZ);
-    return new CompressedMesh(target, vertexCount, bounds);
+    return new CompressedMesh(target, outputVertexCount, bounds);
   }
 
   private static short quantizePosition(float relative) {
@@ -91,7 +173,7 @@ public final class VertexCompressor {
     } else if (quantized < Short.MIN_VALUE) {
       quantized = Short.MIN_VALUE;
     }
-    return (short)quantized;
+    return (short) quantized;
   }
 
   private static int packNormal(byte nx, byte ny, byte nz) {
@@ -179,7 +261,7 @@ public final class VertexCompressor {
     public final float radius;
 
     private Bounds(float minX, float minY, float minZ, float maxX, float maxY,
-                   float maxZ, float radius) {
+        float maxZ, float radius) {
       this.minX = minX;
       this.minY = minY;
       this.minZ = minZ;
@@ -190,21 +272,27 @@ public final class VertexCompressor {
     }
 
     private static Bounds from(float minX, float minY, float minZ, float maxX,
-                               float maxY, float maxZ) {
+        float maxY, float maxZ) {
       float centerX = (minX + maxX) * 0.5F;
       float centerY = (minY + maxY) * 0.5F;
       float centerZ = (minZ + maxZ) * 0.5F;
       float dx = maxX - centerX;
       float dy = maxY - centerY;
       float dz = maxZ - centerZ;
-      float radius = (float)Math.sqrt(dx * dx + dy * dy + dz * dz);
+      float radius = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
       return new Bounds(minX, minY, minZ, maxX, maxY, maxZ, radius);
     }
 
-    public float centerX() { return (this.minX + this.maxX) * 0.5F; }
+    public float centerX() {
+      return (this.minX + this.maxX) * 0.5F;
+    }
 
-    public float centerY() { return (this.minY + this.maxY) * 0.5F; }
+    public float centerY() {
+      return (this.minY + this.maxY) * 0.5F;
+    }
 
-    public float centerZ() { return (this.minZ + this.maxZ) * 0.5F; }
+    public float centerZ() {
+      return (this.minZ + this.maxZ) * 0.5F;
+    }
   }
 }

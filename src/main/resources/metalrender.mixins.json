@@ -5,13 +5,31 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "MinecraftClientMixin",
-    "SodiumRendererMixin",
     "ChunkRenderManagerMixin",
     "BuilderTaskOutputMixin",
     "SodiumWorldRendererMixin",
     "RenderSectionMixin",
+    "RenderSectionManagerMixin",
     "ScreenAccessor",
+    "ScreenMixin",
+    "HandledScreenMixin",
     "sodiumhook.SodiumWorldRendererMixin_CM",
-    "lwjgl.GL11CMixin"
+    "lwjgl.GL11CMixin",
+    "RenderSystemFlipMixin",
+    "InGameHudMixin",
+    "DrawContextMixin",
+    "SpriteAtlasTextureMixin",
+    "WorldRendererMixin",
+    "VertexConsumerProviderMixin",
+    "ItemRendererMixin",
+    "LivingEntityRendererMixin",
+    "HeldItemRendererMixin",
+    "GuiRenderStateMixin",
+    "EntityRenderManagerMixin",
+    "OrderedRenderCommandQueueMixin",
+    "accessor.AbstractTextureAccessor",
+    "accessor.SpriteContentsAccessor",
+    "accessor.GlTextureAccessor",
+    "accessor.SpriteAtlasTextureAccessor"
   ]
 }

@@ -1,25 +1,11 @@
-/**
- * MetalRender Terrain Shaders
- * 
- * Decodes Sodium's CompactChunkVertex format (20 bytes):
- * - bytes 0-3:   packPositionHi (x10|y10|z10|unused2)
- * - bytes 4-7:   packPositionLo (x10|y10|z10|unused2)
- * - bytes 8-11:  color ARGB (ColorARGB format: a<<24|r<<16|g<<8|b, with AO pre-applied to RGB)
- * - bytes 12-15: texU[15+sign] | texV[15+sign]
- * - bytes 16-19: light[16] | material[8] | sectionIndex[8]
- */
-
 #include <metal_stdlib>
 using namespace metal;
 
-constant uint POSITION_MAX_VALUE = 1u << 20u;  // 1048576 for 20-bit position
-constant float MODEL_ORIGIN = 8.0f;            // Section-local origin offset
-constant float MODEL_RANGE = 32.0f;            // Range of position values
-constant float VERTEX_SCALE = MODEL_RANGE / float(POSITION_MAX_VALUE);  // 32/1048576
-constant float VERTEX_OFFSET = -MODEL_ORIGIN;  // -8.0
-
-constant uint TEXTURE_MAX_VALUE = 1u << 15u;   // 32768 for 15-bit texture coords
-constant float TEXTURE_SCALE = 1.0f / float(TEXTURE_MAX_VALUE);
+// Sodium COMPACT format constants
+constant float MODEL_ORIGIN = 8.0f;
+constant float MODEL_RANGE = 32.0f;
+constant uint POSITION_MAX_VALUE = 1u << 20u;  // 1048576
+constant uint TEXTURE_MAX_VALUE = 1u << 15u;   // 32768
 
 struct DrawUniforms {
     float originX;      // Section world X
@@ -33,7 +19,7 @@ struct FrameUniforms {
     float4 cameraPos;           // Camera world position
     float4 fogColor;            // Fog color RGBA
     float4 fogParams;           // start, end, density, unused
-    float4 texCoordShrink;      // Texture coordinate adjustment
+    float4 texCoordShrink;      // Texture coordinate adjustment (not used)
 };
 
 struct TerrainVertexOut {
@@ -44,75 +30,63 @@ struct TerrainVertexOut {
 };
 
 // ============================================================================
-// Vertex Decoding Functions
+// Sodium COMPACT Format Decoding (20 bytes per vertex)
 // ============================================================================
 
-// Decode 20-bit position from two packed 32-bit values
-// Each axis uses 10 bits from Hi and 10 bits from Lo
-float3 decodePosition(uint posHi, uint posLo) {
-    // Extract high 10 bits from posHi
+// Decode 20-bit deinterleaved position from posHi and posLo
+float3 decodePosition(uint posHi, uint posLo, float3 origin) {
+    // Extract 10-bit hi and lo parts for each axis
     uint xHi = (posHi >> 0u) & 0x3FFu;
     uint yHi = (posHi >> 10u) & 0x3FFu;
     uint zHi = (posHi >> 20u) & 0x3FFu;
     
-    // Extract low 10 bits from posLo
     uint xLo = (posLo >> 0u) & 0x3FFu;
     uint yLo = (posLo >> 10u) & 0x3FFu;
     uint zLo = (posLo >> 20u) & 0x3FFu;
     
-    // Combine to 20-bit values and scale
-    float x = float((xHi << 10u) | xLo) * VERTEX_SCALE + VERTEX_OFFSET;
-    float y = float((yHi << 10u) | yLo) * VERTEX_SCALE + VERTEX_OFFSET;
-    float z = float((zHi << 10u) | zLo) * VERTEX_SCALE + VERTEX_OFFSET;
+    // Combine to 20-bit values
+    uint qx = (xHi << 10u) | xLo;
+    uint qy = (yHi << 10u) | yLo;
+    uint qz = (zHi << 10u) | zLo;
+    
+    // Decode: pos = (quantized / 1048576) * 32.0 - 8.0 + origin
+    float x = (float(qx) / float(POSITION_MAX_VALUE)) * MODEL_RANGE - MODEL_ORIGIN + origin.x;
+    float y = (float(qy) / float(POSITION_MAX_VALUE)) * MODEL_RANGE - MODEL_ORIGIN + origin.y;
+    float z = (float(qz) / float(POSITION_MAX_VALUE)) * MODEL_RANGE - MODEL_ORIGIN + origin.z;
     
     return float3(x, y, z);
 }
 
-// Decode texture coordinate with Sodium's bias handling
-// The 16th bit indicates the direction of sub-pixel bias
-float2 decodeTexCoord(uint texPacked, float2 shrink) {
+// Decode texture coordinates - 15-bit with sign bit for bias
+float2 decodeTexCoord(uint texPacked) {
     uint uRaw = texPacked & 0xFFFFu;
     uint vRaw = (texPacked >> 16u) & 0xFFFFu;
-    
-    // Base 15-bit coordinates
-    float2 baseCoords = float2(
-        float(uRaw & 0x7FFFu),
-        float(vRaw & 0x7FFFu)
-    ) * TEXTURE_SCALE;
-    
-    // Bias direction from sign bit
-    float2 bias = float2(
-        (uRaw & 0x8000u) ? 1.0f : -1.0f,
-        (vRaw & 0x8000u) ? 1.0f : -1.0f
-    );
-    
-    return baseCoords + (bias * shrink);
+    // Extract 15-bit value (bit 15 is bias, not part of coordinate)
+    float u = float(uRaw & 0x7FFFu) / float(TEXTURE_MAX_VALUE);
+    float v = float(vRaw & 0x7FFFu) / float(TEXTURE_MAX_VALUE);
+    return float2(u, v);
 }
 
-// Decode ARGB color (already has AO applied)
-// Sodium uses ColorARGB.pack(r,g,b,a) = (a<<24)|(r<<16)|(g<<8)|b
-// In little-endian memory: [B, G, R, A]
-half4 decodeColor(uint packed) {
+// Decode color from Sodium format (ARGB order - ColorARGB)
+half4 decodeColor(uint colorWord) {
+    // TEST 44: Swap R and B to fix biome tint colors (water, grass)
+    // Original assumed Java int ARGB → bytes B,G,R,A (little-endian)
+    // But empirically water/grass are swapped, so try the opposite
     return half4(
-        half((packed >> 16u) & 0xFFu) / 255.0h,  // R (byte 2)
-        half((packed >> 8u) & 0xFFu) / 255.0h,   // G (byte 1)
-        half((packed >> 0u) & 0xFFu) / 255.0h,   // B (byte 0)
-        half((packed >> 24u) & 0xFFu) / 255.0h   // A (byte 3)
+        half((colorWord >> 0u) & 0xFFu) / 255.0h,   // R from byte 0 (was B)
+        half((colorWord >> 8u) & 0xFFu) / 255.0h,   // G from byte 1
+        half((colorWord >> 16u) & 0xFFu) / 255.0h,  // B from byte 2 (was R)
+        1.0h  // Alpha forced to 1.0 for opaque terrain
     );
 }
 
-// Decode light values (block light and sky light)
-// Sodium encodes as: clamp(light + 8, 8, 248) for each channel
-// This maps Minecraft's 0-15 light levels to 8-248 range
-// We remap 8-248 back to ~0-1 range for rendering
-half2 decodeLight(uint lightMaterial) {
-    uint blockLight = lightMaterial & 0xFFu;
-    uint skyLight = (lightMaterial >> 8u) & 0xFFu;
-    // Subtract 8 and divide by 240 to get 0-1 range from 8-248 input
-    // Formula: (value - 8) / 240
+// Decode light values from light word
+half2 decodeLight(uint lightWord) {
+    uint block = (lightWord >> 0u) & 0xFFu;
+    uint sky = (lightWord >> 8u) & 0xFFu;
     return half2(
-        half(max(0u, blockLight - 8u)) / 240.0h,
-        half(max(0u, skyLight - 8u)) / 240.0h
+        half(block) / 255.0h,
+        half(sky) / 255.0h
     );
 }
 
@@ -132,10 +106,14 @@ vertex float4 terrain_depth_vertex(
     uint posHi = vertexData[base + 0u];
     uint posLo = vertexData[base + 1u];
     
-    float3 localPos = decodePosition(posHi, posLo);
-    float3 worldPos = localPos + float3(draw.originX, draw.originY, draw.originZ);
+    float3 origin = float3(draw.originX, draw.originY, draw.originZ);
+    float3 worldPos = decodePosition(posHi, posLo, origin);
     
-    return frame.viewProj * float4(worldPos, 1.0);
+    // Sodium's modelView has NO camera translation! We must subtract camera position.
+    // This gives us camera-relative coordinates for the view matrix.
+    float3 cameraRelativePos = worldPos - frame.cameraPos.xyz;
+    
+    return frame.viewProj * float4(cameraRelativePos, 1.0);
 }
 
 // ============================================================================
@@ -153,20 +131,32 @@ vertex TerrainVertexOut terrain_color_vertex(
     
     uint posHi = vertexData[base + 0u];
     uint posLo = vertexData[base + 1u];
-    uint colorPacked = vertexData[base + 2u];
+    uint color = vertexData[base + 2u];
     uint texPacked = vertexData[base + 3u];
-    uint lightMaterial = vertexData[base + 4u];
+    uint lightData = vertexData[base + 4u];
     
-    // Decode position
-    float3 localPos = decodePosition(posHi, posLo);
-    float3 worldPos = localPos + float3(draw.originX, draw.originY, draw.originZ);
+    // Get section origin in world space
+    float3 origin = float3(draw.originX, draw.originY, draw.originZ);
     
-    // Output
+    // Decode world position
+    float3 worldPos = decodePosition(posHi, posLo, origin);
+    
+    // Sodium's modelView has NO camera translation! We must subtract camera position.
+    // This gives us camera-relative coordinates for the view matrix.
+    float3 cameraRelativePos = worldPos - frame.cameraPos.xyz;
+    
     TerrainVertexOut out;
-    out.position = frame.viewProj * float4(worldPos, 1.0);
-    out.texCoord = decodeTexCoord(texPacked, frame.texCoordShrink.xy);
-    out.color = decodeColor(colorPacked);
-    out.light = decodeLight(lightMaterial);
+    float4 clipPos = frame.viewProj * float4(cameraRelativePos, 1.0);
+    
+    // TEST 65: Check if Y flip is needed for Metal vs OpenGL coordinate system
+    // Metal has Y-down in framebuffer, OpenGL has Y-up
+    // The projection from OpenGL might have incorrect Y mapping
+    // Try NOT flipping to see if it helps the top 1/3 issue
+    out.position = clipPos;
+    
+    out.texCoord = decodeTexCoord(texPacked);
+    out.color = decodeColor(color);
+    out.light = decodeLight(lightData);
     
     return out;
 }
@@ -180,30 +170,41 @@ fragment half4 terrain_color_fragment(
     texture2d<half, access::sample> atlas [[texture(0)]],
     sampler atlasSampler [[sampler(0)]]
 ) {
-    // Sample block texture
+    // Sample the atlas texture
     half4 texColor = atlas.sample(atlasSampler, in.texCoord);
     
-    // Alpha test - transparent pixels are common in atlas (e.g., leaves)
-    // Fallback to vertex color if texture alpha is low so we can debug geometry
-    // Note: We avoid discarding here so the pipeline will show geometry even
-    // if the atlas sampling returns zero alpha (for debugging).
-    half3 finalColor;
+    // Discard transparent pixels (cutout for leaves, grass, etc.)
+    // This prevents transparent areas from writing to depth buffer and
+    // allows blocks behind to show through properly
     if (texColor.a < 0.5h) {
-        finalColor = in.color.rgb; // use vertex color fallback
-    } else {
-        finalColor = texColor.rgb * in.color.rgb;
+        discard_fragment();
     }
     
-    // Apply Minecraft-style lighting
-    // Sky light can be reduced by weather/time, block light is constant
-    // Combined: max(blockLight, skyLight * daylight) in vanilla
-    // For now, use max and ensure minimum ambient of ~0.05 (light level 0.8)
-    half light = max(in.light.x, in.light.y);
-    // Ensure minimum ambient so caves aren't completely black
-    // This mimics Minecraft's ambient occlusion minimum
-    light = max(light, 0.03h);
-    finalColor *= light;
+    // Apply vertex color (includes ambient occlusion from Sodium)
+    half4 finalColor = texColor * in.color;
     
-    return half4(finalColor, texColor.a);
+    // Apply lighting from Minecraft's light values
+    // blockLight (in.light.x) = light from torches, lava, etc.
+    // skyLight (in.light.y) = light from the sky
+    // Combine them with sky light having priority when outdoors
+    half blockLight = in.light.x;
+    half skyLight = in.light.y;
+    
+    // Minecraft's light formula: max(blockLight, skyLight * dayLight)
+    // Since we don't have dayLight info, use skyLight directly
+    // The light values are already normalized 0-1 from Sodium
+    half combinedLight = max(blockLight, skyLight);
+    
+    // Apply minimum ambient light (0.05) to prevent pitch black areas
+    // This matches Minecraft's default minimum light level
+    half lightLevel = max(combinedLight, 0.05h);
+    
+    // Apply lighting - only affects RGB, not alpha
+    finalColor.rgb *= lightLevel;
+    
+    // Keep alpha from texture (will be 1.0 for non-discarded pixels)
+    finalColor.a = texColor.a;
+    
+    return finalColor;
 }
 

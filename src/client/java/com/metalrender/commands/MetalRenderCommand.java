@@ -8,7 +8,6 @@ import com.metalrender.config.MetalRenderConfig;
 import com.metalrender.config.MetalRenderConfigManager;
 import com.metalrender.performance.RenderingMetrics;
 import com.metalrender.render.MetalWorldRenderer;
-import com.metalrender.sodium.backend.MeshShaderBackend;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.context.CommandContext;
@@ -36,39 +35,30 @@ public final class MetalRenderCommand {
                         literal("threshold")
                             .then(
                                 argument("distance",
-                                         IntegerArgumentType.integer(5, 100))
+                                    IntegerArgumentType.integer(5, 100))
                                     .executes(
                                         MetalRenderCommand::lodSetThreshold))))
             .then(literal("reload").executes(MetalRenderCommand::reloadWorld))
             .then(literal("restart").executes(
                 MetalRenderCommand::restartRenderer))
+            .then(literal("uploadAtlas").executes(MetalRenderCommand::uploadAtlas))
             .then(literal("status").executes(MetalRenderCommand::showStatus))
             .then(literal("config")
-                      .then(literal("save").executes(
-                          MetalRenderCommand::configSave))
-                      .then(literal("reload").executes(
-                          MetalRenderCommand::configReload))
-                      .then(literal("reset").executes(
-                          MetalRenderCommand::configReset)))
+                .then(literal("save").executes(
+                    MetalRenderCommand::configSave))
+                .then(literal("reload").executes(
+                    MetalRenderCommand::configReload))
+                .then(literal("reset").executes(
+                    MetalRenderCommand::configReset)))
             .then(literal("performance")
-                      .then(literal("reset").executes(
-                          MetalRenderCommand::performanceReset)))
+                .then(literal("reset").executes(
+                    MetalRenderCommand::performanceReset)))
             .then(literal("help").executes(MetalRenderCommand::showHelp)));
   }
 
   private static int cacheClear(CommandContext<FabricClientCommandSource> ctx) {
     try {
-      MetalWorldRenderer world = MetalRenderClient.getWorldRenderer();
-      MeshShaderBackend backend = MetalRenderClient.getMeshBackend();
-
-      if (world != null) {
-        world.destroy();
-      }
-      if (backend != null) {
-        backend.destroy();
-      }
-
-      MetalRenderClient.refreshEnabledState();
+      MetalRenderClient.resetRenderer();
 
       ctx.getSource().sendFeedback(
           Text.literal("MetalRender cache cleared and renderer restarted"));
@@ -115,18 +105,20 @@ public final class MetalRenderCommand {
     return 1;
   }
 
-  private static int
-  lodSetThreshold(CommandContext<FabricClientCommandSource> ctx) {
+  private static int lodSetThreshold(CommandContext<FabricClientCommandSource> ctx) {
     int distance = IntegerArgumentType.getInteger(ctx, "distance");
     MetalRenderConfig.setLodDistanceThreshold(distance);
     MetalRenderConfigManager.syncFromRuntime(true);
     ctx.getSource().sendFeedback(
         Text.literal("§a✓ LOD threshold set to " + distance + " chunks"));
+    ctx.getSource().sendFeedback(
+        Text.literal("§7Note: LOD takes effect immediately for existing chunks."));
+    ctx.getSource().sendFeedback(
+        Text.literal("§7Use §f/metalrender reload§7 if chunks don't update."));
     return 1;
   }
 
-  private static int
-  reloadWorld(CommandContext<FabricClientCommandSource> ctx) {
+  private static int reloadWorld(CommandContext<FabricClientCommandSource> ctx) {
     try {
       MinecraftClient client = MinecraftClient.getInstance();
       if (client.world != null) {
@@ -145,8 +137,7 @@ public final class MetalRenderCommand {
     }
   }
 
-  private static int
-  restartRenderer(CommandContext<FabricClientCommandSource> ctx) {
+  private static int restartRenderer(CommandContext<FabricClientCommandSource> ctx) {
     try {
       MetalRenderConfig.setMetalRenderEnabled(false);
       MetalRenderClient.refreshEnabledState();
@@ -177,46 +168,46 @@ public final class MetalRenderCommand {
         Text.literal("§e§l━━━ MetalRender Status ━━━"));
     ctx.getSource().sendFeedback(
         Text.literal("§7Enabled: §f" +
-                     (MetalRenderClient.isEnabled() ? "§a✓ Yes" : "§c✗ No")));
+            (MetalRenderClient.isEnabled() ? "§a✓ Yes" : "§c✗ No")));
     ctx.getSource().sendFeedback(Text.literal(
         "§7Hardware Support: §f" +
-        (MetalRenderClient.isHardwareSupported() ? "§a✓ Yes" : "§c✗ No")));
+            (MetalRenderClient.isHardwareSupported() ? "§a✓ Yes" : "§c✗ No")));
     ctx.getSource().sendFeedback(Text.literal(
         "§7Mesh Shaders: §f" + (MetalRenderConfig.meshShadersEnabled()
-                                    ? "§a✓ Enabled"
-                                    : "§c✗ Disabled")));
+            ? "§a✓ Enabled"
+            : "§c✗ Disabled")));
     ctx.getSource().sendFeedback(Text.literal(
         "§7LOD System: §f" + (MetalRenderConfig.distanceLodEnabled()
-                                  ? "§a✓ Enabled"
-                                  : "§c✗ Disabled")));
+            ? "§a✓ Enabled"
+            : "§c✗ Disabled")));
     ctx.getSource().sendFeedback(Text.literal(
         "§7Dynamic Quality: §f" +
-        (MetalRenderConfig.dynamicQuality() ? "§a✓ Enabled" : "§c✗ Disabled")));
+            (MetalRenderConfig.dynamicQuality() ? "§a✓ Enabled" : "§c✗ Disabled")));
     ctx.getSource().sendFeedback(
         Text.literal("§7Temporal AA: §f" +
-                     (MetalRenderConfig.temporalAAEnabled() ? "§a✓ Enabled"
-                                                            : "§c✗ Disabled")));
+            (MetalRenderConfig.temporalAAEnabled() ? "§a✓ Enabled"
+                : "§c✗ Disabled")));
     ctx.getSource().sendFeedback(Text.literal(
         "§7Resolution Scale: §f" +
-        String.format("%.2f", MetalRenderConfig.resolutionScale())));
+            String.format("%.2f", MetalRenderConfig.resolutionScale())));
 
     if (MetalRenderConfig.distanceLodEnabled()) {
       ctx.getSource().sendFeedback(
           Text.literal("§7LOD Near: §f" +
-                       MetalRenderConfig.lodDistanceThreshold() + " chunks"));
+              MetalRenderConfig.lodDistanceThreshold() + " chunks"));
       ctx.getSource().sendFeedback(Text.literal(
           "§7LOD Far: §f" + MetalRenderConfig.lodFarDistance() + " chunks"));
       ctx.getSource().sendFeedback(Text.literal(
           String.format("§7LOD Distribution: §fL0: %d | L1: %d | L2: %d",
-                        RenderingMetrics.getChunksAtLod0(),
-                        RenderingMetrics.getChunksAtLod1(),
-                        RenderingMetrics.getChunksAtLod2())));
+              RenderingMetrics.getChunksAtLod0(),
+              RenderingMetrics.getChunksAtLod1(),
+              RenderingMetrics.getChunksAtLod2())));
     }
 
     ctx.getSource().sendFeedback(
         Text.literal(String.format("§7GPU Load: §f%,d vertices in %d draws",
-                                   RenderingMetrics.getTotalVertices(),
-                                   RenderingMetrics.getTotalDrawCommands())));
+            RenderingMetrics.getTotalVertices(),
+            RenderingMetrics.getTotalDrawCommands())));
 
     return 1;
   }
@@ -234,8 +225,7 @@ public final class MetalRenderCommand {
     }
   }
 
-  private static int
-  configReload(CommandContext<FabricClientCommandSource> ctx) {
+  private static int configReload(CommandContext<FabricClientCommandSource> ctx) {
     try {
       MetalRenderConfigManager.load();
       ctx.getSource().sendFeedback(
@@ -248,8 +238,7 @@ public final class MetalRenderCommand {
     }
   }
 
-  private static int
-  configReset(CommandContext<FabricClientCommandSource> ctx) {
+  private static int configReset(CommandContext<FabricClientCommandSource> ctx) {
     try {
       MetalRenderConfig.setMetalRenderEnabled(true);
       MetalRenderConfig.setMirrorUploads(true);
@@ -282,8 +271,7 @@ public final class MetalRenderCommand {
     }
   }
 
-  private static int
-  performanceReset(CommandContext<FabricClientCommandSource> ctx) {
+  private static int performanceReset(CommandContext<FabricClientCommandSource> ctx) {
     try {
       MetalRenderConfig.setDqMinScale(0.5F);
       MetalRenderConfig.setDqMaxScale(1.0F);
@@ -317,6 +305,8 @@ public final class MetalRenderCommand {
     ctx.getSource().sendFeedback(
         Text.literal("§6/metalrender restart §7- Restart MetalRender"));
     ctx.getSource().sendFeedback(Text.literal(""));
+    ctx.getSource().sendFeedback(
+        Text.literal("§6/metalrender uploadAtlas §7- Upload block atlas to Metal"));
     ctx.getSource().sendFeedback(Text.literal("§e§lLOD Commands:"));
     ctx.getSource().sendFeedback(
         Text.literal("§6/metalrender lod reset §7- Reset LOD to defaults"));
@@ -339,5 +329,31 @@ public final class MetalRenderCommand {
     ctx.getSource().sendFeedback(Text.literal(
         "§6/metalrender performance reset §7- Reset perf settings"));
     return 1;
+  }
+
+  private static int uploadAtlas(CommandContext<FabricClientCommandSource> ctx) {
+    try {
+      MetalWorldRenderer world = MetalRenderClient.getWorldRenderer();
+      if (world == null) {
+        ctx.getSource().sendError(Text.literal("No world renderer available"));
+        return 0;
+      }
+      net.minecraft.client.MinecraftClient.getInstance().execute(() -> {
+        try {
+          boolean ok = world.uploadAtlas();
+          if (ok) {
+            ctx.getSource().sendFeedback(Text.literal("Uploaded atlas to Metal backend"));
+          } else {
+            ctx.getSource().sendError(Text.literal("Failed to upload atlas: atlas not found or not ready"));
+          }
+        } catch (Throwable t) {
+          ctx.getSource().sendError(Text.literal("Failed to upload atlas: " + t.getMessage()));
+        }
+      });
+      return 1;
+    } catch (Exception e) {
+      ctx.getSource().sendError(Text.literal("Failed to upload atlas: " + e.getMessage()));
+      return 0;
+    }
   }
 }

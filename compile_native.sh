@@ -2,8 +2,12 @@
 set -e
 
 echo "Compiling shaders..."
+# Compile terrain shader
 xcrun -sdk macosx metal -c src/main/resources/native/shaders/metalrender.metal -o src/main/resources/native/shaders/metalrender.air
-xcrun -sdk macosx metallib src/main/resources/native/shaders/metalrender.air -o src/main/resources/shaders.metallib
+# Compile entity shader
+xcrun -sdk macosx metal -c src/main/resources/native/shaders/entity.metal -o src/main/resources/native/shaders/entity.air
+# Link both into metallib
+xcrun -sdk macosx metallib src/main/resources/native/shaders/metalrender.air src/main/resources/native/shaders/entity.air -o src/main/resources/shaders.metallib
 echo "Shaders compiled to src/main/resources/shaders.metallib"
 
 echo "Compiling native library..."
@@ -16,6 +20,7 @@ clang++ -O3 -std=c++17 -dynamiclib \
     -I"src/main/resources/native" \
     src/main/resources/native/metalrender.mm \
     src/main/resources/native/meshshader.mm \
-    -o src/main/resources/libmetalrender.dylib
+    src/main/resources/native/gl2metal.mm \
+    -o src/main/resources/libmetalrender_debug_v2.dylib
 
-echo "Native library compiled to src/main/resources/libmetalrender.dylib"
+echo "Native library compiled to src/main/resources/libmetalrender_debug_v2.dylib"

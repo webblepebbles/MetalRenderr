@@ -4,9 +4,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 
-/**
- * Immutable container for BGRA atlas pixel data captured from the sprite atlas.
- */
+
 public final class CapturedAtlas {
   private final byte[] data;
   private final int width;

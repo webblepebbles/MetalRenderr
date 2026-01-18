@@ -1,0 +1,17 @@
+Starting a Gradle Daemon, 9 busy and 1 incompatible and 4 stopped Daemons could not be reused, use --status for details
+
+> Configure project :
+Fabric Loom: 1.14.10
+
+> Task :compileJava NO-SOURCE
+> Task :processResources UP-TO-DATE
+> Task :classes UP-TO-DATE
+> Task :compileClientJava UP-TO-DATE
+> Task :processClientResources NO-SOURCE
+> Task :clientClasses UP-TO-DATE
+> Task :generateLog4jConfig UP-TO-DATE
+> Task :generateRemapClasspath UP-TO-DATE
+> Task :generateDLIConfig UP-TO-DATE
+> Task :configureLaunch UP-TO-DATE
+> Task :downloadAssets UP-TO-DATE
+> Task :configureClientLaunch UP-TO-DATE

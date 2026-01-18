@@ -1,14 +1,13 @@
 #include <metal_stdlib>
 using namespace metal;
 
-
 struct VertexIn {
-    half4 position;
-    half3 normal;
+    float4 position
+    half3 normal
 };
 
 struct VertexOut {
-    half4 position [[position]];
+    float4 position [[position]];
     half3 normal;
 };
 

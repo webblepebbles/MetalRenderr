@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.metalrender"
-version = "v0.1.6"
+version = "v0.1.7"
 
 java {
     toolchain.languageVersion = JavaLanguageVersion.of(21)
@@ -46,6 +46,11 @@ loom {
         client {
             client()
             source sourceSets.client
+            vmArg "-Djava.library.path=${projectDir}/src/main/resources"
+            // Enable GL2Metal mode if property is set
+            if (project.hasProperty('gl2metal')) {
+                vmArg "-Dmetalrender.gl2metal=true"
+            }
         }
     }
 }

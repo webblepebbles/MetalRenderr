@@ -64,52 +64,7 @@ public final class RenderOptimizer {
 
   public boolean shouldRenderChunk(BlockPos chunkPos, Camera camera) {
     ++this.totalChunksThisFrame;
-    int minY = Math.max(chunkPos.getY(), -64);
-    int maxY = Math.min(chunkPos.getY() + 16, 320);
-    boolean frustumVisible = true;
-    boolean skipOcclusion = false;
-
-    if (this.regionManager != null) {
-      RegionManager.RegionVisibility regionVisibility =
-          this.regionManager.evaluate(
-              chunkPos, minY, maxY,
-              MetalRenderConfig.aggressiveFrustumCulling() ? this.frustumCuller
-                                                           : null);
-      if (regionVisibility == RegionManager.RegionVisibility.FRUSTUM_CULLED) {
-        ++this.frustumCulledThisFrame;
-        return false;
-      }
-      frustumVisible =
-          regionVisibility != RegionManager.RegionVisibility.FRUSTUM_CULLED;
-      skipOcclusion =
-          regionVisibility == RegionManager.RegionVisibility.VISIBLE_CACHED;
-    } else if (MetalRenderConfig.aggressiveFrustumCulling()) {
-      frustumVisible = this.frustumCuller.isRegionVisible(
-          chunkPos.getX() >> 4, chunkPos.getZ() >> 4, minY, maxY);
-      if (!frustumVisible) {
-        ++this.frustumCulledThisFrame;
-        return false;
-      }
-    }
-
-    if (MetalRenderConfig.occlusionCulling() && frustumVisible) {
-      boolean occluded =
-          skipOcclusion
-              ? false
-              : this.occlusionCuller.isChunkOccluded(chunkPos, minY, maxY);
-      if (occluded) {
-        ++this.occlusionCulledThisFrame;
-        if (this.regionManager != null) {
-          this.regionManager.markRegionHidden(chunkPos);
-        }
-        return false;
-      }
-    }
-
-    if (this.regionManager != null) {
-      this.regionManager.markRegionVisible(chunkPos);
-    }
-
+    // TEMPORARILY disable culling to test shader matrix fix
     return true;
   }
 

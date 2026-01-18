@@ -3,7 +3,6 @@
   "minVersion": "0.8",
   "package": "com.metalrender.sodium.mixins",
   "compatibilityLevel": "JAVA_21",
-  "remap": false,
   "client": [
     "MinecraftClientMixin",
     "SodiumRendererMixin",
@@ -11,7 +10,25 @@
     "BuilderTaskOutputMixin",
     "SodiumWorldRendererMixin",
     "RenderSectionMixin",
+    "RenderSectionManagerMixin",
+    "ScreenAccessor",
+    "ScreenMixin",
+    "HandledScreenMixin",
     "sodiumhook.SodiumWorldRendererMixin_CM",
-    "lwjgl.GL11CMixin"
+    "lwjgl.GL11CMixin",
+    "RenderSystemFlipMixin",
+    "InGameHudMixin",
+    "DrawContextMixin",
+    "SpriteAtlasTextureMixin",
+    "WorldRendererMixin",
+    "VertexConsumerProviderMixin",
+    "ItemRendererMixin",
+    "LivingEntityRendererMixin",
+    "HeldItemRendererMixin",
+    "GuiRenderStateMixin",
+    "accessor.AbstractTextureAccessor",
+    "accessor.SpriteContentsAccessor",
+    "accessor.GlTextureAccessor",
+    "accessor.SpriteAtlasTextureAccessor"
   ]
 }

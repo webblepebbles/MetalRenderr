@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "metalrender",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "license": "Apache-2.0",
   "authors": ["pebbles_boon"],
   "name": "MetalRender",
@@ -11,7 +11,7 @@
     "client": ["com.metalrender.MetalRenderClient"],
     "modmenu": ["com.metalrender.config.gui.MetalRenderModMenuIntegration"]
   },
-  "mixins": ["metalrender.mixins.json"],
+  "mixins": ["metalrender.mixins.json", "gl2metal.mixins.json"],
   "depends": {
     "fabricloader": ">=0.17.1",
     "minecraft": ">=1.21.8",

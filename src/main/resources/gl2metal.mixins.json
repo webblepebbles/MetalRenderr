@@ -1,0 +1,12 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "com.metalrender.gl2metal.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "GL2MetalInitMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}
