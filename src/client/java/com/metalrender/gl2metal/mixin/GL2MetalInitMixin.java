@@ -1,5 +1,6 @@
 package com.metalrender.gl2metal.mixin;
 
+import com.metalrender.gl2metal.GL2MetalConfig;
 import com.metalrender.gl2metal.GL2MetalManager;
 import com.metalrender.gl2metal.GL2MetalTranslator;
 import com.metalrender.util.MetalLogger;
@@ -18,6 +19,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * - Translates them to Metal via GL2MetalTranslator
  * - Renders to a Metal window that floats over GLFW window
  * - GLFW window receives input, Metal window displays output
+ * 
+ * IMPORTANT: If no interception categories are enabled, the Metal window
+ * is NOT created to avoid interfering with OpenGL operations.
  */
 @Mixin(MinecraftClient.class)
 public class GL2MetalInitMixin {
@@ -46,6 +50,16 @@ public class GL2MetalInitMixin {
             return;
         }
 
+        // Check if ANY interception is actually enabled
+        // If not, skip Metal window creation to avoid interfering with OpenGL
+        if (!GL2MetalConfig.isAnyInterceptionEnabled()) {
+            MetalLogger.info(
+                    "[GL2MetalInitMixin] GL2Metal mode enabled but NO interception categories active");
+            MetalLogger.info(
+                    "[GL2MetalInitMixin] Skipping Metal window creation (enable categories with -Dmetalrender.gl2metal.drawcalls=true etc.)");
+            return;
+        }
+
         MinecraftClient client = (MinecraftClient) (Object) this;
         int width = client.getWindow().getFramebufferWidth();
         int height = client.getWindow().getFramebufferHeight();
@@ -54,6 +68,11 @@ public class GL2MetalInitMixin {
 
         MetalLogger.info("[GL2MetalInitMixin] Initializing GL2Metal interception with window size {}x{}", width,
                 height);
+        MetalLogger.info("[GL2MetalInitMixin] Active categories: drawCalls={}, state={}, buffers={}, textures={}, shaders={}, fbos={}, vaos={}",
+                GL2MetalConfig.INTERCEPT_DRAW_CALLS, GL2MetalConfig.INTERCEPT_STATE,
+                GL2MetalConfig.INTERCEPT_BUFFERS, GL2MetalConfig.INTERCEPT_TEXTURES,
+                GL2MetalConfig.INTERCEPT_SHADERS, GL2MetalConfig.INTERCEPT_FBOS,
+                GL2MetalConfig.INTERCEPT_VAOS);
 
         if (GL2MetalManager.initialize(width, height)) {
             MetalLogger.info("[GL2MetalInitMixin] GL2Metal initialized, enabling OpenGL interception");
@@ -63,7 +82,7 @@ public class GL2MetalInitMixin {
             long glfwHandle = client.getWindow().getHandle();
             int x = client.getWindow().getX();
             int y = client.getWindow().getY();
-            GL2MetalTranslator.getInstance().syncWithGLFWWindow(glfwHandle, x, y, width, height);
+            GL2MetalTranslator.getInstance().syncWithGLFWWindow(glfwHandle, x, y, width, height);;
 
             MetalLogger.info("[GL2MetalInitMixin] Metal window synced to GLFW at ({}, {}) {}x{}", x, y, width, height);
         } else {

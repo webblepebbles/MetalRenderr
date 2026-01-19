@@ -177,6 +177,16 @@ public class GL2MetalConfig {
     }
 
     /**
+     * Check if ANY interception category is enabled.
+     * If none are enabled, the Metal window and sync operations can be skipped
+     * to avoid interfering with OpenGL.
+     */
+    public static boolean isAnyInterceptionEnabled() {
+        return INTERCEPT_DRAW_CALLS || INTERCEPT_STATE || INTERCEPT_BUFFERS ||
+               INTERCEPT_TEXTURES || INTERCEPT_SHADERS || INTERCEPT_FBOS || INTERCEPT_VAOS;
+    }
+
+    /**
      * Print current configuration state.
      */
     public static String getConfigSummary() {
@@ -184,6 +194,7 @@ public class GL2MetalConfig {
         sb.append("[GL2MetalConfig]\n");
         sb.append("  GL2METAL_ENABLED: ").append(GL2METAL_ENABLED).append("\n");
         sb.append("  FULL_INTERCEPTION: ").append(FULL_INTERCEPTION).append("\n");
+        sb.append("  ANY_INTERCEPTION_ENABLED: ").append(isAnyInterceptionEnabled()).append("\n");
         sb.append("  Interception Categories:\n");
         sb.append("    DRAW_CALLS: ").append(INTERCEPT_DRAW_CALLS).append("\n");
         sb.append("    STATE: ").append(INTERCEPT_STATE).append("\n");
