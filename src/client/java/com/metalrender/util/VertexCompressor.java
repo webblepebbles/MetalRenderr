@@ -5,70 +5,41 @@ import java.nio.ByteOrder;
 import net.minecraft.util.math.BlockPos;
 
 public final class VertexCompressor {
-  /** Size of Sodium COMPACT vertex format in bytes. */
   public static final int INPUT_STRIDE = 20;
-
-  /** Size of the compressed vertex format in bytes. */
   public static final int OUTPUT_STRIDE = 24;
-
   private static final float POSITION_SCALE = 256.0F;
-
   private VertexCompressor() {
   }
-
-  /**
-   * Compress Sodium COMPACT vertex data to our format.
-   * 
-   * IMPORTANT: Sodium stores vertices as QUADS (4 vertices per face).
-   * We convert to TRIANGULAR format (6 vertices per quad: indices 0,1,2,2,3,0).
-   * So input of N vertices (N/4 quads) produces N*6/4 = N*1.5 output vertices.
-   */
   public static CompressedMesh compress(BlockPos origin, ByteBuffer source,
       int inputVertexCount) {
     if (inputVertexCount <= 0 || source == null) {
       return CompressedMesh.empty();
     }
-
-    // Sodium data is quads (4 vertices per face)
-    // Must be divisible by 4
     int quadCount = inputVertexCount / 4;
     if (inputVertexCount % 4 != 0) {
-      // Not aligned to quads - this shouldn't happen
       quadCount = inputVertexCount / 4;
     }
-
-    // Each quad becomes 2 triangles = 6 vertices
     int outputVertexCount = quadCount * 6;
-
     ByteBuffer input = source.duplicate().order(ByteOrder.LITTLE_ENDIAN);
     input.clear();
-
     ByteBuffer target = ByteBuffer.allocateDirect(outputVertexCount * OUTPUT_STRIDE)
         .order(ByteOrder.LITTLE_ENDIAN);
-
     float minX = Float.POSITIVE_INFINITY;
     float minY = Float.POSITIVE_INFINITY;
     float minZ = Float.POSITIVE_INFINITY;
     float maxX = Float.NEGATIVE_INFINITY;
     float maxY = Float.NEGATIVE_INFINITY;
     float maxZ = Float.NEGATIVE_INFINITY;
-
     int originX = origin.getX();
     int originY = origin.getY();
     int originZ = origin.getZ();
-
-    // Sodium COMPACT format constants
-    final int POSITION_MAX_VALUE = 1 << 20; // 1048576
+    final int POSITION_MAX_VALUE = 1 << 20;
     final float MODEL_ORIGIN = 8.0f;
     final float MODEL_RANGE = 32.0f;
-    final int TEXTURE_MAX_VALUE = 1 << 15; // 32768
-
-    // Debug: log first few vertices
+    final int TEXTURE_MAX_VALUE = 1 << 15; 
     boolean doDebug = (quadCount > 0);
-    int debugLimit = 4; // vertices to debug
+    int debugLimit = 4; 
     int debugCount = 0;
-
-    // Temporary storage for quad vertices
     short[] qx = new short[4];
     short[] qy = new short[4];
     short[] qz = new short[4];
@@ -78,29 +49,20 @@ public final class VertexCompressor {
     int[] normals = new int[4];
 
     for (int quadIndex = 0; quadIndex < quadCount; quadIndex++) {
-      // Read 4 vertices of this quad
       for (int v = 0; v < 4; v++) {
         int vertexIndex = quadIndex * 4 + v;
         int base = vertexIndex * INPUT_STRIDE;
-
-        // Read Sodium COMPACT format (20 bytes):
         int posHi = input.getInt(base + 0);
         int posLo = input.getInt(base + 4);
         int color = input.getInt(base + 8);
         int texPacked = input.getInt(base + 12);
         int lightData = input.getInt(base + 16);
-
-        // Decode 20-bit positions
         int qx20 = ((posHi >> 0) & 0x3FF) << 10 | ((posLo >> 0) & 0x3FF);
         int qy20 = ((posHi >> 10) & 0x3FF) << 10 | ((posLo >> 10) & 0x3FF);
         int qz20 = ((posHi >> 20) & 0x3FF) << 10 | ((posLo >> 20) & 0x3FF);
-
-        // Convert to world coordinates
         float x = ((float) qx20 / POSITION_MAX_VALUE) * MODEL_RANGE - MODEL_ORIGIN + originX;
         float y = ((float) qy20 / POSITION_MAX_VALUE) * MODEL_RANGE - MODEL_ORIGIN + originY;
         float z = ((float) qz20 / POSITION_MAX_VALUE) * MODEL_RANGE - MODEL_ORIGIN + originZ;
-
-        // Debug output
         if (doDebug && debugCount < debugLimit) {
           MetalLogger.info("[VertexCompressor] v%d: color=0x%08X tex=0x%08X world=(%.2f,%.2f,%.2f)",
               vertexIndex, color, texPacked, x, y, z);
@@ -116,20 +78,14 @@ public final class VertexCompressor {
         maxX = Math.max(maxX, x);
         maxY = Math.max(maxY, y);
         maxZ = Math.max(maxZ, z);
-
-        // Re-quantize for our format (relative to section origin)
         qx[v] = quantizePosition(x - originX);
         qy[v] = quantizePosition(y - originY);
         qz[v] = quantizePosition(z - originZ);
-
-        // Decode texture coordinates
         int uRaw = texPacked & 0xFFFF;
         int vRaw = (texPacked >> 16) & 0xFFFF;
         float u = (uRaw & 0x7FFF) / (float) TEXTURE_MAX_VALUE;
         float uv = (vRaw & 0x7FFF) / (float) TEXTURE_MAX_VALUE;
         uvs[v] = packHalf2(u, uv);
-
-        // Decode light
         int lightEncoded = lightData & 0xFFFF;
         int blockLight = (lightEncoded >> 0) & 0xFF;
         int skyLight = (lightEncoded >> 8) & 0xFF;
@@ -140,9 +96,6 @@ public final class VertexCompressor {
         colors[v] = color;
         normals[v] = packNormal((byte) 0, (byte) 127, (byte) 0);
       }
-
-      // Write 6 vertices for 2 triangles
-      // Try standard OpenGL quad triangulation: {0, 1, 2, 0, 2, 3}
       int[] indices = { 0, 1, 2, 0, 2, 3 };
       for (int idx : indices) {
         target.putShort(qx[idx]);

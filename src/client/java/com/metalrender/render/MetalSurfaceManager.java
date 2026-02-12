@@ -8,13 +8,6 @@ import org.lwjgl.glfw.GLFWNativeCocoa;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * MetalSurfaceManager - Handles CAMetalLayer attachment for 100% Metal mode.
- * 
- * 100% METAL MODE: CAMetalLayer is attached to window for direct presentation.
- * This is REQUIRED for proper Metal rendering - OpenGL cannot share depth
- * buffer!
- */
 public final class MetalSurfaceManager {
   private static final AtomicBoolean attachmentAttempted = new AtomicBoolean(false);
   private static final AtomicBoolean attachmentSucceeded = new AtomicBoolean(false);
@@ -24,28 +17,18 @@ public final class MetalSurfaceManager {
   private MetalSurfaceManager() {
   }
 
-  /**
-   * Ensure Metal surface is attached to window.
-   * DISABLED - CAMetalLayer causes freezes. Use IOSurface blit instead.
-   */
+  
   public static boolean ensureSurface(long nativeHandle) {
-    // CAMetalLayer DISABLED - causes freezes!
-    // All content renders to IOSurface, then blits at flipFrame
     return false;
   }
 
-  /**
-   * Mark game as fully loaded - enables CAMetalLayer attachment.
-   */
+  
   public static void markGameLoaded() {
     gameLoaded = true;
     MetalLogger.info("[MetalSurface] Game loaded - CAMetalLayer attachment now enabled");
   }
 
-  /**
-   * Attempt to attach CAMetalLayer to window.
-   * Not used when CAMetalLayer is disabled.
-   */
+  
   private static boolean attemptAttachment(long nativeHandle, long cocoaWindow) {
     MetalLogger.info("[MetalSurface] attemptAttachment: nativeHandle=%d, cocoaWindow=%d", nativeHandle,
         cocoaWindow);

@@ -4,12 +4,6 @@ import com.metalrender.config.MetalRenderConfig;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.joml.Matrix4f;
 
-/**
- * Simple temporal anti-aliasing helper that generates Halton sequence jitter
- * offsets and exposes a blend factor used during the resolve pass. The actual
- * history resolve is performed on the native side, but the jitter needs to be
- * baked into the projection matrix before chunk visibility tests.
- */
 public final class TemporalAA {
   private static final int SAMPLE_COUNT = 8;
   private static final float HALTON_DENOM_BASE2 = 2.0F;

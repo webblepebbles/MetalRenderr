@@ -1,8 +1,10 @@
 package com.metalrender.config.gui;
 
 import com.metalrender.MetalRenderClient;
+import com.metalrender.config.MetalRenderConfig;
 import com.metalrender.config.MetalRenderConfigData;
 import com.metalrender.config.MetalRenderConfigManager;
+import com.metalrender.performance.RenderDistanceManager;
 import com.metalrender.util.MetalLogger;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
@@ -17,29 +19,13 @@ import net.minecraft.util.math.MathHelper;
 
 public final class MetalRenderConfigScreen extends Screen {
   private final Screen parent;
-
-  private ToggleControl metalRenderToggle;
-  private ToggleControl meshShaderToggle;
-  private ToggleControl dynamicQualityToggle;
-  private ToggleControl temporalToggle;
-
-  private ToggleControl lodToggle;
-  private ToggleControl occlusionToggle;
-  private ToggleControl frustumToggle;
-  private ToggleControl mirrorUploadsToggle;
-
-  private RangeSlider dqTargetSlider;
-  private RangeSlider dqMinSlider;
-  private RangeSlider dqMaxSlider;
-  private RangeSlider dqStepSlider;
-  private RangeSlider temporalScaleSlider;
-  private RangeSlider temporalBlendSlider;
-  private RangeSlider lodDistantScaleSlider;
+  private int currentTab = 0;
+  private static final String[] TAB_NAMES = { "General", "Performance", "Quality", "Advanced" };
 
   public MetalRenderConfigScreen(Screen parent) {
     super(Text.literal("MetalRender Settings"));
     this.parent = parent;
-    com.metalrender.config.MetalRenderConfigManager.syncFromRuntime(false);
+    MetalRenderConfigManager.syncFromRuntime(false);
   }
 
   @Override
@@ -48,163 +34,303 @@ public final class MetalRenderConfigScreen extends Screen {
     MetalRenderConfigData data = MetalRenderConfigManager.getCurrent();
 
     int centerX = this.width / 2;
-    int y = 90;
-    int buttonWidth = 95;
+
+    int tabWidth = 80;
+    int tabSpacing = 4;
+    int totalTabWidth = TAB_NAMES.length * tabWidth + (TAB_NAMES.length - 1) * tabSpacing;
+    int tabStartX = centerX - totalTabWidth / 2;
+    int tabY = 40;
+
+    for (int i = 0; i < TAB_NAMES.length; i++) {
+      final int tabIndex = i;
+      String label = (i == currentTab) ? "\u00A7l\u00A7n" + TAB_NAMES[i] : "\u00A77" + TAB_NAMES[i];
+      this.addDrawableChild(ButtonWidget.builder(
+          Text.literal(label),
+          btn -> {
+            currentTab = tabIndex;
+            init();
+          }).position(tabStartX + i * (tabWidth + tabSpacing), tabY)
+          .size(tabWidth, 20).build());
+    }
+
+    int contentY = 70;
     int sliderWidth = 280;
 
-    y += 5;
-    this.metalRenderToggle = addToggle(
-        centerX - 190, y, buttonWidth, "MetalRender",
-        data.metalRenderEnabled, 0x00FF00, 0xFF3333, value -> {
+    switch (currentTab) {
+      case 0 -> initGeneralTab(centerX, contentY, sliderWidth, data);
+      case 1 -> initPerformanceTab(centerX, contentY, sliderWidth, data);
+      case 2 -> initQualityTab(centerX, contentY, sliderWidth, data);
+      case 3 -> initAdvancedTab(centerX, contentY, sliderWidth, data);
+    }
+
+    int bottomY = this.height - 50;
+
+    int presetWidth = 55;
+    int presetSpacing = 4;
+    int totalPresetWidth = presetWidth * 4 + presetSpacing * 3;
+    int presetStartX = centerX - totalPresetWidth / 2;
+
+    this.addDrawableChild(ButtonWidget.builder(Text.literal("\u00A7cLow"), btn -> {
+      MetalRenderConfig.applyPreset(MetalRenderConfig.Preset.LOW);
+      MetalRenderConfigManager.syncFromRuntime(true);
+      RenderDistanceManager.getInstance().setEnabled(MetalRenderConfig.autoRenderDistanceEnabled());
+      init();
+    }).position(presetStartX, bottomY).size(presetWidth, 20).build());
+
+    this.addDrawableChild(ButtonWidget.builder(Text.literal("\u00A7eMed"), btn -> {
+      MetalRenderConfig.applyPreset(MetalRenderConfig.Preset.MEDIUM);
+      MetalRenderConfigManager.syncFromRuntime(true);
+      init();
+    }).position(presetStartX + presetWidth + presetSpacing, bottomY).size(presetWidth, 20).build());
+
+    this.addDrawableChild(ButtonWidget.builder(Text.literal("\u00A7aHigh"), btn -> {
+      MetalRenderConfig.applyPreset(MetalRenderConfig.Preset.HIGH);
+      MetalRenderConfigManager.syncFromRuntime(true);
+      init();
+    }).position(presetStartX + (presetWidth + presetSpacing) * 2, bottomY).size(presetWidth, 20).build());
+
+    this.addDrawableChild(ButtonWidget.builder(Text.literal("\u00A7bUltra"), btn -> {
+      MetalRenderConfig.applyPreset(MetalRenderConfig.Preset.ULTRA);
+      MetalRenderConfigManager.syncFromRuntime(true);
+      init();
+    }).position(presetStartX + (presetWidth + presetSpacing) * 3, bottomY).size(presetWidth, 20).build());
+
+    int doneY = this.height - 25;
+    this.addDrawableChild(ButtonWidget.builder(Text.literal("Done"), btn -> close())
+        .position(centerX - 50, doneY).size(100, 20).build());
+  }
+
+  private void initGeneralTab(int centerX, int y, int sliderWidth, MetalRenderConfigData data) {
+    int buttonWidth = 130;
+    int col1 = centerX - buttonWidth - 5;
+    int col2 = centerX + 5;
+
+    addToggle(col1, y, buttonWidth, "MetalRender",
+        data.metalRenderEnabled, value -> {
           MetalRenderConfigManager.update(cfg -> cfg.metalRenderEnabled = value);
           MetalRenderClient.refreshEnabledState();
         });
 
-    this.meshShaderToggle = addToggle(
-        centerX - 85, y, buttonWidth, "Mesh Shaders",
-        data.meshShadersEnabled, 0x4488FF, 0xFF9900, value -> {
+    addToggle(col2, y, buttonWidth, "Mesh Shaders",
+        data.meshShadersEnabled, value -> {
           MetalRenderConfigManager.update(cfg -> cfg.meshShadersEnabled = value);
           scheduleChunkReload();
         });
 
-    this.dynamicQualityToggle = addToggle(
-        centerX + 20, y, buttonWidth, "Dynamic Qual.",
-        data.dynamicQuality, 0xFFDD00, 0xFF9900, value -> {
-          MetalRenderConfigManager.update(cfg -> cfg.dynamicQuality = value);
-        });
-
-    this.temporalToggle = addToggle(
-        centerX + 125, y, buttonWidth, "Temporal AA",
-        data.temporalAAEnabled, 0xFF66FF, 0xFF9900, value -> {
-          MetalRenderConfigManager.update(cfg -> cfg.temporalAAEnabled = value);
-        });
-
     y += 28;
-    this.lodToggle = addToggle(
-        centerX - 190, y, buttonWidth, "LOD System",
-        data.distanceLodEnabled, 0x00DDFF, 0xFF9900, value -> {
-          MetalRenderConfigManager.update(cfg -> cfg.distanceLodEnabled = value);
-          scheduleChunkReload();
+    addToggle(col1, y, buttonWidth, "Frustum Cull",
+        data.aggressiveFrustumCulling, value -> {
+          MetalRenderConfigManager.update(cfg -> cfg.aggressiveFrustumCulling = value);
         });
 
-    this.occlusionToggle = addToggle(
-        centerX - 85, y, buttonWidth, "Occlusion",
-        data.occlusionCulling, 0x33DD33, 0xFF9900, value -> {
+    addToggle(col2, y, buttonWidth, "Occlusion Cull",
+        data.occlusionCulling, value -> {
           MetalRenderConfigManager.update(cfg -> cfg.occlusionCulling = value);
           scheduleChunkReload();
         });
 
-    this.frustumToggle = addToggle(
-        centerX + 20, y, buttonWidth, "Frustum",
-        data.aggressiveFrustumCulling, 0xFF8844, 0xFF9900, value -> {
-          MetalRenderConfigManager.update(cfg -> cfg.aggressiveFrustumCulling = value);
+    y += 35;
+
+    addSlider(
+        centerX - sliderWidth / 2, y, sliderWidth, "Render Distance",
+        2.0D, 256.0D, 1.0D,
+        getViewDistance(),
+        value -> {
+          int dist = (int) Math.round(value);
+          setViewDistance(dist);
+        }, v -> String.format("%d chunks", (int) Math.round(v)));
+  }
+
+  private void initPerformanceTab(int centerX, int y, int sliderWidth, MetalRenderConfigData data) {
+    int buttonWidth = 130;
+    int col1 = centerX - buttonWidth - 5;
+    int col2 = centerX + 5;
+
+    addToggle(col1, y, buttonWidth, "Dynamic Qual.",
+        data.dynamicQuality, value -> {
+          MetalRenderConfigManager.update(cfg -> cfg.dynamicQuality = value);
         });
 
-    this.mirrorUploadsToggle = addToggle(
-        centerX + 125, y, buttonWidth, "Mirror (DBG)",
-        data.mirrorUploads, 0xAAAAAA, 0x555555, value -> {
-          MetalRenderConfigManager.update(cfg -> cfg.mirrorUploads = value);
+    addToggle(col2, y, buttonWidth, "Auto Distance",
+        MetalRenderConfig.autoRenderDistanceEnabled(), value -> {
+          MetalRenderConfig.setAutoRenderDistanceEnabled(value);
+          RenderDistanceManager.getInstance().setEnabled(value);
+          MetalRenderConfigManager.update(cfg -> {
+          });
         });
 
     y += 28;
-    this.dqTargetSlider = addSlider(
-        centerX - sliderWidth / 2, y, sliderWidth, "Target Frame Time (ms)",
-        6.0D, 25.0D, 0.5D, data.dqTargetFrameMs, value -> {
-          MetalRenderConfigManager.update(cfg -> cfg.dqTargetFrameMs = value);
-        }, v -> String.format("%.1f", v));
-    y += 22;
+    addSlider(
+        centerX - sliderWidth / 2, y, sliderWidth, "Target FPS",
+        30.0D, 240.0D, 5.0D,
+        1000.0D / data.dqTargetFrameMs,
+        value -> {
+          double ms = 1000.0D / Math.max(30.0D, value);
+          MetalRenderConfigManager.update(cfg -> cfg.dqTargetFrameMs = ms);
+        }, v -> String.format("%.0f FPS", v));
 
-    this.temporalScaleSlider = addSlider(
-        centerX - sliderWidth / 2, y, sliderWidth, "Temporal Upscale (%)",
-        0.75D, 1.0D, 0.01D, data.temporalUpscaleTarget, value -> {
-          MetalRenderConfigManager.update(cfg -> cfg.temporalUpscaleTarget = (float) value);
+    y += 22;
+    addSlider(centerX - sliderWidth / 2, y, sliderWidth, "Min Resolution",
+        0.5D, 1.0D, 0.05D, data.dqMinScale, value -> {
+          MetalRenderConfigManager.update(cfg -> cfg.dqMinScale = (float) value);
         }, v -> String.format("%.0f%%", v * 100));
-    y += 22;
 
-    this.temporalBlendSlider = addSlider(
-        centerX - sliderWidth / 2, y, sliderWidth, "Temporal Blend (%)",
+    y += 22;
+    addSlider(centerX - sliderWidth / 2, y, sliderWidth, "Max Resolution",
+        0.7D, 1.5D, 0.05D, data.dqMaxScale, value -> {
+          MetalRenderConfigManager.update(cfg -> cfg.dqMaxScale = (float) value);
+        }, v -> String.format("%.0f%%", v * 100));
+
+    y += 28;
+    addSlider(
+        centerX - sliderWidth / 2, y, sliderWidth, "Block Culling",
+        0.0D, 2.0D, 1.0D, data.blockCullingLevel, value -> {
+          int lvl = (int) Math.round(value);
+          MetalRenderConfigManager.update(cfg -> {
+            cfg.blockCullingLevel = lvl;
+            MetalRenderConfig.setBlockCullingLevel(lvl);
+          });
+        }, v -> {
+          int lvl = (int) Math.round(v);
+          return switch (lvl) {
+            case 0 -> "Normal";
+            case 1 -> "Aggressive";
+            case 2 -> "Ultra";
+            default -> "?";
+          };
+        });
+  }
+
+  private void initQualityTab(int centerX, int y, int sliderWidth, MetalRenderConfigData data) {
+    int buttonWidth = 130;
+    int col1 = centerX - buttonWidth - 5;
+    int col2 = centerX + 5;
+
+    addToggle(col1, y, buttonWidth, "MetalFX Spatial",
+        MetalRenderConfig.metalFXEnabled(), value -> {
+          MetalRenderConfig.setMetalFXEnabled(value);
+          MetalRenderConfigManager.update(cfg -> {
+          });
+        });
+
+    addToggle(col2, y, buttonWidth, "Dynamic Light",
+        MetalRenderConfig.dynamicLightingEnabled(), value -> {
+          MetalRenderConfig.setDynamicLightingEnabled(value);
+          MetalRenderConfigManager.update(cfg -> {
+          });
+        });
+
+    y += 28;
+    addSlider(
+        centerX - sliderWidth / 2, y, sliderWidth, "Resolution Scale",
+        0.5D, 1.5D, 0.05D, data.resolutionScale, value -> {
+          MetalRenderConfigManager.update(cfg -> cfg.resolutionScale = (float) value);
+        }, v -> String.format("%.0f%%", v * 100));
+
+    y += 22;
+    addSlider(centerX - sliderWidth / 2, y, sliderWidth, "Distant Detail",
+        0.10D, 1.0D, 0.05D, data.lodDistantScale, value -> {
+          MetalRenderConfigManager.update(cfg -> cfg.lodDistantScale = (float) value);
+        }, v -> String.format("%.0f%%", v * 100));
+
+    y += 22;
+    addSlider(centerX - sliderWidth / 2, y, sliderWidth, "Full Detail Range",
+        16.0D, 256.0D, 8.0D, data.lodLevel0Distance, value -> {
+          MetalRenderConfigManager.update(cfg -> {
+            cfg.lodLevel0Distance = (int) value;
+            MetalRenderConfig.setLodLevel0Distance((int) value);
+          });
+        }, v -> String.format("%.0f blocks", v));
+
+    y += 22;
+    addSlider(centerX - sliderWidth / 2, y, sliderWidth, "Fog Distance",
+        100.0D, 4096.0D, 50.0D, MetalRenderConfig.fogEndDistance(), value -> {
+          MetalRenderConfig.setFogEndDistance((float) value);
+          MetalRenderConfigManager.update(cfg -> {
+          });
+        }, v -> String.format("%.0f blocks", v));
+  }
+
+  private void initAdvancedTab(int centerX, int y, int sliderWidth, MetalRenderConfigData data) {
+    int buttonWidth = 130;
+    int col1 = centerX - buttonWidth - 5;
+    int col2 = centerX + 5;
+
+    addToggle(col1, y, buttonWidth, "Mirror (DBG)",
+        data.mirrorUploads, value -> {
+          MetalRenderConfigManager.update(cfg -> cfg.mirrorUploads = value);
+        });
+
+    addToggle(col2, y, buttonWidth, "Debug Info",
+        MetalRenderConfig.isDebugEnabled(), value -> {
+          MetalRenderConfigManager.update(cfg -> {
+          });
+        });
+
+    y += 28;
+    addToggle(col1, y, buttonWidth, "LOD System",
+        data.distanceLodEnabled, value -> {
+          MetalRenderConfigManager.update(cfg -> cfg.distanceLodEnabled = value);
+          scheduleChunkReload();
+        });
+
+    addToggle(col2, y, buttonWidth, "Temporal AA",
+        data.temporalAAEnabled, value -> {
+          MetalRenderConfigManager.update(cfg -> cfg.temporalAAEnabled = value);
+        });
+
+    y += 35;
+    addSlider(centerX - sliderWidth / 2, y, sliderWidth, "Temporal Blend",
         0.05D, 0.30D, 0.01D, data.temporalBlendFactor, value -> {
           MetalRenderConfigManager.update(cfg -> cfg.temporalBlendFactor = (float) value);
         }, v -> String.format("%.0f%%", v * 100));
 
+    y += 22;
+    addSlider(centerX - sliderWidth / 2, y, sliderWidth, "Temporal Upscale",
+        0.50D, 1.0D, 0.05D, data.temporalUpscaleTarget, value -> {
+          MetalRenderConfigManager.update(cfg -> cfg.temporalUpscaleTarget = (float) value);
+        }, v -> String.format("%.0f%%", v * 100));
+
     y += 28;
-    this.dqMinSlider = addSlider(
-        centerX - sliderWidth / 2, y, sliderWidth, "Min Resolution (%)",
-        0.5D, 1.0D, 0.01D, data.dqMinScale, value -> {
-          MetalRenderConfigManager.update(cfg -> {
-            cfg.dqMinScale = (float) value;
-            if (cfg.dqMaxScale < cfg.dqMinScale) {
-              cfg.dqMaxScale = cfg.dqMinScale;
-              if (this.dqMaxSlider != null)
-                this.dqMaxSlider.setRealValue(cfg.dqMaxScale);
-            }
-          });
-        }, v -> String.format("%.0f%%", v * 100));
-    y += 22;
 
-    this.dqMaxSlider = addSlider(
-        centerX - sliderWidth / 2, y, sliderWidth, "Max Resolution (%)",
-        0.7D, 1.25D, 0.01D, data.dqMaxScale, value -> {
-          MetalRenderConfigManager.update(cfg -> {
-            cfg.dqMaxScale = (float) value;
-            if (cfg.dqMaxScale < cfg.dqMinScale) {
-              cfg.dqMinScale = cfg.dqMaxScale;
-              if (this.dqMinSlider != null)
-                this.dqMinSlider.setRealValue(cfg.dqMinScale);
-            }
-          });
-        }, v -> String.format("%.0f%%", v * 100));
-    y += 22;
-
-    this.dqStepSlider = addSlider(
-        centerX - sliderWidth / 2, y, sliderWidth, "Scale Step (%)",
-        0.01D, 0.25D, 0.01D, data.dqScaleStep, value -> {
-          MetalRenderConfigManager.update(cfg -> cfg.dqScaleStep = (float) value);
-        }, v -> String.format("%.0f%%", v * 100));
-    y += 22;
-
-    this.lodDistantScaleSlider = addSlider(
-        centerX - sliderWidth / 2, y, sliderWidth, "Distant LOD (%)",
-        0.10D, 1.0D, 0.01D, data.lodDistantScale, value -> {
-          MetalRenderConfigManager.update(cfg -> cfg.lodDistantScale = (float) value);
-        }, v -> String.format("%.0f%%", v * 100));
-
-    y = this.height - 25;
-    ButtonWidget resetButton = ButtonWidget.builder(Text.literal("Reset"), btn -> {
+    this.addDrawableChild(ButtonWidget.builder(Text.literal("\u00A7cReset All Settings"), btn -> {
       MetalRenderConfigManager.resetToDefaults();
       MetalRenderClient.refreshEnabledState();
-      reloadFromConfig();
-    })
-        .position(centerX - 160, y)
-        .size(70, 20)
-        .build();
-    this.addDrawableChild(resetButton);
-
-    ButtonWidget doneButton = ButtonWidget.builder(Text.literal("Done"), btn -> close())
-        .position(centerX + 90, y)
-        .size(70, 20)
-        .build();
-    this.addDrawableChild(doneButton);
+      init();
+    }).position(centerX - 80, y).size(160, 20).build());
   }
 
-  private ToggleControl addToggle(int x, int y, int width, String label,
-      boolean initial, int colorOn, int colorOff,
-      Consumer<Boolean> listener) {
-    // colorOn and colorOff are ignored in simplified version
+  private int getViewDistance() {
+    return MetalRenderConfig.extremeRenderDistance();
+  }
+
+  private void setViewDistance(int distance) {
+    try {
+      int clamped = Math.max(2, Math.min(256, distance));
+      MetalRenderConfig.setExtremeRenderDistance(clamped);
+      MinecraftClient mc = MinecraftClient.getInstance();
+      if (mc != null && mc.options != null) {
+        mc.options.getViewDistance().setValue(clamped);
+      }
+    } catch (Throwable e) {
+      MetalLogger.warn("Failed to set view distance: {}", e.getMessage());
+    }
+  }
+
+  private void addToggle(int x, int y, int width, String label,
+      boolean initial, Consumer<Boolean> listener) {
     ToggleControl control = new ToggleControl(label, initial, listener);
     ButtonWidget button = control.createButton(x, y, width, 20);
     this.addDrawableChild(button);
-    return control;
   }
 
-  private RangeSlider addSlider(int x, int y, int width, String label,
+  private void addSlider(int x, int y, int width, String label,
       double min, double max, double step,
       double initial, DoubleConsumer listener,
       Function<Double, String> formatter) {
     RangeSlider slider = new RangeSlider(label, x, y, width, min, max, step,
         initial, listener, formatter);
     this.addDrawableChild(slider);
-    return slider;
   }
 
   @Override
@@ -218,45 +344,29 @@ public final class MetalRenderConfigScreen extends Screen {
   }
 
   @Override
-  public void render(DrawContext drawContext, int mouseX, int mouseY,
-      float delta) {
+  public void render(DrawContext drawContext, int mouseX, int mouseY, float delta) {
     super.render(drawContext, mouseX, mouseY, delta);
+
     drawContext.drawCenteredTextWithShadow(this.textRenderer, this.title,
-        this.width / 2, 20, 0xFFFFFF);
-  }
+        this.width / 2, 15, 0xFFFFFF);
 
-  private void reloadFromConfig() {
-    MetalRenderConfigData data = MetalRenderConfigManager.getCurrent();
-    this.metalRenderToggle.setValue(data.metalRenderEnabled);
-    this.dynamicQualityToggle.setValue(data.dynamicQuality);
-    this.lodToggle.setValue(data.distanceLodEnabled);
-    this.occlusionToggle.setValue(data.occlusionCulling);
-    this.frustumToggle.setValue(data.aggressiveFrustumCulling);
-    this.temporalToggle.setValue(data.temporalAAEnabled);
-    this.meshShaderToggle.setValue(data.meshShadersEnabled);
-    this.mirrorUploadsToggle.setValue(data.mirrorUploads);
-
-    this.dqTargetSlider.setRealValue(data.dqTargetFrameMs);
-    this.dqMinSlider.setRealValue(data.dqMinScale);
-    this.dqMaxSlider.setRealValue(data.dqMaxScale);
-    this.dqStepSlider.setRealValue(data.dqScaleStep);
-    this.temporalScaleSlider.setRealValue(data.temporalUpscaleTarget);
-    this.temporalBlendSlider.setRealValue(data.temporalBlendFactor);
-    this.lodDistantScaleSlider.setRealValue(data.lodDistantScale);
+    String gpu = MetalRenderClient.getDeviceName();
+    if (gpu != null && !gpu.isEmpty()) {
+      drawContext.drawCenteredTextWithShadow(this.textRenderer,
+          Text.literal("\u00A77GPU: " + gpu),
+          this.width / 2, 28, 0x888888);
+    }
   }
 
   private void scheduleChunkReload() {
     MinecraftClient client = this.client;
     if (client != null && client.worldRenderer != null) {
-      MetalLogger.info(
-          "[Config UI] Scheduling chunk reload for config changes");
+      MetalLogger.info("[Config UI] Scheduling chunk reload for config changes");
       client.worldRenderer.reload();
     }
   }
 
-  // Use composition instead of inheritance to avoid MC 1.21.11 PressableWidget
-  // issues
-  private final class ToggleControl {
+  private static final class ToggleControl {
     final String label;
     final Consumer<Boolean> listener;
     ButtonWidget button;
@@ -270,35 +380,25 @@ public final class MetalRenderConfigScreen extends Screen {
 
     private ButtonWidget createButton(int x, int y, int width, int height) {
       this.button = ButtonWidget.builder(
-          net.minecraft.text.Text.literal(getDisplayText()),
+          Text.literal(getDisplayText()),
           btn -> toggle()).position(x, y).size(width, height).build();
       return this.button;
     }
 
     private void toggle() {
-      setValue(!this.value, true);
-    }
-
-    private void setValue(boolean newValue) {
-      setValue(newValue, false);
-    }
-
-    private void setValue(boolean newValue, boolean notify) {
-      this.value = newValue;
+      this.value = !this.value;
       if (this.button != null) {
-        this.button.setMessage(net.minecraft.text.Text.literal(getDisplayText()));
+        this.button.setMessage(Text.literal(getDisplayText()));
       }
-      if (notify) {
-        this.listener.accept(newValue);
-      }
+      this.listener.accept(this.value);
     }
 
     private String getDisplayText() {
-      return this.label + ": " + (this.value ? "ON" : "OFF");
+      return this.label + ": " + (this.value ? "\u00A7aON" : "\u00A7cOFF");
     }
   }
 
-  private final class RangeSlider extends SliderWidget {
+  private static final class RangeSlider extends SliderWidget {
     private final String label;
     private final double min;
     private final double max;
@@ -310,7 +410,7 @@ public final class MetalRenderConfigScreen extends Screen {
         double max, double step, double currentValue,
         DoubleConsumer listener,
         Function<Double, String> formatter) {
-      super(x, y, width, 20, net.minecraft.text.Text.literal(""), normalize(min, max, currentValue));
+      super(x, y, width, 20, Text.literal(""), normalize(min, max, currentValue));
       this.label = label;
       this.min = min;
       this.max = max;
@@ -323,8 +423,7 @@ public final class MetalRenderConfigScreen extends Screen {
     @Override
     protected void updateMessage() {
       double value = quantize(denormalize(this.value));
-      this.setMessage(
-          net.minecraft.text.Text.literal(this.label + ": " + this.formatter.apply(value)));
+      this.setMessage(Text.literal(this.label + ": " + this.formatter.apply(value)));
     }
 
     @Override
@@ -344,18 +443,11 @@ public final class MetalRenderConfigScreen extends Screen {
       }
       return MathHelper.clamp(value, this.min, this.max);
     }
-
-    private void setRealValue(double value) {
-      this.value = normalize(this.min, this.max,
-          MathHelper.clamp(value, this.min, this.max));
-      updateMessage();
-    }
   }
 
   private static double normalize(double min, double max, double value) {
-    if (max - min <= 0.0D) {
+    if (max - min <= 0.0D)
       return 0.0D;
-    }
     return MathHelper.clamp((value - min) / (max - min), 0.0D, 1.0D);
   }
 }

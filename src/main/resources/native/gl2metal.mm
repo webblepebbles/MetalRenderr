@@ -8,15 +8,6 @@
 #include <mutex>
 #include <unordered_map>
 #include <vector>
-
-// ============================================================================
-// GL2Metal Translation Layer - Native Implementation
-//
-// This creates a standalone Metal window and provides OpenGL-like calls
-// that are translated to Metal operations.
-// ============================================================================
-
-// Basic shader source for passthrough rendering
 static const char *kBasicShaderSource = R"METAL(
 #include <metal_stdlib>
 using namespace metal;
@@ -54,25 +45,19 @@ fragment float4 basic_fragment(VertexOut in [[stage_in]],
     float4 texColor = tex.sample(texSampler, in.texCoord);
     return in.color * texColor;
 }
-
-// No-texture variant
 fragment float4 color_only_fragment(VertexOut in [[stage_in]]) {
     return in.color;
 }
 )METAL";
-
-// Vertex attribute info
 struct VertexAttribute {
   int index;
-  int size; // 1, 2, 3, or 4 components
-  int type; // GL type
+  int size; 
+  int type; 
   bool normalized;
   int stride;
   size_t offset;
   int bufferIndex;
 };
-
-// VAO state
 struct VAOState {
   std::vector<VertexAttribute> attributes;
   std::vector<bool> enabledAttributes;
@@ -80,85 +65,53 @@ struct VAOState {
 
   VAOState() : enabledAttributes(16, false) {}
 };
-
-// GL2Metal context
 struct GL2MetalContext {
   id<MTLDevice> device = nil;
   id<MTLCommandQueue> commandQueue = nil;
   id<MTLLibrary> shaderLibrary = nil;
-
-  // Pipelines
   id<MTLRenderPipelineState> texturedPipeline = nil;
   id<MTLRenderPipelineState> colorOnlyPipeline = nil;
   id<MTLDepthStencilState> depthStateEnabled = nil;
   id<MTLDepthStencilState> depthStateDisabled = nil;
   id<MTLSamplerState> defaultSampler = nil;
-
-  // 1x1 white texture for no-texture rendering
   id<MTLTexture> whiteTexture = nil;
-
-  // Uniforms buffer
   id<MTLBuffer> uniformsBuffer = nil;
-
-  // Render targets
   id<MTLTexture> colorTexture = nil;
   id<MTLTexture> depthTexture = nil;
   uint32_t width = 0;
   uint32_t height = 0;
-
-  // Clear state
-  float clearR = 0.0f, clearG = 0.0f, clearB = 0.0f, clearA = 1.0f;
+  float clearR = 0.0f, clearG = 0.0f, clearB = 0.0f, clearA = 0.0f;
   float clearDepth = 1.0f;
-
-  // Current render state
   id<MTLRenderCommandEncoder> currentEncoder = nil;
   id<MTLCommandBuffer> currentCommandBuffer = nil;
   bool renderPassActive = false;
-
-  // Viewport
   int viewportX = 0, viewportY = 0;
   int viewportW = 0, viewportH = 0;
-
-  // Blend state
   bool blendEnabled = false;
   int blendSrcRGB = 1;
   int blendDstRGB = 0;
   int blendSrcAlpha = 1;
   int blendDstAlpha = 0;
-
-  // Depth state
   bool depthTestEnabled = false;
-  int depthFunc = 0x0201; // GL_LESS
+  int depthFunc = 0x0201; 
   bool depthWriteEnabled = true;
-
-  // Cull state
   bool cullFaceEnabled = false;
-  int cullFaceMode = 0x0405; // GL_BACK
-
-  // Bound resources
+  int cullFaceMode = 0x0405; 
   uint32_t boundArrayBuffer = 0;
   uint32_t boundElementBuffer = 0;
   uint32_t boundTexture2D = 0;
   uint32_t boundVAO = 0;
-
-  // Resource maps
   std::unordered_map<uint32_t, id<MTLTexture>> textures;
   std::unordered_map<uint32_t, id<MTLBuffer>> buffers;
   std::unordered_map<uint32_t, VAOState> vaos;
-
-  // Matrix state
   float projectionMatrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
   float modelViewMatrix[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
   bool matricesDirty = true;
-
-  // Draw call batching
   std::vector<uint8_t> batchedVertices;
   int batchVertexCount = 0;
   int batchPrimitiveType = 0;
   bool hasTexture = false;
 };
-
-// Metal window context
 struct MetalWindowContext {
   NSWindow *window = nil;
   NSView *contentView = nil;
@@ -171,22 +124,18 @@ struct MetalWindowContext {
   int height = 0;
   bool shouldClose = false;
 };
-
-// Window delegate
 @interface MetalWindowDelegate : NSObject <NSWindowDelegate>
 @property(nonatomic) MetalWindowContext *context;
 @end
-
-// Custom window that refuses to become key (so clicks pass through to GLFW)
 @interface MetalOverlayWindow : NSWindow
 @end
 
 @implementation MetalOverlayWindow
 - (BOOL)canBecomeKeyWindow {
-  return NO; // Refuse to become key window
+  return NO; 
 }
 - (BOOL)canBecomeMainWindow {
-  return NO; // Refuse to become main window
+  return NO; 
 }
 @end
 
@@ -217,15 +166,9 @@ struct MetalWindowContext {
   }
 }
 @end
-
-// Global state
 static std::mutex gGL2MetalMutex;
 static GL2MetalContext *gGlobalGL2MetalCtx = nullptr;
 static MetalWindowContext *gGlobalWindowCtx = nullptr;
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
 
 static MTLBlendFactor translateBlendFactor(int glFactor) {
   switch (glFactor) {
@@ -280,15 +223,15 @@ static MTLCompareFunction translateDepthFunc(int glFunc) {
 static MTLPrimitiveType translatePrimitive(int glPrimitive) {
   switch (glPrimitive) {
   case 0x0000:
-    return MTLPrimitiveTypePoint; // GL_POINTS
+    return MTLPrimitiveTypePoint; 
   case 0x0001:
-    return MTLPrimitiveTypeLine; // GL_LINES
+    return MTLPrimitiveTypeLine; 
   case 0x0003:
-    return MTLPrimitiveTypeLineStrip; // GL_LINE_STRIP
+    return MTLPrimitiveTypeLineStrip; 
   case 0x0004:
-    return MTLPrimitiveTypeTriangle; // GL_TRIANGLES
+    return MTLPrimitiveTypeTriangle; 
   case 0x0005:
-    return MTLPrimitiveTypeTriangleStrip; // GL_TRIANGLE_STRIP
+    return MTLPrimitiveTypeTriangleStrip; 
   default:
     return MTLPrimitiveTypeTriangle;
   }
@@ -320,26 +263,16 @@ static bool initPipelines(GL2MetalContext *ctx) {
     return false;
 
   NSError *error = nil;
-
-  // Vertex descriptor
   MTLVertexDescriptor *vertexDesc = [[MTLVertexDescriptor alloc] init];
-
-  // Position (float3)
   vertexDesc.attributes[0].format = MTLVertexFormatFloat3;
   vertexDesc.attributes[0].offset = 0;
   vertexDesc.attributes[0].bufferIndex = 0;
-
-  // Color (float4)
   vertexDesc.attributes[1].format = MTLVertexFormatFloat4;
   vertexDesc.attributes[1].offset = 12;
   vertexDesc.attributes[1].bufferIndex = 0;
-
-  // TexCoord (float2)
   vertexDesc.attributes[2].format = MTLVertexFormatFloat2;
   vertexDesc.attributes[2].offset = 28;
   vertexDesc.attributes[2].bufferIndex = 0;
-
-  // Layout: stride 36 bytes (3*4 + 4*4 + 2*4)
   vertexDesc.layouts[0].stride = 36;
   vertexDesc.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
 
@@ -354,8 +287,6 @@ static bool initPipelines(GL2MetalContext *ctx) {
     printf("[GL2Metal] Failed to get shader functions\n");
     return false;
   }
-
-  // Textured pipeline
   MTLRenderPipelineDescriptor *pipelineDesc =
       [[MTLRenderPipelineDescriptor alloc] init];
   pipelineDesc.vertexFunction = vertexFunc;
@@ -380,8 +311,6 @@ static bool initPipelines(GL2MetalContext *ctx) {
            error ? [[error localizedDescription] UTF8String] : "unknown");
     return false;
   }
-
-  // Color-only pipeline
   pipelineDesc.fragmentFunction = colorOnlyFragFunc;
   ctx->colorOnlyPipeline =
       [ctx->device newRenderPipelineStateWithDescriptor:pipelineDesc
@@ -391,8 +320,6 @@ static bool initPipelines(GL2MetalContext *ctx) {
            error ? [[error localizedDescription] UTF8String] : "unknown");
     return false;
   }
-
-  // Depth states
   MTLDepthStencilDescriptor *depthDesc =
       [[MTLDepthStencilDescriptor alloc] init];
   depthDesc.depthCompareFunction = MTLCompareFunctionLess;
@@ -404,8 +331,6 @@ static bool initPipelines(GL2MetalContext *ctx) {
   depthDesc.depthWriteEnabled = NO;
   ctx->depthStateDisabled =
       [ctx->device newDepthStencilStateWithDescriptor:depthDesc];
-
-  // Sampler
   MTLSamplerDescriptor *samplerDesc = [[MTLSamplerDescriptor alloc] init];
   samplerDesc.minFilter = MTLSamplerMinMagFilterNearest;
   samplerDesc.magFilter = MTLSamplerMinMagFilterNearest;
@@ -413,8 +338,6 @@ static bool initPipelines(GL2MetalContext *ctx) {
   samplerDesc.sAddressMode = MTLSamplerAddressModeRepeat;
   samplerDesc.tAddressMode = MTLSamplerAddressModeRepeat;
   ctx->defaultSampler = [ctx->device newSamplerStateWithDescriptor:samplerDesc];
-
-  // 1x1 white texture
   MTLTextureDescriptor *texDesc = [MTLTextureDescriptor
       texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
                                    width:1
@@ -426,8 +349,6 @@ static bool initPipelines(GL2MetalContext *ctx) {
                        mipmapLevel:0
                          withBytes:white
                        bytesPerRow:4];
-
-  // Uniforms buffer
   ctx->uniformsBuffer =
       [ctx->device newBufferWithLength:256
                                options:MTLResourceStorageModeShared];
@@ -507,10 +428,6 @@ static void endRenderPass(GL2MetalContext *ctx) {
 
 extern "C" {
 
-// ============================================================================
-// Window Management
-// ============================================================================
-
 JNIEXPORT jlong JNICALL
 Java_com_metalrender_gl2metal_GL2MetalTranslator_nCreateMetalWindow(
     JNIEnv *env, jclass, jint width, jint height, jstring titleStr) {
@@ -544,8 +461,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nCreateMetalWindow(
       NSWindowStyleMask styleMask =
           NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
           NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
-
-      // Use custom window class that refuses to become key
       window =
           [[MetalOverlayWindow alloc] initWithContentRect:contentRect
                                                 styleMask:styleMask
@@ -553,8 +468,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nCreateMetalWindow(
                                                     defer:NO];
       [window setTitle:title];
       [window setReleasedWhenClosed:NO];
-
-      // Make window ignore mouse events so they pass through to GLFW window
       [window setIgnoresMouseEvents:YES];
 
       NSView *contentView = [[NSView alloc] initWithFrame:contentRect];
@@ -575,11 +488,7 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nCreateMetalWindow(
       delegate = [[MetalWindowDelegate alloc] init];
       delegate.context = ctx;
       [window setDelegate:delegate];
-
-      // Keep Metal window on top
       [window setLevel:NSFloatingWindowLevel];
-
-      // Don't make it key - just bring it to front
       [window orderFront:nil];
       [window center];
 
@@ -601,8 +510,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nCreateMetalWindow(
 
     ctx->window = window;
     ctx->metalLayer = metalLayer;
-
-    // Create GL2Metal context
     GL2MetalContext *gl2ctx = new GL2MetalContext();
     gl2ctx->device = device;
     gl2ctx->commandQueue = [device newCommandQueue];
@@ -610,8 +517,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nCreateMetalWindow(
     gl2ctx->height = height;
     gl2ctx->viewportW = width;
     gl2ctx->viewportH = height;
-
-    // Initialize pipelines
     if (!initPipelines(gl2ctx)) {
       printf("[GL2Metal] ERROR: Failed to initialize pipelines\n");
       delete gl2ctx;
@@ -675,17 +580,12 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nPresentFrame(
     return;
 
   @autoreleasepool {
-    // End any active render pass
     endRenderPass(ctx);
-
-    // Commit any pending command buffer
     if (ctx->currentCommandBuffer) {
       [ctx->currentCommandBuffer commit];
       [ctx->currentCommandBuffer waitUntilCompleted];
       ctx->currentCommandBuffer = nil;
     }
-
-    // Get drawable and blit to it
     id<CAMetalDrawable> drawable = [wctx->metalLayer nextDrawable];
     if (!drawable) {
       printf("[GL2Metal] WARNING: No drawable available\n");
@@ -693,8 +593,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nPresentFrame(
     }
 
     id<MTLCommandBuffer> cb = [ctx->commandQueue commandBuffer];
-
-    // If we have rendered content, blit it to the drawable
     if (ctx->colorTexture &&
         ctx->colorTexture.width == drawable.texture.width &&
         ctx->colorTexture.height == drawable.texture.height) {
@@ -702,7 +600,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nPresentFrame(
       [blit copyFromTexture:ctx->colorTexture toTexture:drawable.texture];
       [blit endEncoding];
     } else {
-      // Just clear the drawable
       MTLRenderPassDescriptor *pass =
           [MTLRenderPassDescriptor renderPassDescriptor];
       pass.colorAttachments[0].texture = drawable.texture;
@@ -743,10 +640,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nSetWindowSize(
   }
 }
 
-// ============================================================================
-// GL State Functions
-// ============================================================================
-
 JNIEXPORT void JNICALL
 Java_com_metalrender_gl2metal_GL2MetalTranslator_nClearFramebuffer(
     JNIEnv *, jclass, jlong, jboolean clearColor, jboolean clearDepth,
@@ -758,11 +651,7 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nClearFramebuffer(
 
   ensureRenderTarget(ctx, ctx->viewportW > 0 ? ctx->viewportW : ctx->width,
                      ctx->viewportH > 0 ? ctx->viewportH : ctx->height);
-
-  // End current pass if any
   endRenderPass(ctx);
-
-  // Start new pass with clear
   beginRenderPass(ctx, ctx->colorTexture, ctx->depthTexture, clearColor,
                   clearDepth);
 }
@@ -780,10 +669,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nSetClearColor(
   ctx->clearB = b;
   ctx->clearA = a;
 }
-
-// ============================================================================
-// Texture Functions
-// ============================================================================
 
 JNIEXPORT jlong JNICALL
 Java_com_metalrender_gl2metal_GL2MetalTranslator_nCreateTexture(
@@ -807,8 +692,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nCreateTexture(
     printf("[GL2Metal] Failed to create texture %dx%d\n", width, height);
     return 0;
   }
-
-  // Upload data if provided
   if (dataBuffer) {
     void *data = env->GetDirectBufferAddress(dataBuffer);
     if (data) {
@@ -851,10 +734,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDeleteTexture(
     texture = nil;
   }
 }
-
-// ============================================================================
-// Buffer Functions
-// ============================================================================
 
 JNIEXPORT jlong JNICALL
 Java_com_metalrender_gl2metal_GL2MetalTranslator_nCreateBuffer(
@@ -963,10 +842,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDeleteBuffer(
   }
 }
 
-// ============================================================================
-// Render State Functions
-// ============================================================================
-
 JNIEXPORT void JNICALL
 Java_com_metalrender_gl2metal_GL2MetalTranslator_nSetDepthTest(JNIEnv *, jclass,
                                                                jlong,
@@ -1023,8 +898,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nSetViewport(
   ctx->viewportY = y;
   ctx->viewportW = width;
   ctx->viewportH = height;
-
-  // Apply viewport to encoder if active
   if (ctx->currentEncoder) {
     MTLViewport viewport;
     viewport.originX = x;
@@ -1037,10 +910,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nSetViewport(
   }
 }
 
-// ============================================================================
-// Draw Functions
-// ============================================================================
-
 JNIEXPORT void JNICALL
 Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawArrays(
     JNIEnv *, jclass, jlong, jint primitive, jint first, jint count) {
@@ -1048,15 +917,11 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawArrays(
   GL2MetalContext *ctx = gGlobalGL2MetalCtx;
   if (!ctx)
     return;
-
-  // Ensure render pass is active
   if (!ctx->renderPassActive) {
     ensureRenderTarget(ctx, ctx->viewportW > 0 ? ctx->viewportW : ctx->width,
                        ctx->viewportH > 0 ? ctx->viewportH : ctx->height);
     beginRenderPass(ctx, ctx->colorTexture, ctx->depthTexture, false, false);
   }
-
-  // Set pipeline and state
   bool hasTexture = ctx->boundTexture2D != 0;
   [ctx->currentEncoder setRenderPipelineState:hasTexture
                                                   ? ctx->texturedPipeline
@@ -1064,8 +929,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawArrays(
   [ctx->currentEncoder setDepthStencilState:ctx->depthTestEnabled
                                                 ? ctx->depthStateEnabled
                                                 : ctx->depthStateDisabled];
-
-  // Set viewport
   MTLViewport viewport;
   viewport.originX = ctx->viewportX;
   viewport.originY = ctx->viewportY;
@@ -1074,8 +937,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawArrays(
   viewport.znear = 0.0;
   viewport.zfar = 1.0;
   [ctx->currentEncoder setViewport:viewport];
-
-  // Update uniforms
   struct {
     float projectionMatrix[16];
     float modelViewMatrix[16];
@@ -1084,8 +945,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawArrays(
   memcpy(uniforms.modelViewMatrix, ctx->modelViewMatrix, 64);
   memcpy([ctx->uniformsBuffer contents], &uniforms, sizeof(uniforms));
   [ctx->currentEncoder setVertexBuffer:ctx->uniformsBuffer offset:0 atIndex:1];
-
-  // Set texture
   if (hasTexture) {
     auto it = ctx->textures.find(ctx->boundTexture2D);
     if (it != ctx->textures.end()) {
@@ -1095,12 +954,9 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawArrays(
     }
     [ctx->currentEncoder setFragmentSamplerState:ctx->defaultSampler atIndex:0];
   }
-
-  // Set vertex buffer from bound VAO
   if (ctx->boundVAO != 0) {
     auto vaoIt = ctx->vaos.find(ctx->boundVAO);
     if (vaoIt != ctx->vaos.end()) {
-      // For now, use the bound array buffer
       if (ctx->boundArrayBuffer != 0) {
         auto bufIt = ctx->buffers.find(ctx->boundArrayBuffer);
         if (bufIt != ctx->buffers.end()) {
@@ -1116,8 +972,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawArrays(
       [ctx->currentEncoder setVertexBuffer:bufIt->second offset:0 atIndex:0];
     }
   }
-
-  // Draw
   [ctx->currentEncoder drawPrimitives:translatePrimitive(primitive)
                           vertexStart:first
                           vertexCount:count];
@@ -1131,15 +985,11 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawElements(
   GL2MetalContext *ctx = gGlobalGL2MetalCtx;
   if (!ctx || indexBufferHandle == 0)
     return;
-
-  // Ensure render pass is active
   if (!ctx->renderPassActive) {
     ensureRenderTarget(ctx, ctx->viewportW > 0 ? ctx->viewportW : ctx->width,
                        ctx->viewportH > 0 ? ctx->viewportH : ctx->height);
     beginRenderPass(ctx, ctx->colorTexture, ctx->depthTexture, false, false);
   }
-
-  // Set pipeline and state
   bool hasTexture = ctx->boundTexture2D != 0;
   [ctx->currentEncoder setRenderPipelineState:hasTexture
                                                   ? ctx->texturedPipeline
@@ -1147,8 +997,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawElements(
   [ctx->currentEncoder setDepthStencilState:ctx->depthTestEnabled
                                                 ? ctx->depthStateEnabled
                                                 : ctx->depthStateDisabled];
-
-  // Set viewport
   MTLViewport viewport;
   viewport.originX = ctx->viewportX;
   viewport.originY = ctx->viewportY;
@@ -1157,8 +1005,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawElements(
   viewport.znear = 0.0;
   viewport.zfar = 1.0;
   [ctx->currentEncoder setViewport:viewport];
-
-  // Update uniforms
   struct {
     float projectionMatrix[16];
     float modelViewMatrix[16];
@@ -1167,8 +1013,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawElements(
   memcpy(uniforms.modelViewMatrix, ctx->modelViewMatrix, 64);
   memcpy([ctx->uniformsBuffer contents], &uniforms, sizeof(uniforms));
   [ctx->currentEncoder setVertexBuffer:ctx->uniformsBuffer offset:0 atIndex:1];
-
-  // Set texture
   if (hasTexture) {
     auto it = ctx->textures.find(ctx->boundTexture2D);
     if (it != ctx->textures.end()) {
@@ -1178,34 +1022,25 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawElements(
     }
     [ctx->currentEncoder setFragmentSamplerState:ctx->defaultSampler atIndex:0];
   }
-
-  // Set vertex buffer
   if (ctx->boundArrayBuffer != 0) {
     auto bufIt = ctx->buffers.find(ctx->boundArrayBuffer);
     if (bufIt != ctx->buffers.end()) {
       [ctx->currentEncoder setVertexBuffer:bufIt->second offset:0 atIndex:0];
     }
   }
-
-  // Get index buffer
   id<MTLBuffer> indexBuffer = (__bridge id<MTLBuffer>)(void *)indexBufferHandle;
-
-  // Draw indexed
   [ctx->currentEncoder drawIndexedPrimitives:translatePrimitive(primitive)
                                   indexCount:count
                                    indexType:MTLIndexTypeUInt32
                                  indexBuffer:indexBuffer
                            indexBufferOffset:offset];
 }
-
-// New draw function that receives all state from Java
 JNIEXPORT void JNICALL
 Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawArraysWithHandles(
     JNIEnv *, jclass, jlong, jint primitive, jint first, jint count,
-    jlong vertexBufferHandle, jlong textureHandle,
-    jboolean depthTestEnabled, jint depthFunc,
-    jboolean blendEnabled, jint blendSrcRGB, jint blendDstRGB, jint blendSrcAlpha, jint blendDstAlpha,
-    jboolean cullEnabled, jint cullMode,
+    jlong vertexBufferHandle, jlong textureHandle, jboolean depthTestEnabled,
+    jint depthFunc, jboolean blendEnabled, jint blendSrcRGB, jint blendDstRGB,
+    jint blendSrcAlpha, jint blendDstAlpha, jboolean cullEnabled, jint cullMode,
     jint viewportX, jint viewportY, jint viewportW, jint viewportH) {
 
   GL2MetalContext *ctx = gGlobalGL2MetalCtx;
@@ -1213,25 +1048,18 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawArraysWithHandles(
     return;
 
   @autoreleasepool {
-    // Ensure render pass is active
     if (!ctx->renderPassActive) {
       ensureRenderTarget(ctx, viewportW > 0 ? viewportW : ctx->width,
                          viewportH > 0 ? viewportH : ctx->height);
       beginRenderPass(ctx, ctx->colorTexture, ctx->depthTexture, false, false);
     }
-
-    // Set pipeline based on whether we have a texture
     bool hasTexture = (textureHandle != 0);
     [ctx->currentEncoder setRenderPipelineState:hasTexture
                                                     ? ctx->texturedPipeline
                                                     : ctx->colorOnlyPipeline];
-    
-    // Set depth state
     [ctx->currentEncoder setDepthStencilState:depthTestEnabled
                                                   ? ctx->depthStateEnabled
                                                   : ctx->depthStateDisabled];
-
-    // Set viewport
     MTLViewport viewport;
     viewport.originX = viewportX;
     viewport.originY = viewportY;
@@ -1240,8 +1068,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawArraysWithHandles(
     viewport.znear = 0.0;
     viewport.zfar = 1.0;
     [ctx->currentEncoder setViewport:viewport];
-
-    // Update uniforms (identity matrices for now - need proper MVP upload)
     struct {
       float projectionMatrix[16];
       float modelViewMatrix[16];
@@ -1249,25 +1075,24 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawArraysWithHandles(
     memcpy(uniforms.projectionMatrix, ctx->projectionMatrix, 64);
     memcpy(uniforms.modelViewMatrix, ctx->modelViewMatrix, 64);
     memcpy([ctx->uniformsBuffer contents], &uniforms, sizeof(uniforms));
-    [ctx->currentEncoder setVertexBuffer:ctx->uniformsBuffer offset:0 atIndex:1];
-
-    // Set texture
+    [ctx->currentEncoder setVertexBuffer:ctx->uniformsBuffer
+                                  offset:0
+                                 atIndex:1];
     if (hasTexture) {
       id<MTLTexture> texture = (__bridge id<MTLTexture>)(void *)textureHandle;
       [ctx->currentEncoder setFragmentTexture:texture atIndex:0];
-      [ctx->currentEncoder setFragmentSamplerState:ctx->defaultSampler atIndex:0];
+      [ctx->currentEncoder setFragmentSamplerState:ctx->defaultSampler
+                                           atIndex:0];
     } else {
       [ctx->currentEncoder setFragmentTexture:ctx->whiteTexture atIndex:0];
-      [ctx->currentEncoder setFragmentSamplerState:ctx->defaultSampler atIndex:0];
+      [ctx->currentEncoder setFragmentSamplerState:ctx->defaultSampler
+                                           atIndex:0];
     }
-
-    // Set vertex buffer
     if (vertexBufferHandle != 0) {
-      id<MTLBuffer> vertexBuffer = (__bridge id<MTLBuffer>)(void *)vertexBufferHandle;
+      id<MTLBuffer> vertexBuffer =
+          (__bridge id<MTLBuffer>)(void *)vertexBufferHandle;
       [ctx->currentEncoder setVertexBuffer:vertexBuffer offset:0 atIndex:0];
     }
-
-    // Draw
     [ctx->currentEncoder drawPrimitives:translatePrimitive(primitive)
                             vertexStart:first
                             vertexCount:count];
@@ -1277,11 +1102,10 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawArraysWithHandles(
 JNIEXPORT void JNICALL
 Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawElementsWithHandles(
     JNIEnv *, jclass, jlong, jint primitive, jint count,
-    jlong indexBufferHandle, jlong indexOffset,
-    jlong vertexBufferHandle, jlong textureHandle,
-    jboolean depthTestEnabled, jint depthFunc,
-    jboolean blendEnabled, jint blendSrcRGB, jint blendDstRGB, jint blendSrcAlpha, jint blendDstAlpha,
-    jboolean cullEnabled, jint cullMode,
+    jlong indexBufferHandle, jlong indexOffset, jlong vertexBufferHandle,
+    jlong textureHandle, jboolean depthTestEnabled, jint depthFunc,
+    jboolean blendEnabled, jint blendSrcRGB, jint blendDstRGB,
+    jint blendSrcAlpha, jint blendDstAlpha, jboolean cullEnabled, jint cullMode,
     jint viewportX, jint viewportY, jint viewportW, jint viewportH) {
 
   GL2MetalContext *ctx = gGlobalGL2MetalCtx;
@@ -1289,25 +1113,18 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawElementsWithHandles(
     return;
 
   @autoreleasepool {
-    // Ensure render pass is active
     if (!ctx->renderPassActive) {
       ensureRenderTarget(ctx, viewportW > 0 ? viewportW : ctx->width,
                          viewportH > 0 ? viewportH : ctx->height);
       beginRenderPass(ctx, ctx->colorTexture, ctx->depthTexture, false, false);
     }
-
-    // Set pipeline based on whether we have a texture
     bool hasTexture = (textureHandle != 0);
     [ctx->currentEncoder setRenderPipelineState:hasTexture
                                                     ? ctx->texturedPipeline
                                                     : ctx->colorOnlyPipeline];
-    
-    // Set depth state
     [ctx->currentEncoder setDepthStencilState:depthTestEnabled
                                                   ? ctx->depthStateEnabled
                                                   : ctx->depthStateDisabled];
-
-    // Set viewport
     MTLViewport viewport;
     viewport.originX = viewportX;
     viewport.originY = viewportY;
@@ -1316,8 +1133,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawElementsWithHandles(
     viewport.znear = 0.0;
     viewport.zfar = 1.0;
     [ctx->currentEncoder setViewport:viewport];
-
-    // Update uniforms
     struct {
       float projectionMatrix[16];
       float modelViewMatrix[16];
@@ -1325,28 +1140,26 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawElementsWithHandles(
     memcpy(uniforms.projectionMatrix, ctx->projectionMatrix, 64);
     memcpy(uniforms.modelViewMatrix, ctx->modelViewMatrix, 64);
     memcpy([ctx->uniformsBuffer contents], &uniforms, sizeof(uniforms));
-    [ctx->currentEncoder setVertexBuffer:ctx->uniformsBuffer offset:0 atIndex:1];
-
-    // Set texture
+    [ctx->currentEncoder setVertexBuffer:ctx->uniformsBuffer
+                                  offset:0
+                                 atIndex:1];
     if (hasTexture) {
       id<MTLTexture> texture = (__bridge id<MTLTexture>)(void *)textureHandle;
       [ctx->currentEncoder setFragmentTexture:texture atIndex:0];
-      [ctx->currentEncoder setFragmentSamplerState:ctx->defaultSampler atIndex:0];
+      [ctx->currentEncoder setFragmentSamplerState:ctx->defaultSampler
+                                           atIndex:0];
     } else {
       [ctx->currentEncoder setFragmentTexture:ctx->whiteTexture atIndex:0];
-      [ctx->currentEncoder setFragmentSamplerState:ctx->defaultSampler atIndex:0];
+      [ctx->currentEncoder setFragmentSamplerState:ctx->defaultSampler
+                                           atIndex:0];
     }
-
-    // Set vertex buffer
     if (vertexBufferHandle != 0) {
-      id<MTLBuffer> vertexBuffer = (__bridge id<MTLBuffer>)(void *)vertexBufferHandle;
+      id<MTLBuffer> vertexBuffer =
+          (__bridge id<MTLBuffer>)(void *)vertexBufferHandle;
       [ctx->currentEncoder setVertexBuffer:vertexBuffer offset:0 atIndex:0];
     }
-
-    // Get index buffer
-    id<MTLBuffer> indexBuffer = (__bridge id<MTLBuffer>)(void *)indexBufferHandle;
-
-    // Draw indexed
+    id<MTLBuffer> indexBuffer =
+        (__bridge id<MTLBuffer>)(void *)indexBufferHandle;
     [ctx->currentEncoder drawIndexedPrimitives:translatePrimitive(primitive)
                                     indexCount:count
                                      indexType:MTLIndexTypeUInt32
@@ -1354,10 +1167,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nDrawElementsWithHandles(
                              indexBufferOffset:indexOffset];
   }
 }
-
-// ============================================================================
-// Window Management - GLFW Sync
-// ============================================================================
 
 JNIEXPORT void JNICALL
 Java_com_metalrender_gl2metal_GL2MetalTranslator_nSyncWithGLFWWindow(
@@ -1369,45 +1178,19 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nSyncWithGLFWWindow(
       reinterpret_cast<MetalWindowContext *>(windowHandle);
   if (!wctx || !wctx->window)
     return;
-
-  // Always update to ensure sync (don't cache - let Java side decide if
-  // changed)
-
-  // Update Metal window position and size to match GLFW
   dispatch_async(dispatch_get_main_queue(), ^{
-    // Get the scale factor for Retina displays
     CGFloat scale = wctx->window.backingScaleFactor;
     if (scale < 1.0)
       scale = 1.0;
-
-    // GLFW getX/getY are the window position (content area top-left in GLFW
-    // space) GLFW getFramebufferWidth/Height are in pixels (need to divide by
-    // scale for points)
     CGFloat windowWidth = width / scale;
     CGFloat windowHeight = height / scale;
-
-    // GLFW uses top-left origin, NSWindow uses bottom-left origin for the
-    // WINDOW FRAME But we need to set the content frame, not the window frame
-
-    // Get screen height for coordinate conversion (in points)
     NSScreen *screen = wctx->window.screen ?: [NSScreen mainScreen];
     CGFloat screenHeight = screen.frame.size.height;
-
-    // GLFW y is from top of screen to top of content area
-    // For NSWindow contentRect, we need bottom-left of content area
-    // bottomY = screenHeight - (glfwY + contentHeight)
     CGFloat contentY = screenHeight - y - windowHeight;
-
-    // Create the content rect (position and size of the content area)
     NSRect contentRect = NSMakeRect(x, contentY, windowWidth, windowHeight);
-
-    // Convert content rect to frame rect to include title bar
-    // Since we have NSWindowStyleMaskTitled, the frame will be larger
     NSRect frameRect =
         [NSWindow frameRectForContentRect:contentRect
                                 styleMask:wctx->window.styleMask];
-
-    // Only log occasionally to avoid spam
     static int logCounter = 0;
     if (logCounter++ % 300 == 0) {
       printf("[GL2Metal] Sync: GLFW pos=(%d,%d) fb=%dx%d scale=%.1f -> "
@@ -1417,8 +1200,6 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nSyncWithGLFWWindow(
              contentRect.size.height, frameRect.origin.x, frameRect.origin.y,
              frameRect.size.width, frameRect.size.height);
     }
-
-    // Set the window frame
     [wctx->window setFrame:frameRect display:YES animate:NO];
 
     if (wctx->metalLayer) {
@@ -1456,9 +1237,7 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nShouldClose(
   MetalWindowContext *wctx =
       reinterpret_cast<MetalWindowContext *>(windowHandle);
   if (!wctx)
-    return JNI_FALSE; // Don't close if context is null
-
-  // Only return true if user explicitly closed the window
+    return JNI_FALSE; 
   return wctx->shouldClose ? JNI_TRUE : JNI_FALSE;
 }
 
@@ -1466,10 +1245,6 @@ JNIEXPORT void JNICALL
 Java_com_metalrender_gl2metal_GL2MetalTranslator_nPollEvents(
     JNIEnv *, jclass, jlong windowHandle) {
   (void)windowHandle;
-  // In Option 2 mode, GLFW handles all input events
-  // We don't need to poll NSApp events ourselves as that would interfere
-  // with GLFW's event handling
-  // Just a no-op to keep the API consistent
 }
 
 JNIEXPORT void JNICALL
@@ -1482,28 +1257,16 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nEnableInputForwarding(
       reinterpret_cast<MetalWindowContext *>(windowHandle);
   if (!wctx || !wctx->window)
     return;
-
-  // Now that GLFW window is hidden, Metal window should accept mouse events
-  // and be the primary window for interaction
   dispatch_async(dispatch_get_main_queue(), ^{
-    // Re-enable mouse events on Metal window
     [wctx->window setIgnoresMouseEvents:NO];
-
-    // Set the window frame to match GLFW window position
-    // Note: on Retina, framebuffer size is 2x window size
     CGFloat scale = [NSScreen mainScreen].backingScaleFactor;
     CGFloat windowWidth = width / scale;
     CGFloat windowHeight = height / scale;
-
-    // Get screen height for coordinate conversion (NSWindow uses bottom-left
-    // origin)
     CGFloat screenHeight = [[NSScreen mainScreen] frame].size.height;
     CGFloat flippedY = screenHeight - y - windowHeight;
 
     NSRect frame = NSMakeRect(x, flippedY, windowWidth, windowHeight);
     [wctx->window setFrame:frame display:YES animate:NO];
-
-    // Make this window key since it's now the primary window
     [wctx->window makeKeyAndOrderFront:nil];
 
     printf("[GL2Metal] Input forwarding enabled - Metal window is now "
@@ -1523,12 +1286,10 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nSetMinimized(
 
   dispatch_async(dispatch_get_main_queue(), ^{
     if (minimized) {
-      // Miniaturize (minimize) the Metal window
       if (![wctx->window isMiniaturized]) {
         [wctx->window miniaturize:nil];
       }
     } else {
-      // Restore the Metal window from dock
       if ([wctx->window isMiniaturized]) {
         [wctx->window deminiaturize:nil];
       }
@@ -1556,4 +1317,4 @@ Java_com_metalrender_gl2metal_GL2MetalTranslator_nIsMinimized(
   return isMin ? JNI_TRUE : JNI_FALSE;
 }
 
-} // extern "C"
+} 

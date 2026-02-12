@@ -6,48 +6,39 @@ import java.nio.ByteOrder;
 import java.util.BitSet;
 import java.util.concurrent.atomic.AtomicInteger;
 
-
 public final class PersistentSparseAddressableBuffer {
-    
-    public static final int PAGE_SIZE = 64 * 1024;
-    public static final int PAGE_SHIFT = 16; 
 
-    
+    public static final int PAGE_SIZE = 64 * 1024;
+    public static final int PAGE_SHIFT = 16;
+
     public static final long MAX_VIRTUAL_SIZE = 4L * 1024L * 1024L * 1024L;
     public static final int MAX_VIRTUAL_PAGES = (int) (MAX_VIRTUAL_SIZE / PAGE_SIZE);
 
-    
-    private static final int PHYSICAL_CHUNK_PAGES = 256; 
+    private static final int PHYSICAL_CHUNK_PAGES = 256;
 
     private final long maxVirtualSize;
     private final int maxVirtualPages;
     private final int pageSize;
 
-    
-    private final BitSet committedPages; 
-    private final int[] pageTable; 
-    private final BitSet freePhysicalPages; 
+    private final BitSet committedPages;
+    private final int[] pageTable;
+    private final BitSet freePhysicalPages;
 
-    
     private ByteBuffer physicalBuffer;
     private int physicalPageCount;
     private int committedPageCount;
 
-    
     private final AtomicInteger allocatedBytes = new AtomicInteger(0);
     private final Object lock = new Object();
 
-    
     private int peakCommittedPages = 0;
     private long totalAllocations = 0;
     private long totalDeallocations = 0;
 
-    
     public PersistentSparseAddressableBuffer() {
         this(MAX_VIRTUAL_SIZE, PAGE_SIZE);
     }
 
-    
     public PersistentSparseAddressableBuffer(long maxVirtualSize, int pageSize) {
         if ((pageSize & (pageSize - 1)) != 0) {
             throw new IllegalArgumentException("Page size must be power of 2");
@@ -61,19 +52,16 @@ public final class PersistentSparseAddressableBuffer {
         this.pageTable = new int[maxVirtualPages];
         this.freePhysicalPages = new BitSet();
 
-        
         for (int i = 0; i < maxVirtualPages; i++) {
             pageTable[i] = -1;
         }
 
-        
         growPhysicalBuffer(PHYSICAL_CHUNK_PAGES);
 
         MetalLogger.info("[SparseBuffer] Created with %d MB virtual space, %d KB pages",
                 maxVirtualSize / (1024 * 1024), pageSize / 1024);
     }
 
-    
     public long allocate(int size) {
         if (size <= 0 || size > maxVirtualSize) {
             return -1;
@@ -82,18 +70,17 @@ public final class PersistentSparseAddressableBuffer {
         int pagesNeeded = (size + pageSize - 1) / pageSize;
 
         synchronized (lock) {
-            
+
             int startPage = findContiguousFreePages(pagesNeeded);
             if (startPage < 0) {
                 MetalLogger.warn("[SparseBuffer] Failed to find %d contiguous pages", pagesNeeded);
                 return -1;
             }
 
-            
             for (int i = 0; i < pagesNeeded; i++) {
                 int virtualPage = startPage + i;
                 if (!commitPage(virtualPage)) {
-                    
+
                     for (int j = 0; j < i; j++) {
                         decommitPage(startPage + j);
                     }
@@ -113,7 +100,6 @@ public final class PersistentSparseAddressableBuffer {
         }
     }
 
-    
     public void free(long virtualOffset, int size) {
         if (virtualOffset < 0 || size <= 0) {
             return;
@@ -135,7 +121,6 @@ public final class PersistentSparseAddressableBuffer {
         }
     }
 
-    
     public boolean write(long virtualOffset, ByteBuffer data) {
         if (virtualOffset < 0 || data == null || !data.hasRemaining()) {
             return false;
@@ -146,7 +131,7 @@ public final class PersistentSparseAddressableBuffer {
         int endPage = (int) ((virtualOffset + size - 1) / pageSize);
 
         synchronized (lock) {
-            
+
             for (int page = startPage; page <= endPage; page++) {
                 if (page >= maxVirtualPages || !committedPages.get(page)) {
                     MetalLogger.warn("[SparseBuffer] Write to uncommitted page %d", page);
@@ -154,7 +139,6 @@ public final class PersistentSparseAddressableBuffer {
                 }
             }
 
-            
             int dataPos = data.position();
             int remaining = size;
             long currentOffset = virtualOffset;
@@ -172,7 +156,6 @@ public final class PersistentSparseAddressableBuffer {
 
                 int physicalOffset = physicalPage * pageSize + pageOffset;
 
-                
                 ByteBuffer slice = data.duplicate();
                 slice.position(dataPos + (size - remaining));
                 slice.limit(slice.position() + bytesToWrite);
@@ -188,7 +171,6 @@ public final class PersistentSparseAddressableBuffer {
         }
     }
 
-    
     public ByteBuffer read(long virtualOffset, int size) {
         if (virtualOffset < 0 || size <= 0) {
             return null;
@@ -231,12 +213,10 @@ public final class PersistentSparseAddressableBuffer {
         return result;
     }
 
-    
     public ByteBuffer getPhysicalBuffer() {
         return physicalBuffer;
     }
 
-    
     public long translateAddress(long virtualOffset) {
         int page = (int) (virtualOffset / pageSize);
         int offset = (int) (virtualOffset % pageSize);
@@ -255,7 +235,6 @@ public final class PersistentSparseAddressableBuffer {
         }
     }
 
-    
     public Stats getStats() {
         return new Stats(
                 committedPageCount * pageSize,
@@ -265,16 +244,59 @@ public final class PersistentSparseAddressableBuffer {
                 totalDeallocations);
     }
 
-    
     public void defragment() {
         synchronized (lock) {
-            
-            
-            MetalLogger.info("[SparseBuffer] Defragmentation not yet implemented");
+            if (committedPageCount == 0) {
+                return;
+            }
+
+            int moved = 0;
+            int nextFreeSlot = 0;
+            for (int v = 0; v < maxVirtualPages; v++) {
+                if (!committedPages.get(v)) {
+                    continue;
+                }
+
+                int physPage = pageTable[v];
+                if (physPage < 0) {
+                    continue;
+                }
+                while (nextFreeSlot < physicalPageCount && !freePhysicalPages.get(nextFreeSlot)) {
+                    if (nextFreeSlot == physPage) {
+                        break;
+                    }
+                    nextFreeSlot++;
+                }
+
+                if (nextFreeSlot >= physicalPageCount || nextFreeSlot >= physPage) {
+                    nextFreeSlot = physPage + 1;
+                    continue;
+                }
+                int srcOffset = physPage * pageSize;
+                int dstOffset = nextFreeSlot * pageSize;
+
+                physicalBuffer.position(srcOffset);
+                ByteBuffer src = physicalBuffer.slice();
+                src.limit(pageSize);
+
+                physicalBuffer.position(dstOffset);
+                physicalBuffer.put(src);
+                freePhysicalPages.set(physPage); 
+                freePhysicalPages.clear(nextFreeSlot); 
+                pageTable[v] = nextFreeSlot;
+
+                moved++;
+                nextFreeSlot++;
+            }
+
+            if (moved > 0) {
+                MetalLogger.info("[SparseBuffer] Defragmentation moved %d pages", moved);
+            } else {
+                MetalLogger.info("[SparseBuffer] Defragmentation: already compact");
+            }
         }
     }
 
-    
     public void destroy() {
         synchronized (lock) {
             committedPages.clear();
@@ -285,8 +307,6 @@ public final class PersistentSparseAddressableBuffer {
         }
         MetalLogger.info("[SparseBuffer] Destroyed");
     }
-
-    
 
     private int findContiguousFreePages(int count) {
         int consecutive = 0;
@@ -316,13 +336,12 @@ public final class PersistentSparseAddressableBuffer {
         }
 
         if (committedPages.get(virtualPage)) {
-            return true; 
+            return true;
         }
 
-        
         int physicalPage = findFreePhysicalPage();
         if (physicalPage < 0) {
-            
+
             if (!growPhysicalBuffer(PHYSICAL_CHUNK_PAGES)) {
                 return false;
             }
@@ -332,7 +351,6 @@ public final class PersistentSparseAddressableBuffer {
             }
         }
 
-        
         committedPages.set(virtualPage);
         pageTable[virtualPage] = physicalPage;
         freePhysicalPages.clear(physicalPage);
@@ -375,7 +393,6 @@ public final class PersistentSparseAddressableBuffer {
         int newPageCount = physicalPageCount + additionalPages;
         int newSize = newPageCount * pageSize;
 
-        
         if (newSize > maxVirtualSize) {
             return false;
         }
@@ -384,7 +401,6 @@ public final class PersistentSparseAddressableBuffer {
             ByteBuffer newBuffer = ByteBuffer.allocateDirect(newSize)
                     .order(ByteOrder.nativeOrder());
 
-            
             if (physicalBuffer != null) {
                 physicalBuffer.position(0);
                 physicalBuffer.limit(physicalPageCount * pageSize);
@@ -392,7 +408,6 @@ public final class PersistentSparseAddressableBuffer {
                 newBuffer.position(0);
             }
 
-            
             for (int i = physicalPageCount; i < newPageCount; i++) {
                 freePhysicalPages.set(i);
             }
@@ -409,8 +424,6 @@ public final class PersistentSparseAddressableBuffer {
             return false;
         }
     }
-
-    
 
     public static final class Stats {
         public final long committedBytes;

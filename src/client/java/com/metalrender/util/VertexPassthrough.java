@@ -11,6 +11,7 @@ public final class VertexPassthrough {
 
     private VertexPassthrough() {
     }
+
     public static PassthroughMesh passthrough(BlockPos origin, ByteBuffer source, int inputVertexCount) {
         if (inputVertexCount <= 0 || source == null) {
             return PassthroughMesh.empty();
@@ -37,7 +38,7 @@ public final class VertexPassthrough {
                     quadVerts[v][b] = input.get(base + b);
                 }
             }
-            int[] indices = { 2, 1, 0, 0, 3, 2 };
+            int[] indices = { 0, 1, 2, 2, 3, 0 };
             for (int idx : indices) {
                 target.put(quadVerts[idx]);
             }

@@ -9,25 +9,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/**
- * GL11 interception for GL2Metal mode.
- * Intercepts basic OpenGL calls and routes them to Metal.
- * 
- * NOTE: We target GL11 (wrapper class) instead of GL11C because GL11C methods are 
- * native and cannot be injected into. GL11 wraps GL11C with regular Java methods.
- * 
- * Categories intercepted:
- * - STATE: glEnable, glDisable, glBlendFunc, glDepthFunc, etc.
- * - DRAW_CALLS: glDrawArrays, glDrawElements
- * - TEXTURES: glGenTextures, glBindTexture, etc.
- */
 @Pseudo
 @Mixin(targets = { "org.lwjgl.opengl.GL11" })
 public class GL11CGL2MetalMixin {
-
-    // ========================================================================
-    // State Enable/Disable (STATE category)
-    // ========================================================================
 
     @Inject(method = "glEnable", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glEnable(int cap, CallbackInfo ci) {
@@ -45,10 +29,6 @@ public class GL11CGL2MetalMixin {
         }
     }
 
-    // ========================================================================
-    // Blend Functions (STATE category)
-    // ========================================================================
-
     @Inject(method = "glBlendFunc", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glBlendFunc(int sfactor, int dfactor, CallbackInfo ci) {
         if (GL2MetalManager.shouldInterceptState()) {
@@ -56,10 +36,6 @@ public class GL11CGL2MetalMixin {
             ci.cancel();
         }
     }
-
-    // ========================================================================
-    // Depth Functions (STATE category)
-    // ========================================================================
 
     @Inject(method = "glDepthFunc", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glDepthFunc(int func, CallbackInfo ci) {
@@ -77,10 +53,6 @@ public class GL11CGL2MetalMixin {
         }
     }
 
-    // ========================================================================
-    // Cull Face (STATE category)
-    // ========================================================================
-
     @Inject(method = "glCullFace", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glCullFace(int mode, CallbackInfo ci) {
         if (GL2MetalManager.shouldInterceptState()) {
@@ -89,10 +61,6 @@ public class GL11CGL2MetalMixin {
         }
     }
 
-    // ========================================================================
-    // Viewport (STATE category)
-    // ========================================================================
-
     @Inject(method = "glViewport", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glViewport(int x, int y, int width, int height, CallbackInfo ci) {
         if (GL2MetalManager.shouldInterceptState()) {
@@ -100,10 +68,6 @@ public class GL11CGL2MetalMixin {
             ci.cancel();
         }
     }
-
-    // ========================================================================
-    // Clear Functions (STATE category)
-    // ========================================================================
 
     @Inject(method = "glClear", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glClear(int mask, CallbackInfo ci) {
@@ -121,10 +85,6 @@ public class GL11CGL2MetalMixin {
         }
     }
 
-    // ========================================================================
-    // Draw Functions (DRAW_CALLS category)
-    // ========================================================================
-
     @Inject(method = "glDrawArrays", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glDrawArrays(int mode, int first, int count, CallbackInfo ci) {
         if (GL2MetalManager.shouldInterceptDrawCalls()) {
@@ -140,10 +100,6 @@ public class GL11CGL2MetalMixin {
             ci.cancel();
         }
     }
-
-    // ========================================================================
-    // Texture Functions (TEXTURES category)
-    // ========================================================================
 
     @Inject(method = "glGenTextures()I", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glGenTextures(CallbackInfoReturnable<Integer> cir) {
@@ -168,10 +124,6 @@ public class GL11CGL2MetalMixin {
         }
     }
 
-    // ========================================================================
-    // Color Mask (STATE category)
-    // ========================================================================
-
     @Inject(method = "glColorMask", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glColorMask(boolean r, boolean g, boolean b, boolean a, CallbackInfo ci) {
         if (GL2MetalManager.shouldInterceptState()) {
@@ -180,10 +132,6 @@ public class GL11CGL2MetalMixin {
         }
     }
 
-    // ========================================================================
-    // Scissor (STATE category)
-    // ========================================================================
-
     @Inject(method = "glScissor", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glScissor(int x, int y, int width, int height, CallbackInfo ci) {
         if (GL2MetalManager.shouldInterceptState()) {
@@ -191,10 +139,6 @@ public class GL11CGL2MetalMixin {
             ci.cancel();
         }
     }
-
-    // ========================================================================
-    // Polygon Mode (STATE category)
-    // ========================================================================
 
     @Inject(method = "glPolygonMode", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glPolygonMode(int face, int mode, CallbackInfo ci) {

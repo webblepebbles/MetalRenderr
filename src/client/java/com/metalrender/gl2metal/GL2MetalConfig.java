@@ -1,129 +1,54 @@
 package com.metalrender.gl2metal;
 
-/**
- * Configuration for GL2Metal interception system.
- * 
- * GL2Metal intercepts OpenGL calls at the LWJGL level and translates them
- * directly to Metal, bypassing Apple's GL compatibility layer entirely.
- * 
- * This is different from MetalRender which uses a custom rendering pipeline.
- * Both systems can be toggled independently.
- */
 public class GL2MetalConfig {
 
-    // ========================================================================
-    // System Enable Flags
-    // ========================================================================
-
-    /**
-     * Master switch for GL2Metal system.
-     * When true, GL calls are intercepted and routed to Metal.
-     * Can be set via -Dmetalrender.gl2metal=true
-     */
+    
     public static boolean GL2METAL_ENABLED = Boolean.getBoolean("metalrender.gl2metal");
 
-    /**
-     * When true, use full GL interception mode (intercept all GL calls).
-     * When false, use framebuffer capture mode (let GL render, then blit).
-     * Default: true when GL2METAL_ENABLED (full interception is the goal)
-     * Can be disabled via -Dmetalrender.gl2metal.fullInterception=false
-     */
+    
     public static boolean FULL_INTERCEPTION = GL2METAL_ENABLED && 
             !Boolean.getBoolean("metalrender.gl2metal.fullInterception.disabled");
 
-    // ========================================================================
-    // Per-Category Interception Toggles
-    // ========================================================================
-
-    /**
-     * Intercept draw calls (glDrawArrays, glDrawElements, etc.)
-     * This is the core of the system - must be enabled for Metal rendering.
-     * Default: DISABLED until GL→Metal translation is complete
-     */
+    
     public static boolean INTERCEPT_DRAW_CALLS = Boolean.getBoolean("metalrender.gl2metal.drawcalls");
 
-    /**
-     * Intercept state calls (glEnable, glDisable, glBlendFunc, etc.)
-     * Default: DISABLED until GL→Metal translation is complete
-     */
+    
     public static boolean INTERCEPT_STATE = Boolean.getBoolean("metalrender.gl2metal.state");
 
-    /**
-     * Intercept buffer calls (glGenBuffers, glBufferData, etc.)
-     * Default: DISABLED - causes buffer mapping errors
-     */
+    
     public static boolean INTERCEPT_BUFFERS = Boolean.getBoolean("metalrender.gl2metal.buffers");
 
-    /**
-     * Intercept texture calls (glGenTextures, glTexImage2D, etc.)
-     * Default: DISABLED until GL→Metal translation is complete
-     */
+    
     public static boolean INTERCEPT_TEXTURES = Boolean.getBoolean("metalrender.gl2metal.textures");
 
-    /**
-     * Intercept shader calls (glCreateProgram, glCompileShader, etc.)
-     * Default: DISABLED until GL→Metal translation is complete
-     */
+    
     public static boolean INTERCEPT_SHADERS = Boolean.getBoolean("metalrender.gl2metal.shaders");
 
-    /**
-     * Intercept framebuffer calls (glGenFramebuffers, glBindFramebuffer, etc.)
-     * Default: DISABLED until GL→Metal translation is complete
-     */
+    
     public static boolean INTERCEPT_FBOS = Boolean.getBoolean("metalrender.gl2metal.fbos");
 
-    /**
-     * Intercept VAO calls (glGenVertexArrays, glBindVertexArray, etc.)
-     * Default: DISABLED until GL→Metal translation is complete
-     */
+    
     public static boolean INTERCEPT_VAOS = Boolean.getBoolean("metalrender.gl2metal.vaos");
 
-    // ========================================================================
-    // Debug & Profiling
-    // ========================================================================
-
-    /**
-     * Enable verbose debug logging for GL2Metal.
-     */
+    
     public static boolean DEBUG_LOGGING = Boolean.getBoolean("metalrender.gl2metal.debug");
 
-    /**
-     * Log every intercepted GL call (very verbose, impacts performance).
-     */
+    
     public static boolean LOG_ALL_CALLS = Boolean.getBoolean("metalrender.gl2metal.logAllCalls");
 
-    /**
-     * Enable performance profiling.
-     */
+    
     public static boolean PROFILING = Boolean.getBoolean("metalrender.gl2metal.profile");
 
-    /**
-     * Validate Metal state after each operation (slow but helps debugging).
-     */
+    
     public static boolean VALIDATE_STATE = Boolean.getBoolean("metalrender.gl2metal.validate");
 
-    // ========================================================================
-    // Fallback & Compatibility
-    // ========================================================================
-
-    /**
-     * If an unhandled GL call is encountered, log a warning.
-     * When false, silently pass to GL.
-     */
+    
     public static boolean WARN_UNHANDLED_CALLS = Boolean.getBoolean("metalrender.gl2metal.warnUnhandled");
 
-    /**
-     * Automatically fall back to GL on error instead of crashing.
-     */
+    
     public static boolean FALLBACK_ON_ERROR = !Boolean.getBoolean("metalrender.gl2metal.noFallback");
 
-    // ========================================================================
-    // Runtime Configuration Methods
-    // ========================================================================
-
-    /**
-     * Check if a specific interception category is enabled.
-     */
+    
     public static boolean isInterceptionEnabled(InterceptionCategory category) {
         if (!GL2METAL_ENABLED || !FULL_INTERCEPTION) {
             return false;
@@ -140,9 +65,7 @@ public class GL2MetalConfig {
         };
     }
 
-    /**
-     * Enable or disable a category at runtime.
-     */
+    
     public static void setInterceptionEnabled(InterceptionCategory category, boolean enabled) {
         switch (category) {
             case DRAW_CALLS -> INTERCEPT_DRAW_CALLS = enabled;
@@ -155,9 +78,7 @@ public class GL2MetalConfig {
         }
     }
 
-    /**
-     * Reload configuration from system properties.
-     */
+    
     public static void reloadFromSystemProperties() {
         GL2METAL_ENABLED = Boolean.getBoolean("metalrender.gl2metal");
         FULL_INTERCEPTION = GL2METAL_ENABLED && !Boolean.getBoolean("metalrender.gl2metal.fullInterception.disabled");
@@ -176,19 +97,13 @@ public class GL2MetalConfig {
         FALLBACK_ON_ERROR = !Boolean.getBoolean("metalrender.gl2metal.noFallback");
     }
 
-    /**
-     * Check if ANY interception category is enabled.
-     * If none are enabled, the Metal window and sync operations can be skipped
-     * to avoid interfering with OpenGL.
-     */
+    
     public static boolean isAnyInterceptionEnabled() {
         return INTERCEPT_DRAW_CALLS || INTERCEPT_STATE || INTERCEPT_BUFFERS ||
                INTERCEPT_TEXTURES || INTERCEPT_SHADERS || INTERCEPT_FBOS || INTERCEPT_VAOS;
     }
 
-    /**
-     * Print current configuration state.
-     */
+    
     public static String getConfigSummary() {
         StringBuilder sb = new StringBuilder();
         sb.append("[GL2MetalConfig]\n");
@@ -210,9 +125,7 @@ public class GL2MetalConfig {
         return sb.toString();
     }
 
-    /**
-     * Interception categories for granular control.
-     */
+    
     public enum InterceptionCategory {
         DRAW_CALLS,
         STATE,

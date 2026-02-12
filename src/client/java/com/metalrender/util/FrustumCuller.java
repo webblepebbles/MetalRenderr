@@ -15,6 +15,12 @@ public class FrustumCuller {
     this.cullsThisFrame = 0;
   }
 
+  public boolean isValid() {
+    return this.valid;
+  }
+
+  private long updateCount = 0;
+
   public void update(Matrix4f viewProjection) {
     if (viewProjection == null) {
       this.valid = false;
@@ -22,30 +28,42 @@ public class FrustumCuller {
     } else {
       this.extractPlanes(viewProjection);
       this.valid = true;
-      MetalLogger.debug(
-          "[FrustumCuller] Updated with viewProjection matrix, valid=%s",
-          this.valid);
+      updateCount++;
+      if (updateCount <= 5) {
+        MetalLogger.info("[FrustumCuller] Planes (near/far): n=(%.3f,%.3f,%.3f,%.3f) f=(%.3f,%.3f,%.3f,%.3f)",
+            planes[4][0], planes[4][1], planes[4][2], planes[4][3],
+            planes[5][0], planes[5][1], planes[5][2], planes[5][3]);
+        MetalLogger.info("[FrustumCuller] Planes (L/R): L=(%.3f,%.3f,%.3f,%.3f) R=(%.3f,%.3f,%.3f,%.3f)",
+            planes[0][0], planes[0][1], planes[0][2], planes[0][3],
+            planes[1][0], planes[1][1], planes[1][2], planes[1][3]);
+        MetalLogger.info("[FrustumCuller] Planes (B/T): B=(%.3f,%.3f,%.3f,%.3f) T=(%.3f,%.3f,%.3f,%.3f)",
+            planes[2][0], planes[2][1], planes[2][2], planes[2][3],
+            planes[3][0], planes[3][1], planes[3][2], planes[3][3]);
+        MetalLogger.info("[FrustumCuller] Matrix diag: (%.4f, %.4f, %.4f, %.4f) m30-33: (%.4f, %.4f, %.4f, %.4f)",
+            viewProjection.m00(), viewProjection.m11(), viewProjection.m22(), viewProjection.m33(),
+            viewProjection.m30(), viewProjection.m31(), viewProjection.m32(), viewProjection.m33());
+      }
     }
     this.resetFrameStats();
   }
 
   private void extractPlanes(Matrix4f m) {
-    this.setPlane(0, m.m30() + m.m00(), m.m31() + m.m01(), m.m32() + m.m02(),
-                  m.m33() + m.m03());
-    this.setPlane(1, m.m30() - m.m00(), m.m31() - m.m01(), m.m32() - m.m02(),
-                  m.m33() - m.m03());
-    this.setPlane(2, m.m30() + m.m10(), m.m31() + m.m11(), m.m32() + m.m12(),
-                  m.m33() + m.m13());
-    this.setPlane(3, m.m30() - m.m10(), m.m31() - m.m11(), m.m32() - m.m12(),
-                  m.m33() - m.m13());
-    this.setPlane(4, m.m30() + m.m20(), m.m31() + m.m21(), m.m32() + m.m22(),
-                  m.m33() + m.m23());
-    this.setPlane(5, m.m30() - m.m20(), m.m31() - m.m21(), m.m32() - m.m22(),
-                  m.m33() - m.m23());
+    this.setPlane(0, m.m03() + m.m00(), m.m13() + m.m10(), m.m23() + m.m20(),
+        m.m33() + m.m30());
+    this.setPlane(1, m.m03() - m.m00(), m.m13() - m.m10(), m.m23() - m.m20(),
+        m.m33() - m.m30());
+    this.setPlane(2, m.m03() + m.m01(), m.m13() + m.m11(), m.m23() + m.m21(),
+        m.m33() + m.m31());
+    this.setPlane(3, m.m03() - m.m01(), m.m13() - m.m11(), m.m23() - m.m21(),
+        m.m33() - m.m31());
+    this.setPlane(4, m.m03() + m.m02(), m.m13() + m.m12(), m.m23() + m.m22(),
+        m.m33() + m.m32());
+    this.setPlane(5, m.m03() - m.m02(), m.m13() - m.m12(), m.m23() - m.m22(),
+        m.m33() - m.m32());
   }
 
   private void setPlane(int idx, float a, float b, float c, float d) {
-    float length = (float)Math.sqrt((double)(a * a + b * b + c * c));
+    float length = (float) Math.sqrt((double) (a * a + b * b + c * c));
     if (length <= 1.0E-6F) {
       length = 1.0F;
     }
@@ -72,27 +90,26 @@ public class FrustumCuller {
       return true;
     }
 
-    float minX = (float)regionX * 16.0F;
-    float minZ = (float)regionZ * 16.0F;
+    float minX = (float) regionX * 16.0F;
+    float minZ = (float) regionZ * 16.0F;
     float maxX = minX + 16.0F;
     float maxZ = minZ + 16.0F;
-    float minYf = (float)minY;
-    float maxYf = (float)maxY;
+    float minYf = (float) minY;
+    float maxYf = (float) maxY;
     float centerX = (minX + maxX) * 0.5F;
     float centerY = (minYf + maxYf) * 0.5F;
     float centerZ = (minZ + maxZ) * 0.5F;
     float radiusX = maxX - centerX;
     float radiusY = maxYf - centerY;
     float radiusZ = maxZ - centerZ;
-    float radius = (float)Math.sqrt(radiusX * radiusX + radiusY * radiusY +
-                                    radiusZ * radiusZ);
+    float radius = (float) Math.sqrt(radiusX * radiusX + radiusY * radiusY +
+        radiusZ * radiusZ);
 
     if (!this.isSphereVisible(centerX, centerY, centerZ, radius)) {
       return false;
     }
 
-    boolean visible =
-        this.aabbIntersectsFrustum(minX, minYf, minZ, maxX, maxYf, maxZ);
+    boolean visible = this.aabbIntersectsFrustum(minX, minYf, minZ, maxX, maxYf, maxZ);
     if (!visible) {
       this.cullsThisFrame++;
     }
@@ -101,8 +118,7 @@ public class FrustumCuller {
 
   public void logFrameStats(String frameLabel) {
     if (this.totalTestsThisFrame > 0) {
-      float cullRate =
-          (float)this.cullsThisFrame / (float)this.totalTestsThisFrame * 100.0f;
+      float cullRate = (float) this.cullsThisFrame / (float) this.totalTestsThisFrame * 100.0f;
       MetalLogger.info(
           "[FrustumCuller] %s: valid=%s, tests=%d, culled=%d (%.1f%%)",
           frameLabel, this.valid, this.totalTestsThisFrame, this.cullsThisFrame,
@@ -116,7 +132,7 @@ public class FrustumCuller {
     }
     for (int i = 0; i < 6; ++i) {
       float distance = this.normals[i][0] * cx + this.normals[i][1] * cy +
-                       this.normals[i][2] * cz + this.distances[i];
+          this.normals[i][2] * cz + this.distances[i];
       if (distance < -radius) {
         return false;
       }
@@ -125,7 +141,7 @@ public class FrustumCuller {
   }
 
   public boolean aabbIntersectsFrustum(float minX, float minY, float minZ,
-                                       float maxX, float maxY, float maxZ) {
+      float maxX, float maxY, float maxZ) {
     for (int i = 0; i < 6; ++i) {
       float a = this.normals[i][0];
       float b = this.normals[i][1];
@@ -140,5 +156,16 @@ public class FrustumCuller {
     }
 
     return true;
+  }
+
+  public void getPlanes(float[] out) {
+    if (out == null || out.length < 24)
+      return;
+    for (int i = 0; i < 6; i++) {
+      out[i * 4] = planes[i][0];
+      out[i * 4 + 1] = planes[i][1];
+      out[i * 4 + 2] = planes[i][2];
+      out[i * 4 + 3] = planes[i][3];
+    }
   }
 }

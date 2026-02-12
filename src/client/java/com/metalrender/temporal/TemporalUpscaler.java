@@ -2,12 +2,6 @@ package com.metalrender.temporal;
 
 import com.metalrender.config.MetalRenderConfig;
 
-/**
- * Maintains a soft target resolution scale when temporal anti-aliasing is
- * enabled. The upscaler nudges the current render scale towards the configured
- * temporal target every frame, allowing the dynamic quality controller to keep
- * the frame rate stable without fighting the temporal resolve.
- */
 public final class TemporalUpscaler {
   private static final float ADJUST_SPEED = 0.08F;
 

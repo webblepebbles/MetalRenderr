@@ -494,7 +494,6 @@ Java_com_metalrender_nativebridge_MeshShaderNative_startMeshFrame(
     rp.colorAttachments[0].texture = d.texture;
     rp.colorAttachments[0].loadAction = MTLLoadActionClear;
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-    // Clear to transparent for compositing with OpenGL
     rp.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
     gDrawable = d;
     gRenderPass = rp;
@@ -559,10 +558,6 @@ Java_com_metalrender_nativebridge_MeshShaderNative_endMeshFrame(
     }
 
     if (gCurrentCommandBuffer) {
-      // TEST 70: DISABLE direct present - let IOSurface handle compositing
-      // if (gDrawable) {
-      //   [gCurrentCommandBuffer presentDrawable:gDrawable];
-      // }
       [gCurrentCommandBuffer commit];
       gCurrentCommandBuffer = nil;
     }

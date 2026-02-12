@@ -14,19 +14,10 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * Mixin to capture block entity rendering for Metal.
- * 
- * Hooks into block entity rendering to capture vertex data.
- * Uses a simplified approach targeting BlockEntityRenderer directly.
- */
 @Mixin(BlockEntityRenderer.class)
 public interface BlockEntityRenderMixin<T extends BlockEntity> {
 
-    /**
-     * Hook before rendering a block entity.
-     * Using interface mixin for broader compatibility.
-     */
+    
     @Inject(method = "render", at = @At("HEAD"), require = 0)
     default void metalrender$beforeRender(
             T blockEntity,
@@ -47,8 +38,6 @@ public interface BlockEntityRenderMixin<T extends BlockEntity> {
         MetalEntityRenderer entityRenderer = coordinator.getEntityRenderer();
         if (entityRenderer == null || !entityRenderer.isEnabled())
             return;
-
-        // Set up block entity transform
         MatrixStack.Entry entry = matrices.peek();
         Matrix4f positionMatrix = entry.getPositionMatrix();
         Matrix3f normalMatrix = entry.getNormalMatrix();

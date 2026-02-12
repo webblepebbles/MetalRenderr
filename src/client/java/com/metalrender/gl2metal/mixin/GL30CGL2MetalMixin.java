@@ -9,20 +9,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/**
- * GL30 interception for GL2Metal mode.
- * Intercepts VAO and FBO calls and routes them to Metal.
- * 
- * NOTE: We target GL30 (wrapper class) instead of GL30C because GL30C methods are 
- * native and cannot be injected into. GL30 wraps GL30C with regular Java methods.
- */
 @Pseudo
 @Mixin(targets = { "org.lwjgl.opengl.GL30" })
 public class GL30CGL2MetalMixin {
-
-    // ========================================================================
-    // VAO Functions
-    // ========================================================================
 
     @Inject(method = "glGenVertexArrays()I", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glGenVertexArrays(CallbackInfoReturnable<Integer> cir) {
@@ -46,10 +35,6 @@ public class GL30CGL2MetalMixin {
             ci.cancel();
         }
     }
-
-    // ========================================================================
-    // Framebuffer Functions
-    // ========================================================================
 
     @Inject(method = "glGenFramebuffers()I", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glGenFramebuffers(CallbackInfoReturnable<Integer> cir) {
@@ -89,10 +74,6 @@ public class GL30CGL2MetalMixin {
             cir.setReturnValue(GL2MetalTranslator.getInstance().glCheckFramebufferStatus(target));
         }
     }
-
-    // ========================================================================
-    // Renderbuffer Functions
-    // ========================================================================
 
     @Inject(method = "glGenRenderbuffers()I", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glGenRenderbuffers(CallbackInfoReturnable<Integer> cir) {

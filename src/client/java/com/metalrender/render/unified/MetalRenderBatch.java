@@ -1,6 +1,7 @@
 package com.metalrender.render.unified;
 
 import com.metalrender.entity.EntityTextureCache;
+import com.metalrender.nativebridge.EntityBatchBuilder;
 import com.metalrender.nativebridge.NativeBridge;
 import com.metalrender.util.MetalLogger;
 import net.minecraft.util.Identifier;
@@ -16,42 +17,32 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class MetalRenderBatch {
 
-    /** Vertex stride for standard render (pos + uv + color + normal) = 32 bytes */
     public static final int STANDARD_VERTEX_STRIDE = 32;
 
-    /** Vertex stride for GUI render (pos + uv + color) = 20 bytes */
     public static final int GUI_VERTEX_STRIDE = 20;
 
-    /** Maximum vertices per batch */
     private static final int MAX_VERTICES_PER_BATCH = 65536;
 
-    /** Initial buffer capacity in vertices */
     private static final int INITIAL_CAPACITY = 8192;
 
-    /** Singleton instance */
     private static final MetalRenderBatch INSTANCE = new MetalRenderBatch();
 
-    /** Batches by render type */
     private final Map<MetalRenderType, RenderBatch> batches = new ConcurrentHashMap<>();
 
-    /** Current transform matrices */
     private final Matrix4f currentModelMatrix = new Matrix4f();
     private final Matrix3f currentNormalMatrix = new Matrix3f();
 
-    /** Frame uniforms */
     private final float[] viewProjection = new float[16];
     private final float[] cameraPos = new float[4];
 
-    /** Native device handle */
     private long deviceHandle = 0;
+    private final EntityBatchBuilder entityBatch = new EntityBatchBuilder();
 
-    /** Frame statistics */
     private int totalVerticesThisFrame = 0;
     private int totalBatchesThisFrame = 0;
     private int frameCount = 0;
 
     private MetalRenderBatch() {
-        // Initialize batches for all render types
         for (MetalRenderType type : MetalRenderType.values()) {
             batches.put(type, new RenderBatch(type));
         }
@@ -61,53 +52,34 @@ public class MetalRenderBatch {
         return INSTANCE;
     }
 
-    /**
-     * Initialize with the Metal device handle.
-     */
     public void initialize(long device) {
         this.deviceHandle = device;
         MetalLogger.info("[MetalRenderBatch] Initialized with device handle: {}", device);
     }
 
-    /**
-     * Begin a new render frame.
-     */
     public void beginFrame(Matrix4f viewProj, float camX, float camY, float camZ) {
         frameCount++;
         totalVerticesThisFrame = 0;
         totalBatchesThisFrame = 0;
-
-        // Store frame uniforms
         viewProj.get(viewProjection);
         cameraPos[0] = camX;
         cameraPos[1] = camY;
         cameraPos[2] = camZ;
         cameraPos[3] = 1.0f;
-
-        // Reset all batches
         for (RenderBatch batch : batches.values()) {
             batch.reset();
         }
-
-        // Reset transforms
         currentModelMatrix.identity();
         currentNormalMatrix.identity();
     }
 
-    /**
-     * Set the model transform for subsequent vertices.
-     */
     public void setTransform(Matrix4f model, Matrix3f normal) {
         currentModelMatrix.set(model);
         currentNormalMatrix.set(normal);
     }
 
-    /**
-     * Set the model transform from a position matrix only.
-     */
     public void setTransform(Matrix4f model) {
         currentModelMatrix.set(model);
-        // Extract 3x3 rotation/scale for normal matrix
         currentNormalMatrix.set(
                 model.m00(), model.m01(), model.m02(),
                 model.m10(), model.m11(), model.m12(),
@@ -115,18 +87,10 @@ public class MetalRenderBatch {
         currentNormalMatrix.invert().transpose();
     }
 
-    /**
-     * Get the batch for a specific render type.
-     */
     public RenderBatch getBatch(MetalRenderType type) {
         return batches.get(type);
     }
 
-    /**
-     * Add a vertex to the specified render type.
-     * Standard vertex format: pos (12) + uv (8) + color (4) + normal (4) + pad (4)
-     * = 32 bytes
-     */
     public void addVertex(MetalRenderType type,
             float x, float y, float z,
             float u, float v,
@@ -136,12 +100,8 @@ public class MetalRenderBatch {
         RenderBatch batch = batches.get(type);
         if (batch == null)
             return;
-
-        // Transform position
         Vector4f pos = new Vector4f(x, y, z, 1.0f);
         pos.mul(currentModelMatrix);
-
-        // Transform normal
         Vector3f normal = new Vector3f(nx, ny, nz);
         normal.mul(currentNormalMatrix);
         normal.normalize();
@@ -149,10 +109,6 @@ public class MetalRenderBatch {
         batch.addVertex(pos.x, pos.y, pos.z, u, v, color, normal.x, normal.y, normal.z, textureId);
     }
 
-    /**
-     * Add a GUI vertex (no transform, no normal).
-     * GUI vertex format: pos (12) + uv (8) = 20 bytes
-     */
     public void addGuiVertex(float x, float y, float z, float u, float v, int color, String textureId) {
         RenderBatch batch = batches.get(MetalRenderType.GUI);
         if (batch == null)
@@ -160,18 +116,11 @@ public class MetalRenderBatch {
         batch.addGuiVertex(x, y, z, u, v, color, textureId);
     }
 
-    /**
-     * Flush all batches and render to Metal.
-     */
     public void flush() {
         if (deviceHandle == 0)
             return;
-
-        // Sort render types by priority
         List<MetalRenderType> sortedTypes = new ArrayList<>(batches.keySet());
         sortedTypes.sort(Comparator.comparingInt(MetalRenderType::priority));
-
-        // Render each batch in order
         for (MetalRenderType type : sortedTypes) {
             RenderBatch batch = batches.get(type);
             if (batch != null && batch.hasData()) {
@@ -185,47 +134,39 @@ public class MetalRenderBatch {
         }
     }
 
-    /**
-     * Render a single batch to Metal.
-     */
     private void renderBatch(RenderBatch batch) {
         List<BatchedMesh> meshes = batch.harvest();
         if (meshes.isEmpty())
             return;
 
         try {
-            // Begin render pass for this type
             NativeBridge.nBeginEntityPass(deviceHandle, viewProjection, cameraPos);
 
+            entityBatch.begin();
             for (BatchedMesh mesh : meshes) {
                 if (mesh.vertexCount <= 0)
                     continue;
-
-                // Get texture handle if needed
                 long textureHandle = 0;
                 if (mesh.textureId != null) {
                     textureHandle = EntityTextureCache.getInstance().getOrCreateTexture(mesh.textureId);
                 }
 
-                NativeBridge.nDrawEntity(deviceHandle, mesh.vertexData, mesh.vertexCount, textureHandle);
+                entityBatch.addMesh(mesh.vertexData, mesh.vertexCount, textureHandle);
 
                 totalVerticesThisFrame += mesh.vertexCount;
                 totalBatchesThisFrame++;
             }
+            entityBatch.submit(deviceHandle);
 
             NativeBridge.nEndEntityPass(deviceHandle);
 
         } catch (UnsatisfiedLinkError e) {
-            // Native not available
             if (frameCount <= 5) {
                 MetalLogger.warn("[MetalRenderBatch] Native rendering not available: {}", e.getMessage());
             }
         }
     }
 
-    /**
-     * Get frame statistics.
-     */
     public int getTotalVerticesThisFrame() {
         return totalVerticesThisFrame;
     }
@@ -234,9 +175,6 @@ public class MetalRenderBatch {
         return totalBatchesThisFrame;
     }
 
-    /**
-     * Clean up resources.
-     */
     public void destroy() {
         for (RenderBatch batch : batches.values()) {
             batch.reset();
@@ -244,13 +182,6 @@ public class MetalRenderBatch {
         deviceHandle = 0;
     }
 
-    // ========================================================================
-    // Inner Classes
-    // ========================================================================
-
-    /**
-     * A render batch for a specific render type.
-     */
     public static class RenderBatch {
         private final MetalRenderType type;
         private final List<BatchedMesh> meshes = new ArrayList<>();
@@ -299,24 +230,14 @@ public class MetalRenderBatch {
             }
 
             ensureCapacity(STANDARD_VERTEX_STRIDE);
-
-            // Write position (12 bytes)
             currentBuffer.putFloat(x);
             currentBuffer.putFloat(y);
             currentBuffer.putFloat(z);
-
-            // Write UV (8 bytes)
             currentBuffer.putFloat(u);
             currentBuffer.putFloat(v);
-
-            // Write color RGBA (4 bytes)
             currentBuffer.putInt(color);
-
-            // Write normal packed 10-10-10-2 (4 bytes)
             int packedNormal = packNormal(nx, ny, nz);
             currentBuffer.putInt(packedNormal);
-
-            // Padding (4 bytes)
             currentBuffer.putInt(0);
 
             vertexCount++;
@@ -334,13 +255,9 @@ public class MetalRenderBatch {
             }
 
             ensureCapacity(GUI_VERTEX_STRIDE);
-
-            // Write position (12 bytes)
             currentBuffer.putFloat(x);
             currentBuffer.putFloat(y);
             currentBuffer.putFloat(z);
-
-            // Write UV (8 bytes) - skip if text
             currentBuffer.putFloat(u);
             currentBuffer.putFloat(v);
 
@@ -397,9 +314,6 @@ public class MetalRenderBatch {
         }
     }
 
-    /**
-     * A batched mesh ready for upload to Metal.
-     */
     public static class BatchedMesh {
         public final ByteBuffer vertexData;
         public final int vertexCount;

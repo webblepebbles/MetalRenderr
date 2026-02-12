@@ -9,10 +9,24 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-
 public final class LODGenerator {
-  private static final int MAX_LEVELS = 2;
-  private static final int VERTS_PER_QUAD = 6; 
+
+  public static final int MAX_LEVELS = 6;
+  private static final int VERTS_PER_QUAD = 6;
+  private static final int[] LOD_STEPS = { 1, 2, 4, 8, 16, 32 };
+
+  public static final float[] LOD_DISTANCE_THRESHOLDS = {
+      128.0f, 192.0f, 256.0f, 512.0f, 1024.0f, Float.MAX_VALUE
+  };
+
+  public static int lodLevelForDistance(float distanceBlocks) {
+    for (int i = 0; i < LOD_DISTANCE_THRESHOLDS.length; i++) {
+      if (distanceBlocks < LOD_DISTANCE_THRESHOLDS[i]) {
+        return i;
+      }
+    }
+    return MAX_LEVELS - 1;
+  }
 
   private LODGenerator() {
   }
@@ -26,20 +40,20 @@ public final class LODGenerator {
     float radius = mesh.bounds != null ? mesh.bounds.radius : 0.0F;
     int originalVertexCount = Math.max(0, mesh.vertexCount);
 
-    LevelData base = createLevel(mesh.buffer(), mesh.vertexCount, 1, 0, radius, originalVertexCount);
-    if (base.vertexCount > 0) {
-      levels.add(base);
-    }
+    for (int i = 0; i < MAX_LEVELS; i++) {
+      LevelData level = createLevel(mesh.buffer(), mesh.vertexCount, LOD_STEPS[i], i, radius, originalVertexCount);
+      if (level.vertexCount > 0) {
+        levels.add(level);
+      }
 
-    LevelData half = createLevel(mesh.buffer(), mesh.vertexCount, 2, 1, radius, originalVertexCount);
-    if (half.vertexCount > 0) {
-      levels.add(half);
+      if (level.vertexCount <= VERTS_PER_QUAD * 2) {
+        break;
+      }
     }
 
     return levels;
   }
 
-  
   private static LevelData createLevel(ByteBuffer original, int vertexCount,
       int step, int level, float boundsRadius, int originalVertexCount) {
     if (vertexCount <= 0 || step <= 0) {

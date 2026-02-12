@@ -1,98 +1,105 @@
 #include <metal_stdlib>
 using namespace metal;
 
-// Sodium COMPACT format constants
-constant float MODEL_ORIGIN = 8.0f;
-constant float MODEL_RANGE = 32.0f;
-constant uint POSITION_MAX_VALUE = 1u << 20u;  // 1048576
-constant uint TEXTURE_MAX_VALUE = 1u << 15u;   // 32768
+constant half MODEL_ORIGIN_H = 8.0h;
+constant half MODEL_RANGE_H = 32.0h;
+constant uint POSITION_MAX_VALUE = 1u << 20u;
+constant uint TEXTURE_MAX_VALUE = 1u << 15u;
+
+constant uint LOD_LEVEL [[function_constant(0)]];
+constant bool ENABLE_BLOCK_LIGHT [[function_constant(1)]];
+constant bool ENABLE_TEXTURE_SAMPLE [[function_constant(2)]];
+constant bool ENABLE_FOG [[function_constant(3)]];
+constant bool IS_DISTANT_LOD = (LOD_LEVEL >= 3u);
+constant bool IS_ULTRA_DISTANT = (LOD_LEVEL >= 5u);
 
 struct DrawUniforms {
-    float originX;      // Section world X
-    float originY;      // Section world Y  
-    float originZ;      // Section world Z
-    float padding;      // Alignment
+    float originX;
+    float originY;
+    float originZ;
+    float renderLayer;
 };
 
 struct FrameUniforms {
-    float4x4 viewProj;          // View-projection matrix
-    float4 cameraPos;           // Camera world position
-    float4 fogColor;            // Fog color RGBA
-    float4 fogParams;           // start, end, density, unused
-    float4 texCoordShrink;      // Texture coordinate adjustment (not used)
+    float4x4 viewProj;
+    float4 cameraPos;
+    float4 fogColor;
+    float4 fogParams;
+    float4 texCoordShrink;
+    float4 lightParams;
 };
 
 struct TerrainVertexOut {
     float4 position [[position]];
-    float2 texCoord;
-    half4 color;          // RGBA with AO
-    half2 light;          // block light, sky light
+    half2 texCoord;
+    half4 color;
+    half2 light;
+    half distance;
 };
 
-// ============================================================================
-// Sodium COMPACT Format Decoding (20 bytes per vertex)
-// ============================================================================
-
-// Decode 20-bit deinterleaved position from posHi and posLo
 float3 decodePosition(uint posHi, uint posLo, float3 origin) {
-    // Extract 10-bit hi and lo parts for each axis
-    uint xHi = (posHi >> 0u) & 0x3FFu;
-    uint yHi = (posHi >> 10u) & 0x3FFu;
-    uint zHi = (posHi >> 20u) & 0x3FFu;
-    
-    uint xLo = (posLo >> 0u) & 0x3FFu;
-    uint yLo = (posLo >> 10u) & 0x3FFu;
-    uint zLo = (posLo >> 20u) & 0x3FFu;
-    
-    // Combine to 20-bit values
-    uint qx = (xHi << 10u) | xLo;
-    uint qy = (yHi << 10u) | yLo;
-    uint qz = (zHi << 10u) | zLo;
-    
-    // Decode: pos = (quantized / 1048576) * 32.0 - 8.0 + origin
-    float x = (float(qx) / float(POSITION_MAX_VALUE)) * MODEL_RANGE - MODEL_ORIGIN + origin.x;
-    float y = (float(qy) / float(POSITION_MAX_VALUE)) * MODEL_RANGE - MODEL_ORIGIN + origin.y;
-    float z = (float(qz) / float(POSITION_MAX_VALUE)) * MODEL_RANGE - MODEL_ORIGIN + origin.z;
-    
-    return float3(x, y, z);
+    float kScale = float(MODEL_RANGE_H) / float(POSITION_MAX_VALUE);
+    float kOffset = float(MODEL_ORIGIN_H);
+
+    uint3 hi = uint3(posHi & 0x3FFu, (posHi >> 10u) & 0x3FFu, (posHi >> 20u) & 0x3FFu);
+    uint3 lo = uint3(posLo & 0x3FFu, (posLo >> 10u) & 0x3FFu, (posLo >> 20u) & 0x3FFu);
+    uint3 q = (hi << 10u) | lo;
+
+    return fma(float3(q), float3(kScale), origin - kOffset);
 }
 
-// Decode texture coordinates - 15-bit with sign bit for bias
-float2 decodeTexCoord(uint texPacked) {
-    uint uRaw = texPacked & 0xFFFFu;
-    uint vRaw = (texPacked >> 16u) & 0xFFFFu;
-    // Extract 15-bit value (bit 15 is bias, not part of coordinate)
-    float u = float(uRaw & 0x7FFFu) / float(TEXTURE_MAX_VALUE);
-    float v = float(vRaw & 0x7FFFu) / float(TEXTURE_MAX_VALUE);
-    return float2(u, v);
+half2 decodeTexCoord(uint texPacked) {
+    half kInvTex = 1.0h / half(TEXTURE_MAX_VALUE);
+    return half2(half(texPacked & 0x7FFFu), half((texPacked >> 16u) & 0x7FFFu)) * kInvTex;
 }
 
-// Decode color from Sodium format (ARGB order - ColorARGB)
 half4 decodeColor(uint colorWord) {
-    // TEST 44: Swap R and B to fix biome tint colors (water, grass)
-    // Original assumed Java int ARGB → bytes B,G,R,A (little-endian)
-    // But empirically water/grass are swapped, so try the opposite
+    half kInv255 = 1.0h / 255.0h;
     return half4(
-        half((colorWord >> 0u) & 0xFFu) / 255.0h,   // R from byte 0 (was B)
-        half((colorWord >> 8u) & 0xFFu) / 255.0h,   // G from byte 1
-        half((colorWord >> 16u) & 0xFFu) / 255.0h,  // B from byte 2 (was R)
-        1.0h  // Alpha forced to 1.0 for opaque terrain
-    );
+        half(colorWord & 0xFFu),
+        half((colorWord >> 8u) & 0xFFu),
+        half((colorWord >> 16u) & 0xFFu),
+        255.0h
+    ) * kInv255;
 }
 
-// Decode light values from light word
 half2 decodeLight(uint lightWord) {
-    uint block = (lightWord >> 0u) & 0xFFu;
-    uint sky = (lightWord >> 8u) & 0xFFu;
-    return half2(
-        half(block) / 255.0h,
-        half(sky) / 255.0h
-    );
+    half kInv255 = 1.0h / 255.0h;
+    return half2(half(lightWord & 0xFFu), half((lightWord >> 8u) & 0xFFu)) * kInv255;
 }
 
-// ============================================================================
-// Depth-Only Vertex Shader (for depth pre-pass)
-// ============================================================================
+half computeDistantLighting(half skyLight, half dayBrightness, half ambientLight) {
+    half effectiveSky = fast::max(dayBrightness, 0.15h);
+    half brightness = skyLight * effectiveSky;
+    brightness = brightness * brightness * fma(-2.0h, brightness, 3.0h);
+    return fast::max(brightness, ambientLight);
+}
+
+half computeFullLighting(half2 light, half dayBrightness, half ambientLight) {
+    half blockLight = light.x;
+    half skyLight = light.y;
+
+    half blockBrightness = blockLight * blockLight * fma(-2.0h, blockLight, 3.0h);
+    blockBrightness = fma(blockBrightness, 0.95h, 0.05h);
+
+    half effectiveSkyFactor = fast::max(dayBrightness, 0.15h);
+    half skyBrightness = skyLight * effectiveSkyFactor;
+    skyBrightness = skyBrightness * skyBrightness * fma(-2.0h, skyBrightness, 3.0h);
+
+    half combinedLight = fast::max(blockBrightness * blockLight, skyBrightness);
+    return fast::max(combinedLight, ambientLight);
+}
+
+half4 applyFog(half4 color, half distance, float4 fogColor, float4 fogParams) {
+    if (!ENABLE_FOG) return color;
+
+    half fogStart = half(fogParams.x);
+    half fogEnd = half(fogParams.y);
+    if (fogEnd <= fogStart) return color;
+
+    half fogFactor = saturate((distance - fogStart) / (fogEnd - fogStart));
+    return mix(color, half4(fogColor), fogFactor);
+}
 
 vertex float4 terrain_depth_vertex(
     uint vertexId [[vertex_id]],
@@ -100,25 +107,11 @@ vertex float4 terrain_depth_vertex(
     constant DrawUniforms& draw [[buffer(1)]],
     constant FrameUniforms& frame [[buffer(2)]]
 ) {
-    // 20 bytes = 5 uints per vertex
     uint base = vertexId * 5u;
-    
-    uint posHi = vertexData[base + 0u];
-    uint posLo = vertexData[base + 1u];
-    
     float3 origin = float3(draw.originX, draw.originY, draw.originZ);
-    float3 worldPos = decodePosition(posHi, posLo, origin);
-    
-    // Sodium's modelView has NO camera translation! We must subtract camera position.
-    // This gives us camera-relative coordinates for the view matrix.
-    float3 cameraRelativePos = worldPos - frame.cameraPos.xyz;
-    
-    return frame.viewProj * float4(cameraRelativePos, 1.0);
+    float3 worldPos = decodePosition(vertexData[base], vertexData[base + 1u], origin);
+    return frame.viewProj * float4(worldPos - frame.cameraPos.xyz, 1.0);
 }
-
-// ============================================================================
-// Color Vertex Shader (main terrain pass)
-// ============================================================================
 
 vertex TerrainVertexOut terrain_color_vertex(
     uint vertexId [[vertex_id]],
@@ -126,85 +119,72 @@ vertex TerrainVertexOut terrain_color_vertex(
     constant DrawUniforms& draw [[buffer(1)]],
     constant FrameUniforms& frame [[buffer(2)]]
 ) {
-    // 20 bytes = 5 uints per vertex
     uint base = vertexId * 5u;
-    
-    uint posHi = vertexData[base + 0u];
-    uint posLo = vertexData[base + 1u];
-    uint color = vertexData[base + 2u];
-    uint texPacked = vertexData[base + 3u];
-    uint lightData = vertexData[base + 4u];
-    
-    // Get section origin in world space
     float3 origin = float3(draw.originX, draw.originY, draw.originZ);
-    
-    // Decode world position
-    float3 worldPos = decodePosition(posHi, posLo, origin);
-    
-    // Sodium's modelView has NO camera translation! We must subtract camera position.
-    // This gives us camera-relative coordinates for the view matrix.
+    float3 worldPos = decodePosition(vertexData[base], vertexData[base + 1u], origin);
     float3 cameraRelativePos = worldPos - frame.cameraPos.xyz;
-    
+
     TerrainVertexOut out;
-    float4 clipPos = frame.viewProj * float4(cameraRelativePos, 1.0);
-    
-    // TEST 65: Check if Y flip is needed for Metal vs OpenGL coordinate system
-    // Metal has Y-down in framebuffer, OpenGL has Y-up
-    // The projection from OpenGL might have incorrect Y mapping
-    // Try NOT flipping to see if it helps the top 1/3 issue
-    out.position = clipPos;
-    
-    out.texCoord = decodeTexCoord(texPacked);
-    out.color = decodeColor(color);
-    out.light = decodeLight(lightData);
-    
+    out.position = frame.viewProj * float4(cameraRelativePos, 1.0);
+    out.texCoord = decodeTexCoord(vertexData[base + 3u]);
+    out.color = decodeColor(vertexData[base + 2u]);
+    out.light = decodeLight(vertexData[base + 4u]);
+    out.distance = half(fast::clamp(fast::length(cameraRelativePos), 0.0f, 8192.0f));
+
     return out;
 }
-
-// ============================================================================
-// Color Fragment Shader
-// ============================================================================
 
 fragment half4 terrain_color_fragment(
     TerrainVertexOut in [[stage_in]],
     texture2d<half, access::sample> atlas [[texture(0)]],
-    sampler atlasSampler [[sampler(0)]]
+    constant DrawUniforms& draw [[buffer(0)]],
+    constant FrameUniforms& frame [[buffer(2)]]
 ) {
-    // Sample the atlas texture
-    half4 texColor = atlas.sample(atlasSampler, in.texCoord);
-    
-    // Discard transparent pixels (cutout for leaves, grass, etc.)
-    // This prevents transparent areas from writing to depth buffer and
-    // allows blocks behind to show through properly
-    if (texColor.a < 0.5h) {
-        discard_fragment();
-    }
-    
-    // Apply vertex color (includes ambient occlusion from Sodium)
-    half4 finalColor = texColor * in.color;
-    
-    // Apply lighting from Minecraft's light values
-    // blockLight (in.light.x) = light from torches, lava, etc.
-    // skyLight (in.light.y) = light from the sky
-    // Combine them with sky light having priority when outdoors
-    half blockLight = in.light.x;
-    half skyLight = in.light.y;
-    
-    // Minecraft's light formula: max(blockLight, skyLight * dayLight)
-    // Since we don't have dayLight info, use skyLight directly
-    // The light values are already normalized 0-1 from Sodium
-    half combinedLight = max(blockLight, skyLight);
-    
-    // Apply minimum ambient light (0.05) to prevent pitch black areas
-    // This matches Minecraft's default minimum light level
-    half lightLevel = max(combinedLight, 0.05h);
-    
-    // Apply lighting - only affects RGB, not alpha
-    finalColor.rgb *= lightLevel;
-    
-    // Keep alpha from texture (will be 1.0 for non-discarded pixels)
-    finalColor.a = texColor.a;
-    
-    return finalColor;
-}
+    constexpr sampler nearSampler(coord::normalized,
+                                  address::repeat,
+                                  filter::linear,
+                                  mip_filter::nearest);
+    constexpr sampler voxySampler(coord::normalized,
+                                  address::repeat,
+                                  filter::nearest,
+                                  mip_filter::nearest);
 
+    half4 texColor;
+
+    if (ENABLE_TEXTURE_SAMPLE) {
+        if (IS_DISTANT_LOD) {
+            texColor = atlas.sample(voxySampler, float2(in.texCoord));
+        } else {
+            texColor = atlas.sample(nearSampler, float2(in.texCoord));
+        }
+    } else {
+        texColor = half4(1.0h);
+    }
+
+    uint renderLayer = uint(draw.renderLayer);
+
+    if (renderLayer == 1u) {
+        if (texColor.a < 0.5h) {
+            discard_fragment();
+        }
+    } else if (renderLayer == 0u) {
+        texColor.a = 1.0h;
+    }
+
+    half4 finalColor = texColor * in.color;
+
+    half dayBrightness = half(frame.lightParams.x);
+    half ambientLight = half(frame.lightParams.y);
+    half lightLevel;
+
+    if (ENABLE_BLOCK_LIGHT) {
+        lightLevel = computeFullLighting(in.light, dayBrightness, ambientLight);
+    } else {
+        lightLevel = computeDistantLighting(in.light.y, dayBrightness, ambientLight);
+    }
+
+    finalColor.rgb *= lightLevel;
+    finalColor.a = texColor.a;
+
+    return applyFog(finalColor, in.distance, frame.fogColor, frame.fogParams);
+}

@@ -14,15 +14,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * Mixin to intercept the NEW MC 1.21.11 rendering command queue.
- * 
- * In MC 1.21.11, entity rendering uses OrderedRenderCommandQueueImpl instead of
- * VertexConsumerProvider. Commands are submitted via submitModel() and
- * submitModelPart().
- * 
- * This mixin intercepts these commands to capture entity rendering for Metal.
- */
 @Mixin(OrderedRenderCommandQueueImpl.class)
 public class OrderedRenderCommandQueueMixin {
 
@@ -34,9 +25,7 @@ public class OrderedRenderCommandQueueMixin {
         System.out.println("[OrderedRenderCommandQueueMixin] *** STATIC INIT - MIXIN LOADED ***");
     }
 
-    /**
-     * Intercept submitModel - called for full entity models.
-     */
+    
     @Inject(method = "submitModel", at = @At("HEAD"), require = 0)
     private <S> void metalrender$captureModel(
             Model<? super S> model, S state,
@@ -62,9 +51,7 @@ public class OrderedRenderCommandQueueMixin {
         }
     }
 
-    /**
-     * Intercept submitModelPart - called for individual model parts.
-     */
+    
     @Inject(method = "submitModelPart", at = @At("HEAD"), require = 0)
     private void metalrender$captureModelPart(
             ModelPart part,

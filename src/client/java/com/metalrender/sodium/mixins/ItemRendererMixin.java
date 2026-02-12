@@ -12,21 +12,12 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * Mixin to capture item rendering for Metal.
- * 
- * Uses a simplified approach that should work across MC versions.
- * Hooks at method entry to set up transforms for item rendering.
- */
 @Mixin(ItemRenderer.class)
 public abstract class ItemRendererMixin {
 
     private static int renderCount = 0;
 
-    /**
-     * Hook at any method that receives a MatrixStack to capture item transforms.
-     * This is a generic approach that works across API changes.
-     */
+    
     @Inject(method = "renderItem*", at = @At("HEAD"), require = 0, remap = false)
     private void metalrender$beforeRenderItem(CallbackInfo ci) {
         renderCount++;

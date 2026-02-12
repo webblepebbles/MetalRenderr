@@ -12,11 +12,9 @@ public final class PersistentBufferArena {
   private int capacity;
   private int alignment = 256;
   private long contextHandle;
-
-  // Allocator state
   private final ReentrantLock lock = new ReentrantLock();
   private final NavigableMap<Integer, Integer> freeBlocks = new TreeMap<>();
-  private int top = 0; // The end of the used space
+  private int top = 0; 
 
   public boolean initialize(long ctx) {
     if (ctx == 0L) {
@@ -67,13 +65,11 @@ public final class PersistentBufferArena {
 
     lock.lock();
     try {
-      // 1. Try to find a free block that fits (First Fit)
       for (Map.Entry<Integer, Integer> entry : freeBlocks.entrySet()) {
         int offset = entry.getKey();
         int size = entry.getValue();
 
         if (size >= aligned) {
-          // Found a fit!
           freeBlocks.remove(offset);
 
           int remaining = size - aligned;
@@ -84,15 +80,11 @@ public final class PersistentBufferArena {
           return offset;
         }
       }
-
-      // 2. Allocate from top
       if (top + aligned <= capacity) {
         int offset = top;
         top += aligned;
         return offset;
       }
-
-      // 3. Out of memory
       return -1;
     } finally {
       lock.unlock();
@@ -106,19 +98,14 @@ public final class PersistentBufferArena {
 
     lock.lock();
     try {
-      // Add to free blocks
       freeBlocks.put(offset, aligned);
-
-      // Merge with next block
       Integer nextOffset = freeBlocks.higherKey(offset);
       if (nextOffset != null && nextOffset == offset + aligned) {
         int nextSize = freeBlocks.get(nextOffset);
         freeBlocks.remove(nextOffset);
         freeBlocks.put(offset, aligned + nextSize);
-        aligned += nextSize; // Update current block size for previous merge
+        aligned += nextSize; 
       }
-
-      // Merge with previous block
       Integer prevOffset = freeBlocks.lowerKey(offset);
       if (prevOffset != null) {
         int prevSize = freeBlocks.get(prevOffset);
@@ -127,8 +114,6 @@ public final class PersistentBufferArena {
           freeBlocks.put(prevOffset, prevSize + aligned);
         }
       }
-
-      // Optional: If the last block touches 'top', reduce 'top'
       Map.Entry<Integer, Integer> lastEntry = freeBlocks.lastEntry();
       if (lastEntry != null && lastEntry.getKey() + lastEntry.getValue() == top) {
         top = lastEntry.getKey();

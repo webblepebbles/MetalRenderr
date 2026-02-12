@@ -1,6 +1,7 @@
 package com.metalrender.sodium.mixins;
 
 import com.metalrender.MetalRenderClient;
+import com.metalrender.config.MetalRenderConfig;
 import com.metalrender.entity.EntityCaptureState;
 import com.metalrender.entity.MetalEntityRenderer;
 import com.metalrender.render.unified.MetalRenderCoordinator;
@@ -15,27 +16,18 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * Mixin to capture ALL entity rendering via EntityRenderManager.
- * This is the central dispatch point for entity rendering in MC 1.21.11.
- * 
- * Method: render(S, CameraRenderState, double, double, double, MatrixStack,
- * OrderedRenderCommandQueue)
- */
 @Mixin(EntityRenderManager.class)
 public class EntityRenderManagerMixin {
 
     private static int renderCount = 0;
     private static int logCount = 0;
+    private static int distanceCulledCount = 0;
 
     static {
         System.out.println("[EntityRenderManagerMixin] *** STATIC INIT - MIXIN LOADED ***");
     }
 
-    /**
-     * Hook into EntityRenderManager.render() which is called for ALL entities.
-     */
-    @Inject(method = "render", at = @At("HEAD"), require = 0)
+    @Inject(method = "render", at = @At("HEAD"), cancellable = true, require = 0)
     private <S extends EntityRenderState> void metalrender$captureEntityRender(
             S state,
             CameraRenderState cameraState,
@@ -46,7 +38,24 @@ public class EntityRenderManagerMixin {
 
         renderCount++;
 
-        // Debug logging - log first 100 calls
+        if (MetalRenderClient.isEnabled()) {
+            double distSq = x * x + y * y + z * z;
+            int maxChunks = MetalRenderConfig.entityRenderDistanceChunks();
+            double maxBlockDist = maxChunks * 16.0;
+            double maxDistSq = maxBlockDist * maxBlockDist;
+
+            if (distSq > maxDistSq) {
+                distanceCulledCount++;
+                if (logCount < 10 || renderCount % 6000 == 0) {
+                    System.out.println("[EntityRenderManagerMixin] Distance-culled entity at dist="
+                            + Math.sqrt(distSq) + " (max=" + maxBlockDist + " blocks, "
+                            + maxChunks + " chunks). Total culled=" + distanceCulledCount);
+                }
+                ci.cancel();
+                return;
+            }
+        }
+
         if (logCount < 100) {
             logCount++;
             System.out.println("[EntityRenderManagerMixin] *** RENDER CALLED #" + renderCount + " ***");

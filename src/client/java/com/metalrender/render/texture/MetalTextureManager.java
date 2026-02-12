@@ -14,38 +14,28 @@ import java.nio.ByteBuffer;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Unified texture manager for Metal rendering.
- * 
- * Manages texture loading and caching for all render types:
- * - Entity textures
- * - Item textures
- * - GUI textures
- * - Particle textures
- * - Block textures (handled via atlas)
- */
 public class MetalTextureManager {
 
     private static final MetalTextureManager INSTANCE = new MetalTextureManager();
 
-    /** Texture cache: Identifier -> Metal texture handle */
+    
     private final Map<String, Long> textureCache = new ConcurrentHashMap<>();
 
-    /** Texture dimensions cache */
+    
     private final Map<String, TextureInfo> textureInfo = new ConcurrentHashMap<>();
 
-    /** Native device handle */
+    
     private long deviceHandle = 0;
 
-    /** Whether texture manager is initialized */
+    
     private volatile boolean initialized = false;
 
-    /** Known texture atlases */
+    
     private static final Identifier BLOCKS_ATLAS = Identifier.of("minecraft", "textures/atlas/blocks.png");
     private static final Identifier GUI_ATLAS = Identifier.of("minecraft", "textures/atlas/gui.png");
     private static final Identifier PARTICLES_ATLAS = Identifier.of("minecraft", "textures/atlas/particles.png");
 
-    /** Atlas handles */
+    
     private long blocksAtlasHandle = 0;
     private long guiAtlasHandle = 0;
     private long particlesAtlasHandle = 0;
@@ -57,9 +47,7 @@ public class MetalTextureManager {
         return INSTANCE;
     }
 
-    /**
-     * Initialize with Metal device handle.
-     */
+    
     public void initialize(long device) {
         this.deviceHandle = device;
         this.initialized = true;
@@ -70,30 +58,21 @@ public class MetalTextureManager {
         return initialized && deviceHandle != 0;
     }
 
-    /**
-     * Get or create a Metal texture for the given identifier.
-     * Returns 0 if texture cannot be loaded.
-     */
+    
     public long getOrCreateTexture(Identifier textureId) {
         if (!initialized || deviceHandle == 0 || textureId == null) {
             return 0;
         }
 
         String key = textureId.toString();
-
-        // Check cache first
         Long cached = textureCache.get(key);
         if (cached != null) {
             return cached;
         }
-
-        // Try to load and upload
         return loadAndUploadTexture(textureId, key);
     }
 
-    /**
-     * Get or create texture from string identifier.
-     */
+    
     public long getOrCreateTexture(String textureId) {
         if (textureId == null || textureId.isEmpty()) {
             return 0;
@@ -107,18 +86,13 @@ public class MetalTextureManager {
         return getOrCreateTexture(id);
     }
 
-    /**
-     * Get texture info (dimensions).
-     */
+    
     public TextureInfo getTextureInfo(String textureId) {
         return textureInfo.get(textureId);
     }
 
-    /**
-     * Load texture from GL and upload to Metal.
-     */
+    
     private synchronized long loadAndUploadTexture(Identifier textureId, String key) {
-        // Double-check cache
         Long cached = textureCache.get(key);
         if (cached != null) {
             return cached;
@@ -132,24 +106,16 @@ public class MetalTextureManager {
             TextureManager textureManager = mc.getTextureManager();
             if (textureManager == null)
                 return 0;
-
-            // Get the GL texture
             AbstractTexture texture = textureManager.getTexture(textureId);
             if (texture == null) {
                 MetalLogger.warn("[MetalTextureManager] Texture not found: {}", textureId);
                 return 0;
             }
-
-            // Read texture from GL
             TextureData data = readGLTexture(textureId);
             if (data == null || data.pixels == null) {
                 return 0;
             }
-
-            // Store texture info
             textureInfo.put(key, new TextureInfo(data.width, data.height));
-
-            // Upload to Metal
             long handle = NativeBridge.nUploadEntityTexture(deviceHandle, data.pixels, data.width, data.height);
 
             if (handle != 0) {
@@ -159,8 +125,6 @@ public class MetalTextureManager {
             } else {
                 MetalLogger.warn("[MetalTextureManager] Failed to upload texture: {}", textureId);
             }
-
-            // Free the pixel buffer
             MemoryUtil.memFree(data.pixels);
 
             return handle;
@@ -172,9 +136,7 @@ public class MetalTextureManager {
         }
     }
 
-    /**
-     * Read texture data from OpenGL.
-     */
+    
     private TextureData readGLTexture(Identifier textureId) {
         try {
             MinecraftClient mc = MinecraftClient.getInstance();
@@ -184,23 +146,15 @@ public class MetalTextureManager {
             if (texture == null) {
                 return null;
             }
-
-            // Get GL texture ID
-            // In MC 1.21, we need to access the GlTexture through the AbstractTexture
             int glId = getGlTextureId(texture);
             if (glId <= 0) {
                 MetalLogger.warn("[MetalTextureManager] Could not get GL ID for: {}", textureId);
                 return null;
             }
-
-            // Save current binding
             int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
 
             try {
-                // Bind texture
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, glId);
-
-                // Get dimensions
                 int width = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH);
                 int height = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT);
 
@@ -209,12 +163,8 @@ public class MetalTextureManager {
                             textureId, width, height);
                     return null;
                 }
-
-                // Allocate buffer
                 int dataSize = width * height * 4;
                 ByteBuffer pixels = MemoryUtil.memAlloc(dataSize);
-
-                // Read pixels (BGRA for Metal)
                 GL12.glGetTexImage(GL11.GL_TEXTURE_2D, 0, GL12.GL_BGRA, GL11.GL_UNSIGNED_BYTE, pixels);
 
                 int error = GL11.glGetError();
@@ -228,7 +178,6 @@ public class MetalTextureManager {
                 return new TextureData(pixels, width, height);
 
             } finally {
-                // Restore previous binding
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
             }
 
@@ -239,28 +188,20 @@ public class MetalTextureManager {
         }
     }
 
-    /**
-     * Get GL texture ID from AbstractTexture.
-     * This handles MC 1.21's new texture API.
-     */
+    
     private int getGlTextureId(AbstractTexture texture) {
         try {
-            // Try reflection to get the GL ID
-            // In MC 1.21, AbstractTexture has a GpuTexture field
             java.lang.reflect.Field[] fields = texture.getClass().getDeclaredFields();
             for (java.lang.reflect.Field field : fields) {
                 field.setAccessible(true);
                 Object value = field.get(texture);
                 if (value != null && value.getClass().getSimpleName().contains("GlTexture")) {
-                    // Found GlTexture, get its ID
                     java.lang.reflect.Method getIdMethod = value.getClass().getMethod("getGlId");
                     if (getIdMethod != null) {
                         return (int) getIdMethod.invoke(value);
                     }
                 }
             }
-
-            // Fallback: try common method names
             try {
                 java.lang.reflect.Method method = texture.getClass().getMethod("getGlId");
                 return (int) method.invoke(texture);
@@ -274,23 +215,17 @@ public class MetalTextureManager {
         return -1;
     }
 
-    /**
-     * Get the blocks atlas handle.
-     */
+    
     public long getBlocksAtlasHandle() {
         return blocksAtlasHandle;
     }
 
-    /**
-     * Set the blocks atlas handle (set by atlas capture).
-     */
+    
     public void setBlocksAtlasHandle(long handle) {
         this.blocksAtlasHandle = handle;
     }
 
-    /**
-     * Invalidate a texture (force reload).
-     */
+    
     public void invalidateTexture(Identifier textureId) {
         String key = textureId.toString();
         Long handle = textureCache.remove(key);
@@ -304,9 +239,22 @@ public class MetalTextureManager {
         }
     }
 
-    /**
-     * Clear all cached textures.
-     */
+    
+    public boolean ensureImported(Identifier textureId) {
+        if (textureId == null || !initialized || deviceHandle == 0) {
+            return false;
+        }
+
+        String key = textureId.toString();
+        Long cached = textureCache.get(key);
+        if (cached != null && cached != 0) {
+            return true; 
+        }
+        long handle = getOrCreateTexture(textureId);
+        return handle != 0;
+    }
+
+    
     public void clearAll() {
         for (Long handle : textureCache.values()) {
             if (handle != null && handle != 0 && deviceHandle != 0) {
@@ -326,29 +274,19 @@ public class MetalTextureManager {
         MetalLogger.info("[MetalTextureManager] Cleared all cached textures");
     }
 
-    /**
-     * Get cache statistics.
-     */
+    
     public int getCachedTextureCount() {
         return textureCache.size();
     }
 
-    /**
-     * Clean up resources.
-     */
+    
     public void destroy() {
         clearAll();
         initialized = false;
         deviceHandle = 0;
     }
 
-    // ========================================================================
-    // Inner Classes
-    // ========================================================================
-
-    /**
-     * Texture dimension info.
-     */
+    
     public static class TextureInfo {
         public final int width;
         public final int height;
@@ -359,9 +297,7 @@ public class MetalTextureManager {
         }
     }
 
-    /**
-     * Raw texture data.
-     */
+    
     private static class TextureData {
         public final ByteBuffer pixels;
         public final int width;

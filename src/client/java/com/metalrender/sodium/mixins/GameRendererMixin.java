@@ -17,18 +17,11 @@ public class GameRendererMixin {
     private static void metalrender$skipClear(int mask, boolean getError, CallbackInfo ci) {
 
         if (MetalRenderClient.isEnabled() && MetalRenderClient.getWorldRenderer() != null) {
-            // TEST 74: DON'T skip clear, but blit AFTER clear
-            // This should put terrain in framebuffer BEFORE sky/entities/GUI render
             clearCount++;
-
-            // Let clear happen normally (don't cancel)
-            // The clear will happen, then we can blit
         }
     }
 
     @Inject(method = "clear", at = @At("RETURN"), remap = false)
     private static void metalrender$blitAfterClear(int mask, boolean getError, CallbackInfo ci) {
-        // TEST 75: Don't blit after clear - Metal hasn't rendered yet!
-        // Blit happens at flipFrame instead
     }
 }

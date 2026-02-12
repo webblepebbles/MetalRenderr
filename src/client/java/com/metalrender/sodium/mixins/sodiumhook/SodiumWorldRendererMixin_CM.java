@@ -28,7 +28,6 @@ public class SodiumWorldRendererMixin_CM {
       @Coerce Object worldRenderer, @Coerce Object viewport,
       @Coerce Object fogParams, boolean isSpectator, boolean captureFrustum,
       @Coerce Object matrices, CallbackInfo ci) {
-    // Reset frame flag at start of new frame
     terrainRenderedThisFrame = false;
   }
 
@@ -42,12 +41,8 @@ public class SodiumWorldRendererMixin_CM {
         if (group == BlockRenderLayerGroup.OPAQUE) {
           terrainRenderedThisFrame = true;
           frameCount++;
-
-          // Render Metal terrain to IOSurface (includes all layers)
           renderer.renderFrameWithMatrices(matrices.projection(), matrices.modelView(), x, y, z);
         }
-
-        // CANCEL ALL Sodium drawing - Pure Metal renders everything
         ci.cancel();
       }
     }

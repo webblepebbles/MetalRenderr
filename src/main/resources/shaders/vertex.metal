@@ -2,8 +2,8 @@
 using namespace metal;
 
 struct VertexIn {
-    float4 position
-    half3 normal
+    float4 position [[attribute(0)]];
+    half3 normal [[attribute(1)]];
 };
 
 struct VertexOut {

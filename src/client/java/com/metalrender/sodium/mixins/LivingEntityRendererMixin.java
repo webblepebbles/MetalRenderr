@@ -18,20 +18,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/**
- * Mixin to capture living entity (mob) rendering for Metal.
- * 
- * MC 1.21.11 uses render states: render(S state, MatrixStack,
- * OrderedRenderCommandQueue, CameraRenderState)
- * where S extends LivingEntityRenderState.
- * 
- * We inject AFTER setupTransforms is called so the MatrixStack has proper
- * transforms.
- */
 @Mixin(LivingEntityRenderer.class)
 public abstract class LivingEntityRendererMixin<S extends LivingEntityRenderState> {
-
-    // Shadow the getTexture method to access the entity's texture
     @Shadow
     public abstract Identifier getTexture(S state);
 
@@ -42,15 +30,7 @@ public abstract class LivingEntityRendererMixin<S extends LivingEntityRenderStat
         System.out.println("[LivingEntityRendererMixin] *** STATIC INIT - MIXIN LOADED ***");
     }
 
-    /**
-     * Hook at HEAD of the render method to capture entity rendering.
-     * 
-     * Method signature for MC 1.21.11:
-     * render(S, MatrixStack, OrderedRenderCommandQueue, CameraRenderState)
-     * 
-     * Note: Using wildcard descriptor to match both the specific S and bridge
-     * method.
-     */
+    
     @Inject(method = "render", at = @At("HEAD"), require = 0)
     private void metalrender$afterTransforms(
             S state,
@@ -60,8 +40,6 @@ public abstract class LivingEntityRendererMixin<S extends LivingEntityRenderStat
             CallbackInfo ci) {
 
         renderCount++;
-
-        // Debug logging - always log first 50
         if (logCount < 50) {
             logCount++;
             System.out.println("[LivingEntityRendererMixin] *** RENDER CALLED *** renderCount=" + renderCount);
@@ -95,17 +73,9 @@ public abstract class LivingEntityRendererMixin<S extends LivingEntityRenderStat
         if (logCount < 20) {
             System.out.println("[LivingEntityRendererMixin]   CAPTURING entity transform and texture!");
         }
-
-        // Get the current transform matrix from the MatrixStack
-        // At this point: push -> [sleeping translate] -> scale(baseScale) ->
-        // setupTransforms -> scale(-1,-1,1) -> translate(0, -1.501f, 0)
         MatrixStack.Entry entry = matrixStack.peek();
         Matrix4f positionMatrix = entry.getPositionMatrix();
         Matrix3f normalMatrix = entry.getNormalMatrix();
-
-        // CRITICAL: Get the entity's actual texture and set it BEFORE setting
-        // transforms
-        // This ensures the correct texture is used when vertices are captured
         Identifier texture = this.getTexture(state);
         if (texture != null) {
             entityRenderer.setEntityTexture(texture);
@@ -117,9 +87,7 @@ public abstract class LivingEntityRendererMixin<S extends LivingEntityRenderStat
         entityRenderer.setEntityTransform(positionMatrix, normalMatrix);
     }
 
-    /**
-     * Hook after rendering a living entity.
-     */
+    
     @Inject(method = "render(Lnet/minecraft/client/render/entity/state/LivingEntityRenderState;Lnet/minecraft/client/util/math/MatrixStack;Lnet/minecraft/client/render/command/OrderedRenderCommandQueue;Lnet/minecraft/client/render/state/CameraRenderState;)V", at = @At("RETURN"), require = 0)
     private void metalrender$afterRender(
             S state,
@@ -140,8 +108,6 @@ public abstract class LivingEntityRendererMixin<S extends LivingEntityRenderStat
         MetalEntityRenderer entityRenderer = coordinator.getEntityRenderer();
         if (entityRenderer == null || !entityRenderer.isEnabled())
             return;
-
-        // Finish entity render
         entityRenderer.finishEntity();
     }
 }

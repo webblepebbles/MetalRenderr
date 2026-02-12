@@ -2,12 +2,22 @@ package com.metalrender.render;
 
 import com.metalrender.MetalRenderClient;
 import com.metalrender.config.MetalRenderConfig;
+import com.metalrender.lod.DistantChunkLoader;
+import com.metalrender.lod.ExtendedLodRenderer;
+import com.metalrender.lod.LodChunkIngestor;
+import com.metalrender.lod.LodChunkStorage;
+import com.metalrender.lod.LodRingTracker;
 import com.metalrender.nativebridge.NativeBridge;
 import com.metalrender.performance.PerformanceController;
+import com.metalrender.performance.RenderDistanceManager;
 import com.metalrender.performance.RenderOptimizer;
 import com.metalrender.render.atlas.CapturedAtlas;
 import com.metalrender.render.atlas.CapturedAtlasRepository;
 import com.metalrender.render.MetalSurfaceManager;
+import com.metalrender.render.GpuLodOrchestrator;
+import com.metalrender.render.MetalFXSpatialUpscaler;
+import com.metalrender.render.TripleBufferPacer;
+import com.metalrender.render.ArgumentBufferManager;
 import com.metalrender.sodium.backend.MeshShaderBackend;
 import com.metalrender.sodium.hooks.ChunkOutputBridge;
 import com.metalrender.temporal.TemporalAA;
@@ -20,6 +30,9 @@ import java.util.Optional;
 import net.caffeinemc.mods.sodium.client.render.chunk.compile.ChunkBuildOutput;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.Camera;
+import net.minecraft.client.world.ClientWorld;
+import net.minecraft.entity.effect.StatusEffects;
+import net.minecraft.world.attribute.EnvironmentAttributes;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
@@ -41,8 +54,17 @@ public class MetalWorldRenderer {
   private final TemporalAA temporalAA = new TemporalAA();
   private final TemporalUpscaler temporalUpscaler = new TemporalUpscaler();
   private final IOSurfaceBlitter ioSurfaceBlitter = new IOSurfaceBlitter();
+  private GpuLodOrchestrator gpuLodOrchestrator;
+  private MetalFXSpatialUpscaler metalFXSpatial;
+  private TripleBufferPacer tripleBufferPacer;
+  private ArgumentBufferManager argumentBufferManager;
   private MeshShaderBackend cachedMeshBackend;
   private PipelineCache pipelineCache;
+  private LodRingTracker lodRingTracker;
+  private LodChunkStorage lodChunkStorage;
+  private ExtendedLodRenderer extendedLodRenderer;
+  private boolean extendedLodInitialized = false;
+  private long lastFrameNanoTime = 0;
   private int lastWidth = 16;
   private int lastHeight = 16;
   private float lastScale = 1.0F;
@@ -59,7 +81,6 @@ public class MetalWorldRenderer {
             this.ready ? "ready" : "failed",
             NativeBridge.nGetDeviceName(this.handle));
         if (this.ready) {
-          // Set shaders path for terrain rendering
           String shadersPath = findShadersPath();
           if (shadersPath != null) {
             NativeBridge.nSetShadersPath(this.handle, shadersPath);
@@ -76,6 +97,21 @@ public class MetalWorldRenderer {
           if (this.pipelineCache != null) {
             this.pipelineCache.prewarm();
           }
+          NativeBridge.nPrewarmPipelines(this.handle);
+          this.gpuLodOrchestrator = new GpuLodOrchestrator(this.handle);
+          if (MetalRenderConfig.multiICBEnabled()) {
+            this.gpuLodOrchestrator.initialize();
+          }
+          this.tripleBufferPacer = new TripleBufferPacer(this.handle);
+          this.tripleBufferPacer.syncFromConfig();
+          this.argumentBufferManager = new ArgumentBufferManager(this.handle);
+          if (MetalRenderConfig.argumentBuffersEnabled()) {
+            this.argumentBufferManager.initialize();
+          }
+          this.metalFXSpatial = new MetalFXSpatialUpscaler(this.handle);
+          if (MetalRenderConfig.extendedLodEnabled()) {
+            this.initExtendedLod();
+          }
         }
       } else {
         this.ready = false;
@@ -89,21 +125,15 @@ public class MetalWorldRenderer {
   }
 
   private String findShadersPath() {
-    // Try common locations for the metallib file
     String[] possiblePaths = {
-        // Development path
         "src/main/resources/shaders.metallib",
-        // Runtime paths
         "shaders.metallib",
         System.getProperty("user.dir") + "/shaders.metallib",
     };
-
-    // First try to extract from classpath
     try {
       java.io.InputStream stream = MetalWorldRenderer.class.getClassLoader()
           .getResourceAsStream("shaders.metallib");
       if (stream != null) {
-        // Extract to temp file
         java.io.File tempFile = java.io.File.createTempFile("metalrender_shaders", ".metallib");
         tempFile.deleteOnExit();
         try (java.io.OutputStream out = new java.io.FileOutputStream(tempFile)) {
@@ -120,8 +150,6 @@ public class MetalWorldRenderer {
     } catch (Exception e) {
       MetalLogger.warn("Failed to extract shaders.metallib from classpath: {}", e.getMessage());
     }
-
-    // Try filesystem paths
     for (String path : possiblePaths) {
       java.io.File file = new java.io.File(path);
       if (file.exists() && file.isFile()) {
@@ -140,7 +168,6 @@ public class MetalWorldRenderer {
       double z) {
     if (this.ready && this.handle != 0L) {
       try {
-        // Upload atlas texture if needed
         if ((this.atlasNeedsReupload || !this.atlasUploaded)) {
           this.tryUploadAtlas();
         }
@@ -160,23 +187,13 @@ public class MetalWorldRenderer {
           this.lastWidth = framebufferWidth;
           this.lastHeight = framebufferHeight;
         }
-
-        // Ensure CAMetalLayer is attached for direct presentation (every frame until
-        // successful)
         MetalSurfaceManager.ensureSurface(this.handle);
 
         Matrix4f projection = new Matrix4f().setPerspective(
             this.getFovRadians(mc),
-            (float) framebufferWidth / (float) framebufferHeight, 0.05F, 512.0F);
-
-        // Fix for Metal clip space (0 to 1) vs OpenGL (-1 to 1)
-        // We need to map [-1, 1] to [0, 1]
-        // z_metal = 0.5 * z_gl + 0.5
-        // Matrix: Translate(0, 0, 0.5) * Scale(1, 1, 0.5)
+            (float) framebufferWidth / (float) framebufferHeight, 0.05F,
+            MetalRenderConfig.fogEndDistance());
         Matrix4f correction = new Matrix4f().translation(0, 0, 0.5f).scale(1, 1, 0.5f);
-        // Apply correction: P_new = Correction * P_old
-        // Since JOML mul is (this * right), we do correction.mul(projection,
-        // projection)
         correction.mul(projection, projection);
 
         this.temporalAA.beginFrame(framebufferWidth, framebufferHeight);
@@ -201,17 +218,16 @@ public class MetalWorldRenderer {
         if (this.pipelineCache != null) {
           this.pipelineCache.prewarm();
         }
-
-        // Pass actual camera position for terrain rendering
         Vec3d cameraPos = camera.getCameraPos();
         float[] cameraPosArray = new float[] {
             (float) cameraPos.x,
             (float) cameraPos.y,
             (float) cameraPos.z
         };
+        this.updateLightParams();
 
         NativeBridge.nBeginFrame(this.handle, this.frameViewProjection, cameraPosArray,
-            0.0F, 512.0F); // fogStart=0, fogEnd=512 (render distance)
+            0.0F, MetalRenderConfig.fogEndDistance());
         NativeBridge.nClearIndirectCommands(this.handle);
 
         MeshShaderBackend backend = this.meshBackend();
@@ -221,9 +237,7 @@ public class MetalWorldRenderer {
           meshCount = backend.getMeshCount();
           queued = backend.emitDraws(this.handle, this.persistentArena, this.renderOptimizer, camera);
         }
-
-        // Log first few frames AND every 60 frames after (for ongoing debug)
-        if (this.frameCount < 10 || this.frameCount % 60 == 0) {
+        if (this.frameCount < 3 || this.frameCount % 600 == 0) {
           MetalLogger.info(
               "[MetalRender] Frame %d: queued %d draw commands from %d meshes, camera at (%.1f, %.1f, %.1f)",
               this.frameCount, queued, meshCount, cameraPos.x, cameraPos.y, cameraPos.z);
@@ -238,9 +252,11 @@ public class MetalWorldRenderer {
         NativeBridge.nExecuteIndirect(this.handle, queued);
         NativeBridge.nDrawTerrain(this.handle, 0);
         this.renderOptimizer.finalizeFrame();
-
-        // Don't blit here - we blit at flip time so entities render first to GL
-        // Then at flip time we composite Metal terrain UNDER the entities
+        if (this.frameCount < 10) {
+          MetalLogger.info("[MetalRender] Frame %d: Terrain drawn, queued=%d meshes=%d",
+              this.frameCount, queued, meshCount);
+        }
+        RenderDistanceManager.getInstance().updateRenderDistance();
 
         this.renderedThisFrame = true;
         this.frameCount++;
@@ -250,14 +266,9 @@ public class MetalWorldRenderer {
     }
   }
 
-  /**
-   * Render frame using Sodium's actual matrices.
-   * This is the KEY fix - use the EXACT same matrices Sodium uses!
-   */
   public void renderFrameWithMatrices(Matrix4fc projection, Matrix4fc modelView, double x, double y, double z) {
     if (this.ready && this.handle != 0L) {
       try {
-        // Upload atlas texture if needed
         if ((this.atlasNeedsReupload || !this.atlasUploaded)) {
           this.tryUploadAtlas();
         }
@@ -284,13 +295,8 @@ public class MetalWorldRenderer {
           NativeBridge.nResize(this.handle, this.lastWidth, this.lastHeight, scale);
           this.lastScale = scale;
         }
-
-        // Use Sodium's matrices directly!
-        // Compute viewProj = projection * modelView (Sodium's style)
         Matrix4f viewProjMatrix = new Matrix4f();
         projection.mul(modelView, viewProjMatrix);
-
-        // TEST 53: Validate matrices - skip if invalid (Infinity/NaN)
         boolean matricesValid = true;
         if (!Float.isFinite(projection.m00()) || !Float.isFinite(projection.m11())) {
           if (this.frameCount < 10) {
@@ -307,8 +313,6 @@ public class MetalWorldRenderer {
           }
           matricesValid = false;
         }
-
-        // TEST 53: Log matrices for first few valid frames
         if (this.frameCount < 10 && matricesValid) {
           MetalLogger.info("[TEST53] VALID frame %d:", this.frameCount);
           MetalLogger.info("  Projection diag: %.4f, %.4f, %.4f, %.4f",
@@ -321,7 +325,6 @@ public class MetalWorldRenderer {
         }
 
         if (!matricesValid) {
-          // Return early - don't render with invalid matrices
           return;
         }
 
@@ -337,8 +340,6 @@ public class MetalWorldRenderer {
         if (this.pipelineCache != null) {
           this.pipelineCache.prewarm();
         }
-
-        // Pass actual camera position for terrain rendering
         float[] cameraPosArray = new float[] {
             (float) x,
             (float) y,
@@ -348,9 +349,10 @@ public class MetalWorldRenderer {
         if (this.frameCount < 5) {
           MetalLogger.info("[MetalRender] Camera pos from Sodium: (%.2f, %.2f, %.2f)", x, y, z);
         }
+        this.updateLightParams();
 
         NativeBridge.nBeginFrame(this.handle, this.frameViewProjection, cameraPosArray,
-            0.0F, 512.0F); // fogStart=0, fogEnd=512
+            0.0F, MetalRenderConfig.fogEndDistance());
         NativeBridge.nClearIndirectCommands(this.handle);
 
         MeshShaderBackend backend = this.meshBackend();
@@ -361,7 +363,7 @@ public class MetalWorldRenderer {
           queued = backend.emitDraws(this.handle, this.persistentArena, this.renderOptimizer, camera);
         }
 
-        if (this.frameCount < 10 || this.frameCount % 60 == 0) {
+        if (this.frameCount < 3 || this.frameCount % 600 == 0) {
           MetalLogger.info("[MetalRender] Frame %d: queued %d draw commands from %d meshes",
               this.frameCount, queued, meshCount);
         }
@@ -371,26 +373,33 @@ public class MetalWorldRenderer {
         PerformanceController.accumulateChunkStats(stats.totalChunks, drawn,
             stats.frustumCulled, stats.occlusionCulled);
 
-        if (this.frameCount < 5) {
-          MetalLogger.info("[MetalRender] Frame %d: calling nExecuteIndirect with %d commands", this.frameCount,
-              queued);
-        }
         NativeBridge.nExecuteIndirect(this.handle, queued);
-
-        if (this.frameCount < 5) {
-          MetalLogger.info("[MetalRender] Frame %d: calling nDrawTerrain", this.frameCount);
-        }
         NativeBridge.nDrawTerrain(this.handle, 0);
-
-        if (this.frameCount < 5) {
-          MetalLogger.info("[MetalRender] Frame %d: nDrawTerrain returned", this.frameCount);
-        }
         this.renderOptimizer.finalizeFrame();
+        RenderDistanceManager.getInstance().updateRenderDistance();
+        if (MetalRenderConfig.extendedLodEnabled() && this.lodRingTracker != null) {
+          float cameraPitch = 0.0f;
+          int altAboveGround = 64;
+          if (camera != null) {
+            cameraPitch = camera.getPitch();
+            try {
+              MinecraftClient mcAlt = MinecraftClient.getInstance();
+              if (mcAlt != null && mcAlt.player != null) {
+                altAboveGround = Math.max(0, (int) (mcAlt.player.getY() -
+                    mcAlt.world.getBottomY()));
+              }
+            } catch (Exception ignored) {
+            }
+          }
+          this.updateExtendedLod((float) x, (float) y, (float) z,
+              viewProjMatrix, cameraPitch, altAboveGround);
+        }
 
         this.renderedThisFrame = true;
         this.frameCount++;
       } catch (Throwable var15) {
-        MetalLogger.error("renderFrameWithMatrices failed", var15);
+        MetalLogger.error("renderFrameWithMatrices failed: %s", var15.toString());
+        var15.printStackTrace();
       }
     }
   }
@@ -419,6 +428,36 @@ public class MetalWorldRenderer {
       }
     }
     return backend;
+  }
+
+  private void updateLightParams() {
+    try {
+      MinecraftClient mc = MinecraftClient.getInstance();
+      if (mc == null || mc.world == null) {
+        NativeBridge.nSetLightParams(this.handle, 1.0f, 0.1f, 0.0f);
+        return;
+      }
+      ClientWorld world = mc.world;
+      float dayBrightness = world.getEnvironmentAttributes()
+          .getAttributeValue(EnvironmentAttributes.SKY_LIGHT_FACTOR_VISUAL);
+      boolean hasNightVision = false;
+      if (mc.player != null) {
+        hasNightVision = mc.player.hasStatusEffect(StatusEffects.NIGHT_VISION);
+      }
+      if (hasNightVision) {
+        dayBrightness = 1.0f;
+      }
+      float ambientLight = Math.max(0.15f, dayBrightness * 0.35f);
+      if (hasNightVision) {
+        ambientLight = 0.7f;
+      }
+      float skyAngle = world.getEnvironmentAttributes().getAttributeValue(EnvironmentAttributes.SUN_ANGLE_VISUAL)
+          / 360.0f;
+
+      NativeBridge.nSetLightParams(this.handle, dayBrightness, ambientLight, skyAngle);
+    } catch (Throwable e) {
+      NativeBridge.nSetLightParams(this.handle, 1.0f, 0.1f, 0.0f);
+    }
   }
 
   private Matrix4f buildViewMatrix(Camera camera) {
@@ -451,6 +490,19 @@ public class MetalWorldRenderer {
       this.pipelineCache.reset();
       this.pipelineCache = null;
     }
+    if (this.gpuLodOrchestrator != null) {
+      this.gpuLodOrchestrator.destroy();
+      this.gpuLodOrchestrator = null;
+    }
+    if (this.metalFXSpatial != null) {
+      this.metalFXSpatial.destroy();
+      this.metalFXSpatial = null;
+    }
+    if (this.argumentBufferManager != null) {
+      this.argumentBufferManager.destroy();
+      this.argumentBufferManager = null;
+    }
+    this.shutdownExtendedLod();
     this.ioSurfaceBlitter.destroy();
     if (this.handle != 0L) {
       NativeBridge.nDestroy(this.handle);
@@ -470,27 +522,30 @@ public class MetalWorldRenderer {
 
   private boolean blittedThisFrame = false;
 
-  /**
-   * Force blit immediately regardless of blittedThisFrame flag.
-   * Called from Sodium hook to ensure terrain is in the current framebuffer.
-   * 
-   * The blit happens to whatever FBO is currently bound at the injection site.
-   * Sodium/Minecraft should have the correct FBO bound at this point.
-   */
   public void forceBlitNow() {
     if (this.ready && this.handle != 0L) {
+      if (!this.hasRenderedThisFrame()) {
+        if (this.frameCount < 10) {
+          MetalLogger.warn("[MetalRender] forceBlitNow called but no terrain was rendered this frame!");
+        }
+        return;
+      }
+
       NativeBridge.nWaitForRender(this.handle);
 
       int currentFbo = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER_BINDING);
       int[] viewport = new int[4];
       org.lwjgl.opengl.GL11.glGetIntegerv(org.lwjgl.opengl.GL11.GL_VIEWPORT, viewport);
 
-      if (this.frameCount % 60 == 0 || this.frameCount < 100) {
+      if (this.frameCount < 10 || this.frameCount % 600 == 0) {
         MetalLogger.info("[MetalRender] forceBlitNow: currentFBO=%d, Viewport=[%d,%d,%d,%d]",
             currentFbo, viewport[0], viewport[1], viewport[2], viewport[3]);
       }
 
-      this.ioSurfaceBlitter.blit(this.handle);
+      boolean blitSuccess = this.ioSurfaceBlitter.blit(this.handle);
+      if (this.frameCount < 10) {
+        MetalLogger.info("[MetalRender] Blit result: %s", blitSuccess ? "SUCCESS" : "FAILED");
+      }
     }
   }
 
@@ -504,7 +559,6 @@ public class MetalWorldRenderer {
   private void tryUploadAtlas() {
     Optional<CapturedAtlas> atlasOpt = CapturedAtlasRepository.get(BLOCKS_ATLAS_ID);
     if (atlasOpt.isEmpty()) {
-      // Atlas not captured yet
       return;
     }
 
@@ -553,6 +607,125 @@ public class MetalWorldRenderer {
   }
 
   public void setsodiumless(boolean enabled) {
-    // Placeholder - sodiumless mode configuration
+  }
+
+  private void initExtendedLod() {
+    try {
+      MinecraftClient mc = MinecraftClient.getInstance();
+      java.nio.file.Path basePath;
+      if (mc != null && mc.runDirectory != null) {
+        basePath = mc.runDirectory.toPath().resolve("metalrender").resolve("lod_storage.dat");
+      } else {
+        basePath = java.nio.file.Path.of("metalrender").resolve("lod_storage.dat");
+      }
+
+      this.lodChunkStorage = new LodChunkStorage(basePath,
+          MetalRenderConfig.extendedLodCacheSize());
+      if (!this.lodChunkStorage.initialize()) {
+        MetalLogger.warn("[ExtendedLOD] Storage initialization failed");
+        this.lodChunkStorage = null;
+        return;
+      }
+
+      this.lodRingTracker = new LodRingTracker();
+      if (MetalRenderConfig.extendedLodIngestEnabled()) {
+        LodChunkIngestor.getInstance().initialize(this.lodChunkStorage);
+      }
+
+      if (MetalRenderConfig.extremeRenderDistance() > 32) {
+        DistantChunkLoader.getInstance().initialize(this.lodChunkStorage);
+      }
+
+      this.extendedLodRenderer = new ExtendedLodRenderer();
+      if (!this.extendedLodRenderer.initialize(this.handle, this.persistentArena)) {
+        MetalLogger.warn("[ExtendedLOD] Renderer init failed (arena may not be ready)");
+      }
+
+      this.extendedLodInitialized = true;
+      MetalLogger.info("[ExtendedLOD] System initialized (distance={} chunks, cache={})",
+          MetalRenderConfig.extremeRenderDistance(),
+          MetalRenderConfig.extendedLodCacheSize());
+    } catch (Exception e) {
+      MetalLogger.error("[ExtendedLOD] Init failed: {}", e.getMessage());
+      this.extendedLodInitialized = false;
+    }
+  }
+
+  private void updateExtendedLod(float camX, float camY, float camZ,
+      Matrix4f viewProj, float cameraPitch, int altAboveGround) {
+    if (!this.extendedLodInitialized || this.lodRingTracker == null)
+      return;
+    MinecraftClient mc = MinecraftClient.getInstance();
+    if (mc != null && mc.world != null) {
+      int minY = mc.world.getBottomY() >> 4;
+      int maxY = (mc.world.getTopYInclusive() + 1) >> 4;
+      this.lodRingTracker.setYBounds(minY, maxY);
+    }
+    LodRingTracker.UpdateDelta delta = this.lodRingTracker.update(
+        (int) camX, (int) camY, (int) camZ);
+
+    if (delta.toLoad.length > 0 && MetalRenderConfig.extremeRenderDistance() > 32
+        && DistantChunkLoader.getInstance().isRunning()) {
+      DistantChunkLoader.getInstance().requestSections(delta.toLoad);
+    }
+
+    if (this.extendedLodRenderer != null && this.extendedLodRenderer.isInitialized()
+        && this.lodChunkStorage != null) {
+      if (delta.cameraMoved) {
+        this.extendedLodRenderer.processRingDelta(delta, this.lodRingTracker,
+            this.lodChunkStorage);
+      }
+      long now = System.nanoTime();
+      long frameTimeNs = (this.lastFrameNanoTime > 0) ? (now - this.lastFrameNanoTime) : 16_000_000L;
+      this.lastFrameNanoTime = now;
+      int draws = this.extendedLodRenderer.renderFrame(viewProj, camX, camY, camZ,
+          cameraPitch, altAboveGround, frameTimeNs);
+      if (this.frameCount < 5 || this.frameCount % 600 == 0) {
+        MetalLogger.info("[ExtendedLOD] %s", this.extendedLodRenderer.getDebugInfo());
+      }
+    }
+
+    if (delta.cameraMoved && delta.toUnload.length > 0 && this.frameCount % 300 == 0) {
+      MetalLogger.info("[ExtendedLOD] Ring update: +{} load, -{} unload, {} active",
+          delta.toLoad.length, delta.toUnload.length,
+          this.lodRingTracker.getActiveSectionCount());
+    }
+  }
+
+  private void shutdownExtendedLod() {
+    if (this.extendedLodRenderer != null) {
+      this.extendedLodRenderer.destroy();
+      this.extendedLodRenderer = null;
+    }
+
+    LodChunkIngestor ingestor = LodChunkIngestor.getInstance();
+    if (ingestor.isRunning()) {
+      ingestor.shutdown();
+    }
+
+    DistantChunkLoader distantLoader = DistantChunkLoader.getInstance();
+    if (distantLoader.isRunning()) {
+      distantLoader.shutdown();
+    }
+
+    if (this.lodChunkStorage != null) {
+      this.lodChunkStorage.close();
+      this.lodChunkStorage = null;
+    }
+
+    if (this.lodRingTracker != null) {
+      this.lodRingTracker.clear();
+      this.lodRingTracker = null;
+    }
+
+    this.extendedLodInitialized = false;
+  }
+
+  public LodChunkStorage getLodChunkStorage() {
+    return this.lodChunkStorage;
+  }
+
+  public boolean isExtendedLodActive() {
+    return this.extendedLodInitialized;
   }
 }

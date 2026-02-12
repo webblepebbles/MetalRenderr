@@ -11,20 +11,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.nio.ByteBuffer;
 
-/**
- * GL15 interception for GL2Metal mode.
- * Intercepts buffer object calls and routes them to Metal.
- * 
- * NOTE: We target GL15 (wrapper class) instead of GL15C because GL15C methods are 
- * native and cannot be injected into. GL15 wraps GL15C with regular Java methods.
- */
 @Pseudo
 @Mixin(targets = { "org.lwjgl.opengl.GL15" })
 public class GL15CGL2MetalMixin {
-
-    // ========================================================================
-    // Buffer Generation/Deletion
-    // ========================================================================
 
     @Inject(method = "glGenBuffers()I", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glGenBuffers(CallbackInfoReturnable<Integer> cir) {
@@ -41,10 +30,6 @@ public class GL15CGL2MetalMixin {
         }
     }
 
-    // ========================================================================
-    // Buffer Binding
-    // ========================================================================
-
     @Inject(method = "glBindBuffer", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glBindBuffer(int target, int buffer, CallbackInfo ci) {
         if (GL2MetalManager.shouldInterceptBuffers()) {
@@ -52,10 +37,6 @@ public class GL15CGL2MetalMixin {
             ci.cancel();
         }
     }
-
-    // ========================================================================
-    // Buffer Data
-    // ========================================================================
 
     @Inject(method = "glBufferData(IJI)V", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glBufferDataSize(int target, long size, int usage, CallbackInfo ci) {
@@ -80,10 +61,6 @@ public class GL15CGL2MetalMixin {
             ci.cancel();
         }
     }
-
-    // ========================================================================
-    // Buffer Sub Data
-    // ========================================================================
 
     @Inject(method = "glBufferSubData(IJLjava/nio/ByteBuffer;)V", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glBufferSubData(int target, long offset, ByteBuffer data, CallbackInfo ci) {

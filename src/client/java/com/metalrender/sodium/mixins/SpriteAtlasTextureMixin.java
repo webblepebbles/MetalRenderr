@@ -21,8 +21,6 @@ public abstract class SpriteAtlasTextureMixin {
 
   @Shadow
   public abstract Identifier getId();
-
-  // Inject at TAIL of upload method - don't capture method parameters
   @Inject(method = "upload", at = @At("TAIL"))
   private void metalrender$captureAtlas(CallbackInfo ci) {
     Identifier atlasId = this.getId();

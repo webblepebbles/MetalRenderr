@@ -13,9 +13,6 @@ import java.nio.file.Path;
 import java.util.function.Consumer;
 import net.fabricmc.loader.api.FabricLoader;
 
-/**
- * Handles loading and saving user configurable MetalRender options.
- */
 public final class MetalRenderConfigManager {
   private static final Gson GSON =
       new GsonBuilder().setPrettyPrinting().create();

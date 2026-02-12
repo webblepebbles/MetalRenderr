@@ -2,6 +2,9 @@
 #import <AppKit/AppKit.h>
 #import <IOSurface/IOSurface.h>
 #import <Metal/Metal.h>
+#if METALRENDER_HAS_METALFX
+#import <MetalFX/MetalFX.h>
+#endif
 #import <OpenGL/CGLIOSurface.h>
 #import <OpenGL/OpenGL.h>
 #import <OpenGL/gl3.h>
@@ -15,6 +18,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <pthread.h>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -24,6 +28,8 @@ struct DrawCommandData {
   uint32_t bufferOffset;
   uint32_t vertexCount;
   float originX, originY, originZ;
+  uint32_t renderLayer;
+  uint32_t lodLevel;
 };
 
 struct MetalContext {
@@ -42,10 +48,60 @@ struct MetalContext {
   std::vector<DrawCommandData> drawCommands;
   uint32_t maxIndirectCommands = 65536;
   uint32_t currentIndirectCount = 0;
-  // Increase buffer to 1GB to handle large worlds and frequent reloads
+
+  static constexpr uint32_t FRAME_OVERLAP = 3;
+  id<MTLBuffer> ringDrawUniforms[FRAME_OVERLAP] = {};
+  id<MTLBuffer> ringFrameUniforms[FRAME_OVERLAP] = {};
+  uint32_t ringIndex = 0;
+  dispatch_semaphore_t ringFrameSemaphore = nullptr;
+
+  id<MTLBuffer> entityStagingBuffer = nil;
+  size_t entityStagingCapacity = 0;
+  size_t entityStagingOffset = 0;
+  static constexpr size_t ENTITY_STAGING_SIZE = 16 * 1024 * 1024;
+
+  id<MTLIndirectCommandBuffer> icb = nil;
+  id<MTLArgumentEncoder> icbArgumentEncoder = nil;
+  bool icbSupported = false;
+  uint32_t icbMaxCommands = 16384;
+
+#if METALRENDER_HAS_METALFX
+
+  id<MTLFXSpatialScaler> metalFxScaler = nil;
+  id<MTLTexture> metalFxColor = nil;
+  id<MTLTexture> metalFxDepth = nil;
+  id<MTLTexture> metalFxOutput = nil;
+  uint32_t metalFxInputWidth = 0;
+  uint32_t metalFxInputHeight = 0;
+  uint32_t metalFxOutputWidth = 0;
+  uint32_t metalFxOutputHeight = 0;
+  bool metalFxSupported = false;
+  bool metalFxEnabled = false;
+  bool metalFxResetHistory = false;
+  bool metalFxDestroyed = false;
+#endif
+
   size_t persistentCapacity = 1024 * 1024 * 1024;
   size_t persistentAlignment = 256;
   size_t persistentCursor = 0;
+
+  static constexpr uint32_t LOD_COUNT = 6;
+  id<MTLIndirectCommandBuffer> lodICBs[LOD_COUNT] = {};
+  id<MTLBuffer> lodDrawUniformsBuffers[LOD_COUNT] = {};
+  id<MTLBuffer> lodDrawCountsBuffer = nil;
+  id<MTLComputePipelineState> lodSelectPipeline = nil;
+  id<MTLComputePipelineState> multiLodCullPipeline = nil;
+  id<MTLRenderPipelineState> lodTerrainPipelines[LOD_COUNT] = {};
+  id<MTLBuffer> lodThresholdsBuffer = nil;
+  uint32_t multiICBMaxPerLOD = 8192;
+  bool multiICBInitialized = false;
+  int lodDrawCounts[LOD_COUNT] = {};
+
+  bool tripleBufferingEnabled = false;
+  uint32_t currentFrameIndex = 0;
+  dispatch_semaphore_t frameSemaphore = nullptr;
+
+  std::unordered_map<uint64_t, id<MTLBuffer>> argumentBuffers;
   std::string deviceName;
   bool hasViewProj = false;
   float viewProj[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
@@ -59,7 +115,10 @@ struct MetalContext {
   uint32_t ioSurfaceWidth = 0;
   uint32_t ioSurfaceHeight = 0;
 
-  // CAMetalLayer for direct presentation (full Metal mode)
+  float renderScale = 1.0f;
+  uint32_t fullWidth = 0;
+  uint32_t fullHeight = 0;
+
   CAMetalLayer *metalLayer = nil;
   id<CAMetalDrawable> currentDrawable = nil;
   id<MTLRenderPipelineState> blitPipeline = nil;
@@ -72,25 +131,20 @@ struct MetalContext {
   id<MTLLibrary> terrainLibrary = nil;
   id<MTLSamplerState> terrainSampler = nil;
 
-  // Entity rendering resources
   id<MTLRenderPipelineState> entityPipeline = nil;
-  id<MTLRenderPipelineState> entityColorOnlyPipeline =
-      nil; // For no-texture rendering
-  id<MTLRenderPipelineState> guiPipeline =
-      nil; // GUI pipeline without depth attachment format
-  id<MTLDepthStencilState> entityDepthState =
-      nil; // Depth test but may differ from terrain
+  id<MTLRenderPipelineState> entityColorOnlyPipeline = nil;
+  id<MTLRenderPipelineState> guiPipeline = nil;
+  id<MTLDepthStencilState> entityDepthState = nil;
   id<MTLSamplerState> entitySampler = nil;
   id<MTLRenderCommandEncoder> currentEntityEncoder = nil;
   id<MTLCommandBuffer> currentEntityCommandBuffer = nil;
   bool entityPassActive = false;
-  id<MTLTexture> whiteTexture = nil; // Fallback 1x1 white texture
+  id<MTLTexture> whiteTexture = nil;
 
-  // Last command buffers - stored for waitForRender to sync on
   id<MTLCommandBuffer> lastGuiCommandBuffer = nil;
   id<MTLCommandBuffer> lastEntityCommandBuffer = nil;
+  id<MTLCommandBuffer> lastTerrainCommandBuffer = nil;
 
-  // Entity texture cache (texture handle -> MTLTexture)
   std::unordered_map<uint64_t, id<MTLTexture>> entityTextures;
 
   id<MTLTexture> atlasTexture = nil;
@@ -103,16 +157,31 @@ struct MetalContext {
   float texShrinkU = 1.0f / 1024.0f;
   float texShrinkV = 1.0f / 1024.0f;
 
-  // GUI rendering resources - separate texture for correct layering
-  id<MTLTexture> guiTexture = nil; // GUI renders to this
-  id<MTLRenderPipelineState> compositePipeline =
-      nil;                             // Composites GUI over terrain
-  id<MTLBuffer> compositeQuadVB = nil; // Fullscreen quad vertices
+  float dayBrightness = 1.0f;
+  float ambientLight = 0.1f;
+  float skyAngle = 0.0f;
+
+  id<MTLTexture> guiTexture = nil;
+  id<MTLRenderPipelineState> compositePipeline = nil;
+  id<MTLBuffer> compositeQuadVB = nil;
   uint32_t guiTextureWidth = 0;
   uint32_t guiTextureHeight = 0;
-  bool guiNeedsComposite = false; // Flag to track if GUI was drawn
+  bool guiNeedsComposite = false;
 
-  // Shaders metallib path
+  id<MTLComputePipelineState> computeMesherCountPipeline = nil;
+  id<MTLComputePipelineState> computeMesherEmitPipeline = nil;
+  id<MTLComputePipelineState> computeMesherClearPipeline = nil;
+  id<MTLBuffer> computeMesherCountersBuffer = nil;
+  id<MTLBuffer> computeMesherFaceMaskBuffer = nil;
+  uint32_t computeMesherMaxVerts = 0;
+  bool computeMesherInitialized = false;
+
+  id<MTLRenderPipelineState> opaqueTerrainPipeline = nil;
+  id<MTLRenderPipelineState> cutoutTerrainPipeline = nil;
+  id<MTLRenderPipelineState> translucentTerrainPipeline = nil;
+
+  id<MTLCommandQueue> backgroundComputeQueue = nil;
+
   std::string shadersPath;
 };
 
@@ -147,7 +216,7 @@ kernel void occlusion_test(const device Aabb* aabbs [[buffer(0)]],
 						   uint id [[thread_position_in_grid]]) {
 	if (id >= constants.count) return;
 	constexpr sampler hiZSampler(coord::normalized, address::clamp_to_edge, filter::nearest, mip_filter::nearest);
-	
+
 	Aabb box = aabbs[id];
 	float3 corners[8];
 	corners[0] = float3(box.minBounds.x, box.minBounds.y, box.minBounds.z);
@@ -158,44 +227,44 @@ kernel void occlusion_test(const device Aabb* aabbs [[buffer(0)]],
 	corners[5] = float3(box.maxBounds.x, box.minBounds.y, box.maxBounds.z);
 	corners[6] = float3(box.minBounds.x, box.maxBounds.y, box.maxBounds.z);
 	corners[7] = float3(box.maxBounds.x, box.maxBounds.y, box.maxBounds.z);
-	
+
 	float minX = 1.0, maxX = -1.0, minY = 1.0, maxY = -1.0;
 	float nearestZ = 1.0;
 	bool allBehind = true;
 	bool allClipped = true;
-	
+
 	for (uint i = 0; i < 8; ++i) {
 		float4 clip = projectCorner(corners[i], viewProj);
 		if (clip.w <= 0.001f) continue;
 		float3 ndc = clip.xyz / clip.w;
-		
+
 		if (ndc.z < 1.0f) allBehind = false;
 		if (ndc.x >= -1.0f && ndc.x <= 1.0f && ndc.y >= -1.0f && ndc.y <= 1.0f) allClipped = false;
-		
+
 		minX = min(minX, ndc.x);
 		maxX = max(maxX, ndc.x);
 		minY = min(minY, ndc.y);
 		maxY = max(maxY, ndc.y);
 		nearestZ = min(nearestZ, ndc.z);
 	}
-	
+
 	if (allBehind || allClipped || maxX < -1.0f || minX > 1.0f || maxY < -1.0f || minY > 1.0f) {
 		results[id] = 1;
 		return;
 	}
-	
+
 	float2 screenMin = float2((minX + 1.0f) * 0.5f, (1.0f - maxY) * 0.5f);
 	float2 screenMax = float2((maxX + 1.0f) * 0.5f, (1.0f - minY) * 0.5f);
 	screenMin = clamp(screenMin, float2(0.0f), float2(1.0f));
 	screenMax = clamp(screenMax, float2(0.0f), float2(1.0f));
-	
+
 	float2 screenSize = (screenMax - screenMin) * constants.hiZSize;
 	float maxDim = max(screenSize.x, screenSize.y);
 	float mipLevel = max(0.0f, floor(log2(maxDim)));
-	
+
 	float2 samplePos = (screenMin + screenMax) * 0.5f;
 	float hiZDepth = hiZTexture.sample(hiZSampler, samplePos, level(mipLevel)).r;
-	
+
 	bool occluded = (nearestZ > hiZDepth + 0.0001f);
 	results[id] = occluded ? 1 : 0;
 }
@@ -269,7 +338,6 @@ static bool ensureTerrainPipeline(MetalContext *ctx) {
   if (ctx->terrainPipeline && ctx->depthState && ctx->terrainSampler)
     return true;
 
-  // Load the compiled metallib if we haven't yet
   if (!ctx->terrainLibrary) {
     if (ctx->shadersPath.empty()) {
       printf("[MetalRender] No shaders path set for terrain pipeline\n");
@@ -292,14 +360,39 @@ static bool ensureTerrainPipeline(MetalContext *ctx) {
            ctx->shadersPath.c_str());
   }
 
-  // Create terrain render pipeline
   if (!ctx->terrainPipeline) {
+
+    MTLFunctionConstantValues *defaultConstants =
+        [[MTLFunctionConstantValues alloc] init];
+    uint32_t defaultLodLevel = 0;
+    bool defaultBlockLight = true;
+    bool defaultTexSample = true;
+    bool defaultFog = true;
+    [defaultConstants setConstantValue:&defaultLodLevel
+                                  type:MTLDataTypeUInt
+                               atIndex:0];
+    [defaultConstants setConstantValue:&defaultBlockLight
+                                  type:MTLDataTypeBool
+                               atIndex:1];
+    [defaultConstants setConstantValue:&defaultTexSample
+                                  type:MTLDataTypeBool
+                               atIndex:2];
+    [defaultConstants setConstantValue:&defaultFog
+                                  type:MTLDataTypeBool
+                               atIndex:3];
+
+    NSError *fcError = nil;
     id<MTLFunction> vertexFunc =
-        [ctx->terrainLibrary newFunctionWithName:@"terrain_color_vertex"];
+        [ctx->terrainLibrary newFunctionWithName:@"terrain_color_vertex"
+                                  constantValues:defaultConstants
+                                           error:&fcError];
     id<MTLFunction> fragmentFunc =
-        [ctx->terrainLibrary newFunctionWithName:@"terrain_color_fragment"];
+        [ctx->terrainLibrary newFunctionWithName:@"terrain_color_fragment"
+                                  constantValues:defaultConstants
+                                           error:&fcError];
     if (!vertexFunc || !fragmentFunc) {
-      printf("[MetalRender] Failed to find terrain shader functions\n");
+      printf("[MetalRender] Failed to find terrain shader functions: %s\n",
+             fcError ? [[fcError localizedDescription] UTF8String] : "unknown");
       return false;
     }
 
@@ -308,13 +401,7 @@ static bool ensureTerrainPipeline(MetalContext *ctx) {
     desc.vertexFunction = vertexFunc;
     desc.fragmentFunction = fragmentFunc;
     desc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-    desc.colorAttachments[0].blendingEnabled = YES;
-    desc.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-    desc.colorAttachments[0].destinationRGBBlendFactor =
-        MTLBlendFactorOneMinusSourceAlpha;
-    desc.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
-    desc.colorAttachments[0].destinationAlphaBlendFactor =
-        MTLBlendFactorOneMinusSourceAlpha;
+    desc.colorAttachments[0].blendingEnabled = NO;
     desc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
     desc.label = @"TerrainColorPipeline";
 
@@ -327,15 +414,36 @@ static bool ensureTerrainPipeline(MetalContext *ctx) {
                    : "unknown error");
       return false;
     }
-    printf("[MetalRender] Created terrain render pipeline\n");
+
+    desc.colorAttachments[0].blendingEnabled = NO;
+    desc.label = @"OpaqueTerrainPipeline";
+    ctx->opaqueTerrainPipeline =
+        [ctx->device newRenderPipelineStateWithDescriptor:desc error:&error];
+
+    desc.colorAttachments[0].blendingEnabled = NO;
+    desc.label = @"CutoutTerrainPipeline";
+    ctx->cutoutTerrainPipeline =
+        [ctx->device newRenderPipelineStateWithDescriptor:desc error:&error];
+
+    desc.colorAttachments[0].blendingEnabled = YES;
+    desc.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+    desc.colorAttachments[0].destinationRGBBlendFactor =
+        MTLBlendFactorOneMinusSourceAlpha;
+    desc.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
+    desc.colorAttachments[0].destinationAlphaBlendFactor =
+        MTLBlendFactorOneMinusSourceAlpha;
+    desc.label = @"TranslucentTerrainPipeline";
+    ctx->translucentTerrainPipeline =
+        [ctx->device newRenderPipelineStateWithDescriptor:desc error:&error];
+
+    printf("[MetalRender] Created terrain render pipelines "
+           "(opaque/cutout/translucent)\n");
   }
 
-  // Create depth stencil state
   if (!ctx->depthState) {
     MTLDepthStencilDescriptor *depthDesc =
         [[MTLDepthStencilDescriptor alloc] init];
-    depthDesc.depthCompareFunction =
-        MTLCompareFunctionLessEqual; // Changed from Less to LessEqual
+    depthDesc.depthCompareFunction = MTLCompareFunctionLessEqual;
     depthDesc.depthWriteEnabled = YES;
     ctx->depthState =
         [ctx->device newDepthStencilStateWithDescriptor:depthDesc];
@@ -345,7 +453,6 @@ static bool ensureTerrainPipeline(MetalContext *ctx) {
     }
   }
 
-  // Create sampler for terrain atlas
   if (!ctx->terrainSampler) {
     MTLSamplerDescriptor *samplerDesc = [[MTLSamplerDescriptor alloc] init];
     samplerDesc.minFilter = MTLSamplerMinMagFilterNearest;
@@ -364,16 +471,12 @@ static bool ensureTerrainPipeline(MetalContext *ctx) {
   return true;
 }
 
-// ============================================================================
-// Entity Pipeline Setup
-// ============================================================================
-
-// Entity frame uniforms structure (must match entity.metal)
 struct EntityFrameUniforms {
-  float viewProj[16]; // View-projection matrix
-  float cameraPos[4]; // Camera world position (xyz + padding)
-  float fogColor[4];  // Fog color RGBA
-  float fogParams[4]; // start, end, density, unused
+  float viewProj[16];
+  float cameraPos[4];
+  float fogColor[4];
+  float fogParams[4];
+  float lightParams[4];
 };
 
 static bool ensureEntityPipeline(MetalContext *ctx) {
@@ -382,7 +485,6 @@ static bool ensureEntityPipeline(MetalContext *ctx) {
   if (ctx->entityPipeline && ctx->entityDepthState && ctx->entitySampler)
     return true;
 
-  // We need the terrain library loaded (it should contain entity shaders too)
   if (!ctx->terrainLibrary) {
     if (ctx->shadersPath.empty()) {
       printf("[MetalRender] No shaders path set for entity pipeline\n");
@@ -403,7 +505,6 @@ static bool ensureEntityPipeline(MetalContext *ctx) {
     }
   }
 
-  // Create entity render pipeline
   if (!ctx->entityPipeline) {
     id<MTLFunction> vertexFunc =
         [ctx->terrainLibrary newFunctionWithName:@"entity_color_vertex"];
@@ -442,7 +543,6 @@ static bool ensureEntityPipeline(MetalContext *ctx) {
     printf("[MetalRender] Created entity render pipeline\n");
   }
 
-  // Create color-only entity pipeline (no texture required)
   if (!ctx->entityColorOnlyPipeline) {
     id<MTLFunction> vertexFunc =
         [ctx->terrainLibrary newFunctionWithName:@"entity_color_vertex"];
@@ -473,7 +573,6 @@ static bool ensureEntityPipeline(MetalContext *ctx) {
     }
   }
 
-  // Create fallback 1x1 white texture
   if (!ctx->whiteTexture) {
     MTLTextureDescriptor *texDesc = [[MTLTextureDescriptor alloc] init];
     texDesc.textureType = MTLTextureType2D;
@@ -494,14 +593,11 @@ static bool ensureEntityPipeline(MetalContext *ctx) {
     }
   }
 
-  // Create entity depth stencil state
-  // Use depth testing so entities render correctly behind terrain
   if (!ctx->entityDepthState) {
     MTLDepthStencilDescriptor *depthDesc =
         [[MTLDepthStencilDescriptor alloc] init];
-    depthDesc.depthCompareFunction =
-        MTLCompareFunctionLess;        // Normal depth test
-    depthDesc.depthWriteEnabled = YES; // Write depth for proper occlusion
+    depthDesc.depthCompareFunction = MTLCompareFunctionLess;
+    depthDesc.depthWriteEnabled = YES;
     ctx->entityDepthState =
         [ctx->device newDepthStencilStateWithDescriptor:depthDesc];
     if (!ctx->entityDepthState) {
@@ -511,8 +607,6 @@ static bool ensureEntityPipeline(MetalContext *ctx) {
     printf("[MetalRender] Created entity depth state (depth test enabled)\n");
   }
 
-  // Create GUI pipeline (same shaders but NO depth attachment format)
-  // This is needed because GUI pass uses no depth texture
   if (!ctx->guiPipeline) {
     id<MTLFunction> vertexFunc =
         [ctx->terrainLibrary newFunctionWithName:@"entity_color_vertex"];
@@ -531,7 +625,7 @@ static bool ensureEntityPipeline(MetalContext *ctx) {
       desc.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
       desc.colorAttachments[0].destinationAlphaBlendFactor =
           MTLBlendFactorOneMinusSourceAlpha;
-      // NO depth attachment format - GUI renders without depth
+
       desc.depthAttachmentPixelFormat = MTLPixelFormatInvalid;
       desc.label = @"GuiPipeline";
 
@@ -547,8 +641,6 @@ static bool ensureEntityPipeline(MetalContext *ctx) {
     }
   }
 
-  // Create sampler for entity textures (nearest filtering for pixel-art
-  // Minecraft style)
   if (!ctx->entitySampler) {
     MTLSamplerDescriptor *samplerDesc = [[MTLSamplerDescriptor alloc] init];
     samplerDesc.minFilter = MTLSamplerMinMagFilterNearest;
@@ -583,13 +675,11 @@ static bool ensureIOSurface(MetalContext *ctx, uint32_t width,
     return false;
   }
 
-  // Check if existing IOSurface is the right size
   if (ctx->ioSurface && ctx->ioSurfaceWidth == width &&
       ctx->ioSurfaceHeight == height) {
     return true;
   }
 
-  // Release old resources
   if (ctx->ioSurfaceTexture) {
     ctx->ioSurfaceTexture = nil;
   }
@@ -604,12 +694,10 @@ static bool ensureIOSurface(MetalContext *ctx, uint32_t width,
     ctx->depthTexture = nil;
   }
 
-  // Create IOSurface properties
-  // BGRA pixel format = 'BGRA' - required for CGLTexImageIOSurface2D on macOS
   uint32_t pixelFormat = 'BGRA';
 
   size_t bytesPerRow = width * 4;
-  size_t align = 256; // Safe alignment for Metal/IOSurface
+  size_t align = 256;
   bytesPerRow = (bytesPerRow + align - 1) & ~(align - 1);
   size_t allocSize = bytesPerRow * height;
 
@@ -636,7 +724,6 @@ static bool ensureIOSurface(MetalContext *ctx, uint32_t width,
          "(Requested: %u)\n",
          actualWidth, actualHeight, actualBytesPerRow, width * 4);
 
-  // Create Metal texture backed by IOSurface
   MTLTextureDescriptor *texDesc = [MTLTextureDescriptor
       texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                                    width:width
@@ -655,7 +742,6 @@ static bool ensureIOSurface(MetalContext *ctx, uint32_t width,
     return false;
   }
 
-  // Create depth texture for rendering
   MTLTextureDescriptor *depthDesc = [MTLTextureDescriptor
       texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
                                    width:width
@@ -667,7 +753,7 @@ static bool ensureIOSurface(MetalContext *ctx, uint32_t width,
 
   ctx->ioSurfaceWidth = width;
   ctx->ioSurfaceHeight = height;
-  ctx->colorTexture = ctx->ioSurfaceTexture; // Alias for clarity
+  ctx->colorTexture = ctx->ioSurfaceTexture;
 
   printf("[MetalRender] Created IOSurface %ux%u successfully\\n", width,
          height);
@@ -775,15 +861,14 @@ static bool supportsMetalFX(id<MTLDevice> device) {
     return false;
   }
   if (@available(macOS 13.0, *)) {
-    bool deviceSupported =
-        [MTLFXTemporalScalerDescriptor supportsDevice:device];
+
+    bool deviceSupported = [MTLFXSpatialScalerDescriptor supportsDevice:device];
     if (deviceSupported) {
-      fprintf(
-          stderr,
-          "[MetalRender] MetalFX support detected and enabled for device: %s\n",
-          [[device name] UTF8String]);
+      fprintf(stderr,
+              "[MetalRender] MetalFX Spatial support detected for device: %s\n",
+              [[device name] UTF8String]);
     } else {
-      printf("[MetalRender] MetalFX not supported by device: %s\n",
+      printf("[MetalRender] MetalFX Spatial not supported by device: %s\n",
              [[device name] UTF8String]);
     }
     return deviceSupported;
@@ -850,55 +935,30 @@ static bool ensureMetalFXResources(MetalContext *ctx, uint32_t outputWidth,
         ctx->metalFxInputHeight == inputHeight &&
         ctx->metalFxOutputWidth == outputWidth &&
         ctx->metalFxOutputHeight == outputHeight && ctx->metalFxColor &&
-        ctx->metalFxDepth && ctx->metalFxOutput) {
+        ctx->metalFxOutput) {
       ctx->metalFxDestroyed = false;
-      ctx->metalFxScaler.inputContentWidth = inputWidth;
-      ctx->metalFxScaler.inputContentHeight = inputHeight;
-      ctx->metalFxScaler.colorTexture = ctx->metalFxColor;
-      ctx->metalFxScaler.depthTexture = ctx->metalFxDepth;
-      ctx->metalFxScaler.outputTexture = ctx->metalFxOutput;
-      static uint64_t metalFxFrameCounter = 0;
-      metalFxFrameCounter++;
-      if (metalFxFrameCounter % 1000 == 0) {
-        printf("[MetalRender] MetalFX upscaling active: input=%ux%u "
-               "output=%ux%u scale=%.3f (frame %llu)\n",
-               inputWidth, inputHeight, outputWidth, outputHeight, clampedScale,
-               metalFxFrameCounter);
-      }
       return true;
     }
 
     destroyMetalFXResources(ctx);
 
-    printf("[MetalRender] Allocating MetalFX resources: output=%ux%u "
+    printf("[MetalRender] Allocating MetalFX Spatial resources: output=%ux%u "
            "scale=%.3f input=%ux%u\n",
            outputWidth, outputHeight, clampedScale, inputWidth, inputHeight);
 
-    MTLFXTemporalScalerDescriptor *descriptor =
-        [[MTLFXTemporalScalerDescriptor alloc] init];
+    MTLFXSpatialScalerDescriptor *descriptor =
+        [[MTLFXSpatialScalerDescriptor alloc] init];
     descriptor.colorTextureFormat = MTLPixelFormatBGRA8Unorm;
-    descriptor.depthTextureFormat = MTLPixelFormatDepth32Float;
-    descriptor.motionTextureFormat = MTLPixelFormatInvalid;
     descriptor.outputTextureFormat = MTLPixelFormatBGRA8Unorm;
     descriptor.inputWidth = inputWidth;
     descriptor.inputHeight = inputHeight;
     descriptor.outputWidth = outputWidth;
     descriptor.outputHeight = outputHeight;
-    descriptor.autoExposureEnabled = NO;
-    descriptor.inputContentPropertiesEnabled = YES;
-    descriptor.inputContentMinScale = 0.25F;
-    descriptor.inputContentMaxScale = 1.0F;
-    if (@available(macOS 14.4, *)) {
-      if ([descriptor
-              respondsToSelector:@selector(setReactiveMaskTextureEnabled:)]) {
-        descriptor.reactiveMaskTextureEnabled = NO;
-      }
-    }
 
-    id<MTLFXTemporalScaler> scaler =
-        [descriptor newTemporalScalerWithDevice:ctx->device];
+    id<MTLFXSpatialScaler> scaler =
+        [descriptor newSpatialScalerWithDevice:ctx->device];
     if (!scaler) {
-      printf("[MetalRender] Failed to create MetalFX temporal scaler\n");
+      printf("[MetalRender] Failed to create MetalFX Spatial scaler\n");
       return false;
     }
 
@@ -907,33 +967,17 @@ static bool ensureMetalFXResources(MetalContext *ctx, uint32_t outputWidth,
     ctx->metalFxInputHeight = inputHeight;
     ctx->metalFxOutputWidth = outputWidth;
     ctx->metalFxOutputHeight = outputHeight;
-    ctx->metalFxResetHistory = true;
-    printf("[MetalRender] MetalFX resources successfully allocated and ready "
-           "(input=%ux%u, output=%ux%u, "
-           "scale=%.3f)\n",
+    printf("[MetalRender] MetalFX Spatial scaler created (input=%ux%u, "
+           "output=%ux%u, scale=%.3f)\n",
            inputWidth, inputHeight, outputWidth, outputHeight, clampedScale);
 
-    MTLPixelFormat colorFormat = scaler.colorTextureFormat;
-    MTLPixelFormat depthFormat = scaler.depthTextureFormat;
-    MTLPixelFormat outputFormat = scaler.outputTextureFormat;
-
-    MTLTextureUsage colorUsage = scaler.colorTextureUsage |
-                                 MTLTextureUsageRenderTarget |
-                                 MTLTextureUsageShaderRead;
-    MTLTextureUsage depthUsage = scaler.depthTextureUsage |
-                                 MTLTextureUsageRenderTarget |
-                                 MTLTextureUsageShaderRead;
-    MTLTextureUsage outputUsage =
-        scaler.outputTextureUsage | MTLTextureUsageRenderTarget |
-        MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
-
-    MTLTextureDescriptor *colorDesc =
-        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:colorFormat
-                                                           width:inputWidth
-                                                          height:inputHeight
-                                                       mipmapped:NO];
+    MTLTextureDescriptor *colorDesc = [MTLTextureDescriptor
+        texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                     width:inputWidth
+                                    height:inputHeight
+                                 mipmapped:NO];
     colorDesc.storageMode = MTLStorageModePrivate;
-    colorDesc.usage = colorUsage;
+    colorDesc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
     ctx->metalFxColor = [ctx->device newTextureWithDescriptor:colorDesc];
     if (!ctx->metalFxColor) {
       fprintf(
@@ -944,30 +988,14 @@ static bool ensureMetalFXResources(MetalContext *ctx, uint32_t outputWidth,
       return false;
     }
 
-    MTLTextureDescriptor *depthDesc =
-        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:depthFormat
-                                                           width:inputWidth
-                                                          height:inputHeight
-                                                       mipmapped:NO];
-    depthDesc.storageMode = MTLStorageModePrivate;
-    depthDesc.usage = depthUsage;
-    ctx->metalFxDepth = [ctx->device newTextureWithDescriptor:depthDesc];
-    if (!ctx->metalFxDepth) {
-      fprintf(
-          stderr,
-          "[MetalRender] Failed to allocate MetalFX depth texture (%u x %u)\n",
-          inputWidth, inputHeight);
-      destroyMetalFXResources(ctx);
-      return false;
-    }
-
-    MTLTextureDescriptor *outputDesc =
-        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:outputFormat
-                                                           width:outputWidth
-                                                          height:outputHeight
-                                                       mipmapped:NO];
+    MTLTextureDescriptor *outputDesc = [MTLTextureDescriptor
+        texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                     width:outputWidth
+                                    height:outputHeight
+                                 mipmapped:NO];
     outputDesc.storageMode = MTLStorageModePrivate;
-    outputDesc.usage = outputUsage;
+    outputDesc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead |
+                       MTLTextureUsageShaderWrite;
     ctx->metalFxOutput = [ctx->device newTextureWithDescriptor:outputDesc];
     if (!ctx->metalFxOutput) {
       fprintf(
@@ -979,17 +1007,7 @@ static bool ensureMetalFXResources(MetalContext *ctx, uint32_t outputWidth,
     }
 
     scaler.colorTexture = ctx->metalFxColor;
-    scaler.depthTexture = ctx->metalFxDepth;
-    scaler.motionTexture = nil;
     scaler.outputTexture = ctx->metalFxOutput;
-    scaler.preExposure = 1.0F;
-    scaler.motionVectorScaleX = 1.0F;
-    scaler.motionVectorScaleY = 1.0F;
-    scaler.depthReversed = NO;
-    scaler.inputContentWidth = inputWidth;
-    scaler.inputContentHeight = inputHeight;
-    scaler.jitterOffsetX = ctx->temporalJitterX;
-    scaler.jitterOffsetY = ctx->temporalJitterY;
     ctx->metalFxDestroyed = false;
     return true;
   }
@@ -1017,6 +1035,22 @@ Java_com_metalrender_nativebridge_NativeBridge_nIsAvailable(JNIEnv *, jclass) {
   return JNI_TRUE;
 }
 
+struct DrawUniforms {
+  float originX;
+  float originY;
+  float originZ;
+  float renderLayer;
+};
+
+struct FrameUniforms {
+  float viewProj[16];
+  float cameraX, cameraY, cameraZ, cameraPad;
+  float fogR, fogG, fogB, fogA;
+  float fogStart, fogEnd, fogPad1, fogPad2;
+  float texShrinkU, texShrinkV, texShrinkPad1, texShrinkPad2;
+  float lightParams[4];
+};
+
 JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_NativeBridge_nInit(
     JNIEnv *env, jclass, jint width, jint height, jfloat scale) {
   (void)width;
@@ -1032,6 +1066,7 @@ JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_NativeBridge_nInit(
   ctx->device = device;
   ctx->graphicsQueue = [device newCommandQueue];
   ctx->computeQueue = [device newCommandQueue];
+  ctx->backgroundComputeQueue = [device newCommandQueue];
   ctx->library = createLibraryFromSource(device, @"MetalRenderOcclusion");
   if (ctx->library) {
     ensureOcclusionPipeline(ctx);
@@ -1046,6 +1081,35 @@ JNIEXPORT jlong JNICALL Java_com_metalrender_nativebridge_NativeBridge_nInit(
   if (name)
     ctx->deviceName = [name UTF8String];
   ctx->meshShadersSupported = supportsMeshShaders(device);
+
+  if (@available(macOS 12.0, *)) {
+    ctx->icbSupported = true;
+  } else {
+    ctx->icbSupported = false;
+  }
+
+  ctx->ringFrameSemaphore =
+      dispatch_semaphore_create(MetalContext::FRAME_OVERLAP);
+  for (uint32_t i = 0; i < MetalContext::FRAME_OVERLAP; i++) {
+    ctx->ringDrawUniforms[i] =
+        [device newBufferWithLength:16384 * sizeof(DrawUniforms)
+                            options:MTLResourceStorageModeShared];
+    ctx->ringFrameUniforms[i] =
+        [device newBufferWithLength:sizeof(FrameUniforms)
+                            options:MTLResourceStorageModeShared];
+  }
+  ctx->ringIndex = 0;
+
+  ctx->entityStagingCapacity = MetalContext::ENTITY_STAGING_SIZE;
+  ctx->entityStagingBuffer =
+      [device newBufferWithLength:ctx->entityStagingCapacity
+                          options:MTLResourceStorageModeShared];
+  ctx->entityStagingOffset = 0;
+
+#if METALRENDER_HAS_METALFX
+  ctx->metalFxSupported = supportsMetalFX(device);
+#endif
+
   return reinterpret_cast<jlong>(ctx);
 }
 
@@ -1055,21 +1119,21 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nResize(
   if (!ctx || width <= 0 || height <= 0)
     return;
 
-  // IMPORTANT: IOSurface must match framebuffer exactly for correct blitting
-  // Resolution scale is only used for internal render targets, not IOSurface
-  uint32_t ioSurfaceWidth = static_cast<uint32_t>(width);
-  uint32_t ioSurfaceHeight = static_cast<uint32_t>(height);
-  ioSurfaceWidth = std::max(1u, ioSurfaceWidth);
-  ioSurfaceHeight = std::max(1u, ioSurfaceHeight);
+  float clampedScale = std::max(0.25f, std::min(2.0f, scale));
+  uint32_t ioSurfaceWidth =
+      std::max(1u, static_cast<uint32_t>(width * clampedScale));
+  uint32_t ioSurfaceHeight =
+      std::max(1u, static_cast<uint32_t>(height * clampedScale));
 
-  // Ensure IOSurface is correct size (always full resolution for blitting)
+  ctx->renderScale = clampedScale;
+  ctx->fullWidth = static_cast<uint32_t>(width);
+  ctx->fullHeight = static_cast<uint32_t>(height);
+
   if (!ensureIOSurface(ctx, ioSurfaceWidth, ioSurfaceHeight)) {
-    printf("[MetalRender] nResize: Failed to ensure IOSurface %ux%u\n",
-           ioSurfaceWidth, ioSurfaceHeight);
+    printf("[MetalRender] nResize: Failed to ensure IOSurface %ux%u "
+           "(scale=%.2f)\n",
+           ioSurfaceWidth, ioSurfaceHeight, clampedScale);
   }
-
-  // Store scale for potential internal rendering use (not used for IOSurface)
-  (void)scale;
 }
 
 JNIEXPORT void JNICALL
@@ -1081,7 +1145,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginFrame(
       !ctx->indirectArgs)
     return;
 
-  // Store view projection matrix
   if (jViewProj) {
     jfloat *viewProj = env->GetFloatArrayElements(jViewProj, nullptr);
     if (viewProj) {
@@ -1091,7 +1154,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginFrame(
     }
   }
 
-  // Store camera position
   if (jCameraPos && env->GetArrayLength(jCameraPos) >= 3) {
     jfloat *cameraPos = env->GetFloatArrayElements(jCameraPos, nullptr);
     if (cameraPos) {
@@ -1102,26 +1164,9 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginFrame(
     }
   }
 
-  // Store fog parameters
   ctx->fogStart = fogStart;
   ctx->fogEnd = fogEnd;
 }
-
-// Shader uniform structures matching metalrender.metal
-struct DrawUniforms {
-  float originX;
-  float originY;
-  float originZ;
-  float padding;
-};
-
-struct FrameUniforms {
-  float viewProj[16];
-  float cameraX, cameraY, cameraZ, cameraPad;
-  float fogR, fogG, fogB, fogA;
-  float fogStart, fogEnd, fogPad1, fogPad2;
-  float texShrinkU, texShrinkV, texShrinkPad1, texShrinkPad2;
-};
 
 JNIEXPORT void JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nDrawTerrain(JNIEnv *, jclass,
@@ -1129,10 +1174,8 @@ Java_com_metalrender_nativebridge_NativeBridge_nDrawTerrain(JNIEnv *, jclass,
                                                             jint pass) {
   (void)pass;
 
-  // DEBUG: Trace entry
   static int traceCounter = 0;
-  if (traceCounter++ < 100)
-    printf("[MetalRender] nDrawTerrain ENTRY frame=%d\n", traceCounter);
+  traceCounter++;
 
   MetalContext *ctx = getContext(handle);
   if (!ctx || !ctx->graphicsQueue || !ctx->ioSurfaceTexture ||
@@ -1144,23 +1187,19 @@ Java_com_metalrender_nativebridge_NativeBridge_nDrawTerrain(JNIEnv *, jclass,
     return;
   }
 
-  // Ensure terrain pipeline is created
   if (!ensureTerrainPipeline(ctx)) {
-    if (traceCounter < 100)
-      printf("[MetalRender] nDrawTerrain: ensureTerrainPipeline failed\n");
-    // Pipeline not ready - just clear to sky blue
+
     MTLRenderPassDescriptor *passDesc =
         [MTLRenderPassDescriptor renderPassDescriptor];
     passDesc.colorAttachments[0].texture = ctx->ioSurfaceTexture;
     passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
     passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
-    // Clear to transparent so OpenGL content shows through empty areas
+
     passDesc.colorAttachments[0].clearColor =
         MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
     passDesc.depthAttachment.texture = ctx->depthTexture;
     passDesc.depthAttachment.loadAction = MTLLoadActionClear;
-    passDesc.depthAttachment.storeAction =
-        MTLStoreActionStore; // Store depth for entity pass
+    passDesc.depthAttachment.storeAction = MTLStoreActionStore;
     passDesc.depthAttachment.clearDepth = 1.0;
 
     id<MTLCommandBuffer> cb = [ctx->graphicsQueue commandBuffer];
@@ -1168,27 +1207,25 @@ Java_com_metalrender_nativebridge_NativeBridge_nDrawTerrain(JNIEnv *, jclass,
         [cb renderCommandEncoderWithDescriptor:passDesc];
     [enc endEncoding];
     [cb commit];
-    [cb waitUntilCompleted];
+
+    ctx->lastTerrainCommandBuffer = cb;
     return;
   }
 
-  // Create render pass descriptor
   MTLRenderPassDescriptor *passDesc =
       [MTLRenderPassDescriptor renderPassDescriptor];
   passDesc.colorAttachments[0].texture = ctx->ioSurfaceTexture;
   passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
   passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
-  // Clear to transparent so OpenGL content shows through empty areas
+
   passDesc.colorAttachments[0].clearColor =
       MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
 
   passDesc.depthAttachment.texture = ctx->depthTexture;
   passDesc.depthAttachment.loadAction = MTLLoadActionClear;
-  passDesc.depthAttachment.storeAction =
-      MTLStoreActionStore; // Store depth for entity pass
+  passDesc.depthAttachment.storeAction = MTLStoreActionStore;
   passDesc.depthAttachment.clearDepth = 1.0;
 
-  // Create command buffer and render encoder
   id<MTLCommandBuffer> commandBuffer = [ctx->graphicsQueue commandBuffer];
   if (!commandBuffer) {
     printf("[MetalRender] nDrawTerrain: failed to create command buffer\n");
@@ -1203,13 +1240,11 @@ Java_com_metalrender_nativebridge_NativeBridge_nDrawTerrain(JNIEnv *, jclass,
     return;
   }
 
-  // Set up pipeline state
   [encoder setRenderPipelineState:ctx->terrainPipeline];
-  [encoder setDepthStencilState:ctx->depthState]; // Re-enabled with LessEqual
-  [encoder setCullMode:MTLCullModeNone]; // TEMP: Disable culling to debug
+  [encoder setDepthStencilState:ctx->depthState];
+  [encoder setCullMode:MTLCullModeNone];
   [encoder setFrontFacingWinding:MTLWindingCounterClockwise];
 
-  // Set viewport to match IOSurface dimensions
   MTLViewport viewport;
   viewport.originX = 0.0;
   viewport.originY = 0.0;
@@ -1219,7 +1254,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nDrawTerrain(JNIEnv *, jclass,
   viewport.zfar = 1.0;
   [encoder setViewport:viewport];
 
-  // Create and bind frame uniforms
   FrameUniforms frameUniforms;
   memcpy(frameUniforms.viewProj, ctx->viewProj, sizeof(ctx->viewProj));
   frameUniforms.cameraX = ctx->cameraX;
@@ -1238,6 +1272,10 @@ Java_com_metalrender_nativebridge_NativeBridge_nDrawTerrain(JNIEnv *, jclass,
   frameUniforms.texShrinkV = ctx->texShrinkV;
   frameUniforms.texShrinkPad1 = 0;
   frameUniforms.texShrinkPad2 = 0;
+  frameUniforms.lightParams[0] = ctx->dayBrightness;
+  frameUniforms.lightParams[1] = ctx->ambientLight;
+  frameUniforms.lightParams[2] = ctx->skyAngle;
+  frameUniforms.lightParams[3] = 0.0f;
 
   [encoder setVertexBytes:&frameUniforms
                    length:sizeof(frameUniforms)
@@ -1246,113 +1284,248 @@ Java_com_metalrender_nativebridge_NativeBridge_nDrawTerrain(JNIEnv *, jclass,
                      length:sizeof(frameUniforms)
                     atIndex:2];
 
-  // Bind atlas texture if available
   if (ctx->atlasTexture) {
     [encoder setFragmentTexture:ctx->atlasTexture atIndex:0];
-    [encoder setFragmentSamplerState:ctx->terrainSampler atIndex:0];
   } else {
-    // Debug: Log when atlas is missing during draw
-    static int noAtlasCounter = 0;
-    if (noAtlasCounter++ % 60 == 0) {
+
+    static bool atlasWarned = false;
+    if (!atlasWarned) {
       fprintf(
           stderr,
           "[MetalRender] nDrawTerrain: WARNING - no atlas texture bound!\n");
+      atlasWarned = true;
     }
   }
 
-  // Debug: Log draw stats periodically (only first 3 frames to reduce overhead)
-  static int drawCounter = 0;
-  drawCounter++;
-  bool shouldLog = (drawCounter <= 3);
-  if (shouldLog) {
-    printf("[MetalRender] nDrawTerrain: viewport=%ux%u, drawCommands=%u, "
-           "atlasTexture=%s, hasViewProj=%d\n",
-           ctx->ioSurfaceWidth, ctx->ioSurfaceHeight, ctx->currentIndirectCount,
-           ctx->atlasTexture ? "YES" : "NO", ctx->hasViewProj ? 1 : 0);
-    // Debug: Print viewProj matrix
-    printf("[MetalRender] viewProj matrix:\n");
-    printf("  [%8.3f %8.3f %8.3f %8.3f]\n", frameUniforms.viewProj[0],
-           frameUniforms.viewProj[1], frameUniforms.viewProj[2],
-           frameUniforms.viewProj[3]);
-    printf("  [%8.3f %8.3f %8.3f %8.3f]\n", frameUniforms.viewProj[4],
-           frameUniforms.viewProj[5], frameUniforms.viewProj[6],
-           frameUniforms.viewProj[7]);
-    printf("  [%8.3f %8.3f %8.3f %8.3f]\n", frameUniforms.viewProj[8],
-           frameUniforms.viewProj[9], frameUniforms.viewProj[10],
-           frameUniforms.viewProj[11]);
-    printf("  [%8.3f %8.3f %8.3f %8.3f]\n", frameUniforms.viewProj[12],
-           frameUniforms.viewProj[13], frameUniforms.viewProj[14],
-           frameUniforms.viewProj[15]);
-    printf("[MetalRender] camera=(%f, %f, %f)\n", frameUniforms.cameraX,
-           frameUniforms.cameraY, frameUniforms.cameraZ);
-  }
-
-  // Draw each chunk
-  uint32_t actualDraws = 0;
+  std::vector<uint32_t> sortedIndices;
+  sortedIndices.reserve(ctx->currentIndirectCount);
   for (uint32_t i = 0;
        i < ctx->currentIndirectCount && i < ctx->drawCommands.size(); i++) {
-    const DrawCommandData &cmd = ctx->drawCommands[i];
-    if (cmd.vertexCount == 0)
-      continue;
-
-    // Debug: Print first draw command details (only for first few frames)
-    if (shouldLog && actualDraws == 0) {
-      printf("[MetalRender] First draw: origin=(%f, %f, %f), vertices=%u, "
-             "offset=%lu\n",
-             cmd.originX, cmd.originY, cmd.originZ, cmd.vertexCount,
-             cmd.bufferOffset);
+    if (ctx->drawCommands[i].vertexCount > 0) {
+      sortedIndices.push_back(i);
     }
-
-    // Set per-draw uniforms (chunk origin)
-    DrawUniforms drawUniforms;
-    drawUniforms.originX = cmd.originX;
-    drawUniforms.originY = cmd.originY;
-    drawUniforms.originZ = cmd.originZ;
-    drawUniforms.padding = 0;
-
-    [encoder setVertexBytes:&drawUniforms
-                     length:sizeof(drawUniforms)
-                    atIndex:1];
-
-    // Bind vertex data at the correct offset
-    // The vertex data is in the persistent buffer at cmd.bufferOffset
-    [encoder setVertexBuffer:ctx->persistentBuffer
-                      offset:cmd.bufferOffset
-                     atIndex:0];
-
-    // Draw primitives (triangles)
-    [encoder drawPrimitives:MTLPrimitiveTypeTriangle
-                vertexStart:0
-                vertexCount:cmd.vertexCount];
-    actualDraws++;
   }
 
-  // Debug: Log actual draws (only for first few frames)
-  if (shouldLog) {
-    printf("[MetalRender] nDrawTerrain: executed %u actual draw calls\n",
-           actualDraws);
+  std::sort(sortedIndices.begin(), sortedIndices.end(),
+            [&](uint32_t a, uint32_t b) {
+              const auto &ca = ctx->drawCommands[a];
+              const auto &cb = ctx->drawCommands[b];
+              if (ca.lodLevel != cb.lodLevel)
+                return ca.lodLevel < cb.lodLevel;
+              return ca.renderLayer < cb.renderLayer;
+            });
+
+  uint32_t drawCount = static_cast<uint32_t>(sortedIndices.size());
+  if (drawCount == 0) {
+    [encoder endEncoding];
+    id<MTLBlitCommandEncoder> blitEncoder = [commandBuffer blitCommandEncoder];
+    [blitEncoder synchronizeResource:ctx->ioSurfaceTexture];
+    [blitEncoder endEncoding];
+    [commandBuffer commit];
+    ctx->lastTerrainCommandBuffer = commandBuffer;
+    return;
+  }
+
+  size_t requiredSize = drawCount * sizeof(DrawUniforms);
+  if (!ctx->drawUniformsBuffer ||
+      ctx->drawUniformsBuffer.length < requiredSize) {
+
+    uint32_t allocDraws = std::max(drawCount, 4096u);
+
+    allocDraws--;
+    allocDraws |= allocDraws >> 1;
+    allocDraws |= allocDraws >> 2;
+    allocDraws |= allocDraws >> 4;
+    allocDraws |= allocDraws >> 8;
+    allocDraws |= allocDraws >> 16;
+    allocDraws++;
+    size_t allocSize = allocDraws * sizeof(DrawUniforms);
+    ctx->drawUniformsBuffer =
+        [ctx->device newBufferWithLength:allocSize
+                                 options:MTLResourceStorageModeShared];
+    if (!ctx->drawUniformsBuffer) {
+      fprintf(stderr,
+              "[MetalRender] Failed to allocate drawUniformsBuffer (%zu "
+              "bytes)\n",
+              allocSize);
+    }
+  }
+
+  if (ctx->drawUniformsBuffer) {
+    DrawUniforms *uniforms =
+        static_cast<DrawUniforms *>(ctx->drawUniformsBuffer.contents);
+    for (uint32_t i = 0; i < drawCount; i++) {
+      const DrawCommandData &cmd = ctx->drawCommands[sortedIndices[i]];
+      uniforms[i].originX = cmd.originX;
+      uniforms[i].originY = cmd.originY;
+      uniforms[i].originZ = cmd.originZ;
+      uniforms[i].renderLayer = static_cast<float>(cmd.renderLayer);
+    }
+  }
+
+  uint32_t actualDraws = 0;
+  int32_t lastRenderLayer = -1;
+  int32_t lastLodLevel = -1;
+
+  [encoder setVertexBuffer:ctx->drawUniformsBuffer offset:0 atIndex:1];
+  [encoder setFragmentBuffer:ctx->drawUniformsBuffer offset:0 atIndex:0];
+
+  [encoder setVertexBuffer:ctx->persistentBuffer offset:0 atIndex:0];
+
+  uint32_t batchStart = 0;
+  while (batchStart < drawCount) {
+    const DrawCommandData &firstCmd =
+        ctx->drawCommands[sortedIndices[batchStart]];
+    int32_t batchLayer = static_cast<int32_t>(firstCmd.renderLayer);
+    int32_t batchLod = static_cast<int32_t>(firstCmd.lodLevel);
+
+    if (batchLod != lastLodLevel) {
+
+      uint32_t clampedLod = static_cast<uint32_t>(
+          std::min(std::max(batchLod, 0),
+                   static_cast<int32_t>(MetalContext::LOD_COUNT - 1)));
+
+      if (clampedLod < MetalContext::LOD_COUNT &&
+          ctx->lodTerrainPipelines[clampedLod]) {
+        [encoder setRenderPipelineState:ctx->lodTerrainPipelines[clampedLod]];
+      } else {
+        [encoder setRenderPipelineState:ctx->terrainPipeline];
+      }
+      lastLodLevel = batchLod;
+    }
+
+    if (batchLayer != lastRenderLayer) {
+      if (batchLayer == 0) {
+        if (ctx->opaqueTerrainPipeline && lastLodLevel <= 0) {
+          [encoder setRenderPipelineState:ctx->opaqueTerrainPipeline];
+        }
+        [encoder setDepthBias:0.0f slopeScale:0.0f clamp:0.0f];
+      } else if (batchLayer == 1) {
+        if (ctx->cutoutTerrainPipeline && lastLodLevel <= 0) {
+          [encoder setRenderPipelineState:ctx->cutoutTerrainPipeline];
+        }
+        [encoder setDepthBias:-1.0f slopeScale:-1.0f clamp:-0.01f];
+      } else {
+        if (ctx->translucentTerrainPipeline && lastLodLevel <= 0) {
+          [encoder setRenderPipelineState:ctx->translucentTerrainPipeline];
+        }
+        [encoder setDepthBias:-1.0f slopeScale:-1.0f clamp:-0.01f];
+      }
+      lastRenderLayer = batchLayer;
+    }
+
+    uint32_t batchEnd = batchStart + 1;
+    while (batchEnd < drawCount) {
+      const DrawCommandData &nextCmd =
+          ctx->drawCommands[sortedIndices[batchEnd]];
+      if (static_cast<int32_t>(nextCmd.renderLayer) != batchLayer ||
+          static_cast<int32_t>(nextCmd.lodLevel) != batchLod) {
+        break;
+      }
+      batchEnd++;
+    }
+
+    for (uint32_t i = batchStart; i < batchEnd; i++) {
+      const DrawCommandData &cmd = ctx->drawCommands[sortedIndices[i]];
+      size_t uniformOffset = i * sizeof(DrawUniforms);
+      [encoder setVertexBufferOffset:uniformOffset atIndex:1];
+      [encoder setFragmentBufferOffset:uniformOffset atIndex:0];
+      [encoder setVertexBufferOffset:cmd.bufferOffset atIndex:0];
+      [encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                  vertexStart:0
+                  vertexCount:cmd.vertexCount];
+      actualDraws++;
+    }
+
+    batchStart = batchEnd;
   }
 
   [encoder endEncoding];
 
-  // DEBUG: Force cyan clear - DISABLED (terrain is now visible!)
-  // static int forceColorFrame = 0;
-  // forceColorFrame++;
-  // ... (disabled)
-
-  // Add synchronize resource call to ensure IOSurface is updated
-  // This is required for shared storage mode textures
   id<MTLBlitCommandEncoder> blitEncoder = [commandBuffer blitCommandEncoder];
   [blitEncoder synchronizeResource:ctx->ioSurfaceTexture];
   [blitEncoder endEncoding];
 
   [commandBuffer commit];
-  [commandBuffer waitUntilCompleted];
+
+  ctx->lastTerrainCommandBuffer = commandBuffer;
 }
 JNIEXPORT void JNICALL
-Java_com_metalrender_nativebridge_NativeBridge_nPrewarmPipelines(JNIEnv *,
+Java_com_metalrender_nativebridge_NativeBridge_nPrewarmPipelines(JNIEnv *env,
                                                                  jclass,
                                                                  jlong handle) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !ctx->device || !ctx->terrainLibrary)
+    return;
+
+  struct LodConfig {
+    uint32_t lodLevel;
+    bool blockLight;
+    bool texSample;
+    bool fog;
+  };
+
+  LodConfig configs[6] = {
+      {0, true, true, true},  {1, true, true, true},  {2, true, true, true},
+      {3, false, true, true}, {4, false, true, true}, {5, false, false, true},
+  };
+
+  for (int i = 0; i < 6; i++) {
+    if (ctx->lodTerrainPipelines[i])
+      continue;
+
+    MTLFunctionConstantValues *constants =
+        [[MTLFunctionConstantValues alloc] init];
+    [constants setConstantValue:&configs[i].lodLevel
+                           type:MTLDataTypeUInt
+                        atIndex:0];
+    [constants setConstantValue:&configs[i].blockLight
+                           type:MTLDataTypeBool
+                        atIndex:1];
+    [constants setConstantValue:&configs[i].texSample
+                           type:MTLDataTypeBool
+                        atIndex:2];
+    [constants setConstantValue:&configs[i].fog type:MTLDataTypeBool atIndex:3];
+
+    NSError *error = nil;
+    id<MTLFunction> vertexFunc =
+        [ctx->terrainLibrary newFunctionWithName:@"terrain_color_vertex"
+                                  constantValues:constants
+                                           error:&error];
+    id<MTLFunction> fragmentFunc =
+        [ctx->terrainLibrary newFunctionWithName:@"terrain_color_fragment"
+                                  constantValues:constants
+                                           error:&error];
+    if (!vertexFunc || !fragmentFunc)
+      continue;
+
+    MTLRenderPipelineDescriptor *desc =
+        [[MTLRenderPipelineDescriptor alloc] init];
+    desc.vertexFunction = vertexFunc;
+    desc.fragmentFunction = fragmentFunc;
+    desc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+    if (i <= 1) {
+      desc.colorAttachments[0].blendingEnabled = NO;
+    } else {
+      desc.colorAttachments[0].blendingEnabled = YES;
+      desc.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+      desc.colorAttachments[0].destinationRGBBlendFactor =
+          MTLBlendFactorOneMinusSourceAlpha;
+      desc.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
+      desc.colorAttachments[0].destinationAlphaBlendFactor =
+          MTLBlendFactorOneMinusSourceAlpha;
+    }
+    desc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+    desc.label = [NSString stringWithFormat:@"TerrainLOD%dPrewarmed", i];
+
+    ctx->lodTerrainPipelines[i] =
+        [ctx->device newRenderPipelineStateWithDescriptor:desc error:&error];
+    if (ctx->lodTerrainPipelines[i]) {
+      printf("[MetalRender] Prewarmed LOD %d pipeline (blockLight=%d, tex=%d, "
+             "fog=%d)\n",
+             i, configs[i].blockLight, configs[i].texSample, configs[i].fog);
+    }
+  }
 }
 JNIEXPORT jintArray JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nGetPipelineCacheStats(
@@ -1384,7 +1557,7 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nDestroy(
   if (!ctx)
     return;
   destroyMetalFXResources(ctx);
-  // Clean up IOSurface resources
+
   if (ctx->ioSurfaceTexture)
     ctx->ioSurfaceTexture = nil;
   if (ctx->ioSurface) {
@@ -1430,10 +1603,8 @@ Java_com_metalrender_nativebridge_NativeBridge_nGetDeviceName(JNIEnv *env,
          (long long)handle);
   MetalContext *ctx = getContext(handle);
   if (!ctx) {
-    printf("[MetalRender Native] getContext returned null.\n");
     return env->NewStringUTF("Unknown");
   }
-  printf("[MetalRender Native] Device name: %s\n", ctx->deviceName.c_str());
   return env->NewStringUTF(ctx->deviceName.c_str());
 }
 
@@ -1455,7 +1626,14 @@ Java_com_metalrender_nativebridge_NativeBridge_nSupportsMeshShaders(JNIEnv *,
 JNIEXPORT jboolean JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nSupportsMetalFX(JNIEnv *,
                                                                 jclass) {
+#if METALRENDER_HAS_METALFX
+  id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+  bool supported = supportsMetalFX(device);
+  device = nil;
+  return supported ? JNI_TRUE : JNI_FALSE;
+#else
   return JNI_FALSE;
+#endif
 }
 
 JNIEXPORT jboolean JNICALL
@@ -1469,11 +1647,39 @@ Java_com_metalrender_nativebridge_NativeBridge_nSupportsHiZ(JNIEnv *, jclass,
 
 JNIEXPORT void JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nSetMetalFXEnabled(
-    JNIEnv *, jclass, jlong handle, jboolean enabled) {}
+    JNIEnv *, jclass, jlong handle, jboolean enabled) {
+#if METALRENDER_HAS_METALFX
+  MetalContext *ctx = getContext(handle);
+  if (!ctx)
+    return;
+  bool newEnabled = (enabled == JNI_TRUE);
+  if (ctx->metalFxEnabled != newEnabled) {
+    ctx->metalFxEnabled = newEnabled;
+    if (!newEnabled) {
+      destroyMetalFXResources(ctx);
+    }
+    printf("[MetalRender] MetalFX %s\n", newEnabled ? "enabled" : "disabled");
+  }
+#endif
+}
 
 JNIEXPORT void JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nConfigureMetalFX(
-    JNIEnv *, jclass, jlong handle, jint width, jint height, jfloat scale) {}
+    JNIEnv *, jclass, jlong handle, jint width, jint height, jfloat scale) {
+#if METALRENDER_HAS_METALFX
+  MetalContext *ctx = getContext(handle);
+  if (!ctx)
+    return;
+
+  if (!ctx->metalFxSupported) {
+    ctx->metalFxSupported = supportsMetalFX(ctx->device);
+  }
+  if (ctx->metalFxSupported && ctx->metalFxEnabled) {
+    ensureMetalFXResources(ctx, static_cast<uint32_t>(width),
+                           static_cast<uint32_t>(height), scale);
+  }
+#endif
+}
 
 JNIEXPORT jlong JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nEnsureHiZ(JNIEnv *, jclass,
@@ -1605,7 +1811,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nOcclusionEvaluate(
   memcpy(resultPtr, [ctx->occlusionResultBuffer contents], queryCount);
 }
 
-// Upload atlas texture data from Java ByteBuffer
 JNIEXPORT jboolean JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nUploadAtlas(JNIEnv *env, jclass,
                                                             jlong handle,
@@ -1628,19 +1833,26 @@ Java_com_metalrender_nativebridge_NativeBridge_nUploadAtlas(JNIEnv *env, jclass,
     return JNI_FALSE;
   }
 
-  // Release old atlas texture if it exists
   if (ctx->atlasTexture) {
     ctx->atlasTexture = nil;
   }
 
-  // Create new atlas texture descriptor
-  // Use BGRA8 format to match the Java code's BGRA byte order
-  MTLTextureDescriptor *texDesc = [MTLTextureDescriptor
-      texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
-                                   width:(NSUInteger)width
-                                  height:(NSUInteger)height
-                               mipmapped:NO];
-  texDesc.usage = MTLTextureUsageShaderRead;
+  NSUInteger maxDim = std::max((NSUInteger)width, (NSUInteger)height);
+  NSUInteger mipLevels = 1;
+  NSUInteger dim = maxDim;
+  while (dim > 1) {
+    dim >>= 1;
+    mipLevels++;
+  }
+
+  MTLTextureDescriptor *texDesc = [[MTLTextureDescriptor alloc] init];
+  texDesc.textureType = MTLTextureType2D;
+  texDesc.pixelFormat = MTLPixelFormatBGRA8Unorm;
+  texDesc.width = (NSUInteger)width;
+  texDesc.height = (NSUInteger)height;
+  texDesc.mipmapLevelCount = mipLevels;
+  texDesc.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+
   texDesc.storageMode = MTLStorageModeShared;
 
   ctx->atlasTexture = [ctx->device newTextureWithDescriptor:texDesc];
@@ -1650,7 +1862,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nUploadAtlas(JNIEnv *env, jclass,
     return JNI_FALSE;
   }
 
-  // Upload pixel data to texture
   MTLRegion region =
       MTLRegionMake2D(0, 0, (NSUInteger)width, (NSUInteger)height);
   NSUInteger bytesPerRow = (NSUInteger)(width * 4);
@@ -1659,10 +1870,36 @@ Java_com_metalrender_nativebridge_NativeBridge_nUploadAtlas(JNIEnv *env, jclass,
                          withBytes:data
                        bytesPerRow:bytesPerRow];
 
-  fprintf(
-      stderr,
-      "[MetalRender] nUploadAtlas: uploaded %dx%d atlas texture successfully\n",
-      width, height);
+  id<MTLCommandBuffer> mipCmdBuf = [ctx->graphicsQueue commandBuffer];
+  if (mipCmdBuf) {
+    id<MTLBlitCommandEncoder> blitEnc = [mipCmdBuf blitCommandEncoder];
+    if (blitEnc) {
+      [blitEnc generateMipmapsForTexture:ctx->atlasTexture];
+      [blitEnc endEncoding];
+    }
+    [mipCmdBuf commit];
+    [mipCmdBuf waitUntilCompleted];
+  }
+
+  if (ctx->terrainSampler) {
+    MTLSamplerDescriptor *samplerDesc = [[MTLSamplerDescriptor alloc] init];
+    samplerDesc.minFilter = MTLSamplerMinMagFilterNearest;
+    samplerDesc.magFilter = MTLSamplerMinMagFilterNearest;
+    samplerDesc.mipFilter = MTLSamplerMipFilterNearest;
+    samplerDesc.sAddressMode = MTLSamplerAddressModeRepeat;
+    samplerDesc.tAddressMode = MTLSamplerAddressModeRepeat;
+    samplerDesc.maxAnisotropy = 1;
+    id<MTLSamplerState> newSampler =
+        [ctx->device newSamplerStateWithDescriptor:samplerDesc];
+    if (newSampler) {
+      ctx->terrainSampler = newSampler;
+    }
+  }
+
+  fprintf(stderr,
+          "[MetalRender] nUploadAtlas: uploaded %dx%d atlas texture with %lu "
+          "mip levels\n",
+          width, height, (unsigned long)mipLevels);
   return JNI_TRUE;
 }
 
@@ -1728,7 +1965,8 @@ Java_com_metalrender_nativebridge_NativeBridge_nClearIndirectCommands(
 JNIEXPORT void JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nQueueIndirectDraw(
     JNIEnv *, jclass, jlong handle, jint commandIndex, jlong bufferOffset,
-    jlong, jint vertexCount, jint chunkX, jint chunkY, jint chunkZ, jint) {
+    jlong, jint vertexCount, jint chunkX, jint chunkY, jint chunkZ,
+    jint renderLayer) {
   MetalContext *ctx = getContext(handle);
   if (!ctx)
     return;
@@ -1736,15 +1974,14 @@ Java_com_metalrender_nativebridge_NativeBridge_nQueueIndirectDraw(
       commandIndex >= static_cast<jint>(ctx->maxIndirectCommands))
     return;
 
-  // Store draw command data with chunk origin
   DrawCommandData cmd;
   cmd.bufferOffset = static_cast<uint32_t>(bufferOffset);
   cmd.vertexCount = static_cast<uint32_t>(vertexCount);
   cmd.originX = static_cast<float>(chunkX);
   cmd.originY = static_cast<float>(chunkY);
   cmd.originZ = static_cast<float>(chunkZ);
+  cmd.renderLayer = static_cast<uint32_t>(renderLayer);
 
-  // Ensure vector is large enough
   if (static_cast<size_t>(commandIndex) >= ctx->drawCommands.size()) {
     ctx->drawCommands.resize(commandIndex + 1);
   }
@@ -1752,6 +1989,50 @@ Java_com_metalrender_nativebridge_NativeBridge_nQueueIndirectDraw(
 
   uint32_t nextCount = static_cast<uint32_t>(commandIndex + 1);
   ctx->currentIndirectCount = std::max(ctx->currentIndirectCount, nextCount);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nBatchDrawCommands(
+    JNIEnv *env, jclass, jlong handle, jobject buffer, jint commandCount) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || commandCount <= 0)
+    return;
+
+  uint8_t *data = (uint8_t *)env->GetDirectBufferAddress(buffer);
+  if (!data)
+    return;
+
+  uint32_t count = static_cast<uint32_t>(commandCount);
+  if (count > ctx->maxIndirectCommands)
+    count = ctx->maxIndirectCommands;
+
+  ctx->drawCommands.resize(count);
+  ctx->currentIndirectCount = count;
+
+  static const size_t ENTRY_SIZE = 32;
+  for (uint32_t i = 0; i < count; i++) {
+    uint8_t *entry = data + i * ENTRY_SIZE;
+    DrawCommandData &cmd = ctx->drawCommands[i];
+
+    uint32_t offset, vertexCount, renderLayer, lodLevel;
+    float ox, oy, oz;
+    memcpy(&offset, entry + 0, 4);
+    memcpy(&vertexCount, entry + 4, 4);
+    memcpy(&ox, entry + 8, 4);
+    memcpy(&oy, entry + 12, 4);
+    memcpy(&oz, entry + 16, 4);
+    memcpy(&renderLayer, entry + 20, 4);
+
+    memcpy(&lodLevel, entry + 28, 4);
+
+    cmd.bufferOffset = offset;
+    cmd.vertexCount = vertexCount;
+    cmd.originX = ox;
+    cmd.originY = oy;
+    cmd.originZ = oz;
+    cmd.renderLayer = renderLayer;
+    cmd.lodLevel = lodLevel;
+  }
 }
 
 JNIEXPORT jint JNICALL
@@ -1772,38 +2053,24 @@ Java_com_metalrender_nativebridge_NativeBridge_nExecuteIndirect(JNIEnv *,
 
 #if METALRENDER_HAS_METALFX
   if (ctx->metalFxEnabled && ctx->metalFxScaler && ctx->metalFxColor &&
-      ctx->metalFxDepth && ctx->metalFxOutput) {
+      ctx->metalFxOutput) {
+
     MTLRenderPassDescriptor *passDesc =
         [MTLRenderPassDescriptor renderPassDescriptor];
     passDesc.colorAttachments[0].texture = ctx->metalFxColor;
     passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
     passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
-    // Clear to transparent for compositing
     passDesc.colorAttachments[0].clearColor =
         MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
-    passDesc.depthAttachment.texture = ctx->metalFxDepth;
-    passDesc.depthAttachment.loadAction = MTLLoadActionClear;
-    passDesc.depthAttachment.storeAction = MTLStoreActionStore;
-    passDesc.depthAttachment.clearDepth = 1.0;
 
     id<MTLRenderCommandEncoder> encoder =
         [commandBuffer renderCommandEncoderWithDescriptor:passDesc];
     if (encoder) {
-
       [encoder endEncoding];
     }
 
     ctx->metalFxScaler.colorTexture = ctx->metalFxColor;
-    ctx->metalFxScaler.depthTexture = ctx->metalFxDepth;
     ctx->metalFxScaler.outputTexture = ctx->metalFxOutput;
-    ctx->metalFxScaler.inputContentWidth = ctx->metalFxInputWidth;
-    ctx->metalFxScaler.inputContentHeight = ctx->metalFxInputHeight;
-    if (ctx->metalFxResetHistory) {
-      ctx->metalFxScaler.reset = YES;
-      ctx->metalFxResetHistory = false;
-    } else {
-      ctx->metalFxScaler.reset = NO;
-    }
     [ctx->metalFxScaler encodeToCommandBuffer:commandBuffer];
 
     [commandBuffer commit];
@@ -1824,15 +2091,20 @@ Java_com_metalrender_nativebridge_NativeBridge_nSetTemporalJitter(
   ctx->temporalJitterX = jitterX;
   ctx->temporalJitterY = jitterY;
   ctx->temporalBlend = blendFactor;
-#if METALRENDER_HAS_METALFX
-  if (ctx->metalFxScaler) {
-    ctx->metalFxScaler.jitterOffsetX = jitterX;
-    ctx->metalFxScaler.jitterOffsetY = jitterY;
-  }
-#endif
 }
 
-// IOSurface methods for blitting Metal content to OpenGL
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nSetLightParams(
+    JNIEnv *, jclass, jlong handle, jfloat dayBrightness, jfloat ambientLight,
+    jfloat skyAngle) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx)
+    return;
+  ctx->dayBrightness = dayBrightness;
+  ctx->ambientLight = ambientLight;
+  ctx->skyAngle = skyAngle;
+}
+
 JNIEXPORT jint JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nGetIOSurfaceWidth(
     JNIEnv *, jclass, jlong handle) {
@@ -1858,24 +2130,19 @@ Java_com_metalrender_nativebridge_NativeBridge_nBindIOSurfaceToTexture(
   if (!ctx || !ctx->ioSurface || glTexture <= 0)
     return JNI_FALSE;
 
-  // Get current OpenGL context
   CGLContextObj cglContext = CGLGetCurrentContext();
   if (!cglContext) {
     printf("[MetalRender] No current CGL context for IOSurface binding\n");
     return JNI_FALSE;
   }
 
-  // Bind IOSurface to OpenGL texture using GL_TEXTURE_RECTANGLE
-  // Note: IOSurfaces use GL_TEXTURE_RECTANGLE, not GL_TEXTURE_2D
   GLenum target = GL_TEXTURE_RECTANGLE;
   glBindTexture(target, static_cast<GLuint>(glTexture));
 
   CGLError err = CGLTexImageIOSurface2D(
       cglContext, target, GL_RGBA, static_cast<GLsizei>(ctx->ioSurfaceWidth),
       static_cast<GLsizei>(ctx->ioSurfaceHeight), GL_BGRA,
-      GL_UNSIGNED_INT_8_8_8_8_REV, ctx->ioSurface,
-      0 // plane
-  );
+      GL_UNSIGNED_INT_8_8_8_8_REV, ctx->ioSurface, 0);
 
   if (err != kCGLNoError) {
     printf("[MetalRender] CGLTexImageIOSurface2D failed: %d\n", err);
@@ -1885,8 +2152,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nBindIOSurfaceToTexture(
   return JNI_TRUE;
 }
 
-// Wait for any pending Metal commands to complete
-// This ensures the IOSurface has valid data from all render passes
 JNIEXPORT void JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nWaitForRender(JNIEnv *, jclass,
                                                               jlong handle) {
@@ -1895,33 +2160,22 @@ Java_com_metalrender_nativebridge_NativeBridge_nWaitForRender(JNIEnv *, jclass,
     return;
   }
 
-  // Wait for entity command buffer if pending
+  if (ctx->lastTerrainCommandBuffer) {
+    [ctx->lastTerrainCommandBuffer waitUntilCompleted];
+    ctx->lastTerrainCommandBuffer = nil;
+  }
+
   if (ctx->lastEntityCommandBuffer) {
     [ctx->lastEntityCommandBuffer waitUntilCompleted];
     ctx->lastEntityCommandBuffer = nil;
   }
 
-  // Wait for GUI command buffer if pending
   if (ctx->lastGuiCommandBuffer) {
     [ctx->lastGuiCommandBuffer waitUntilCompleted];
     ctx->lastGuiCommandBuffer = nil;
   }
-
-  // Create an empty command buffer and wait for it to complete
-  // This effectively flushes any other pending work on the graphics queue
-  id<MTLCommandBuffer> syncBuffer = [ctx->graphicsQueue commandBuffer];
-  if (syncBuffer) {
-    [syncBuffer commit];
-    [syncBuffer waitUntilCompleted];
-  }
-
-  static int waitCount = 0;
-  if (waitCount++ < 10 || waitCount % 60 == 0) {
-    printf("[MetalRender] nWaitForRender: sync complete\n");
-  }
 }
 
-// CPU readback - copy Metal render target to ByteBuffer for glTexImage2D upload
 JNIEXPORT jboolean JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nReadbackPixels(JNIEnv *env,
                                                                jclass,
@@ -1948,7 +2202,7 @@ Java_com_metalrender_nativebridge_NativeBridge_nReadbackPixels(JNIEnv *env,
 
   uint32_t width = ctx->ioSurfaceWidth;
   uint32_t height = ctx->ioSurfaceHeight;
-  size_t requiredSize = width * height * 4; // BGRA = 4 bytes per pixel
+  size_t requiredSize = width * height * 4;
 
   if (bufferCapacity < (jlong)requiredSize) {
     printf("[MetalRender] nReadbackPixels: buffer too small (%lld < %zu)\n",
@@ -1956,7 +2210,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nReadbackPixels(JNIEnv *env,
     return JNI_FALSE;
   }
 
-  // Read pixels from IOSurface directly to handle stride correctly
   IOReturn lockResult =
       IOSurfaceLock(ctx->ioSurface, kIOSurfaceLockReadOnly, nullptr);
   if (lockResult != kIOReturnSuccess) {
@@ -1970,47 +2223,17 @@ Java_com_metalrender_nativebridge_NativeBridge_nReadbackPixels(JNIEnv *env,
   void *baseAddr = IOSurfaceGetBaseAddress(ctx->ioSurface);
   size_t sourceStride = IOSurfaceGetBytesPerRow(ctx->ioSurface);
 
-  // Copy row by row to pack the data
   uint8_t *src = (uint8_t *)baseAddr;
   uint8_t *dst = (uint8_t *)bufferPtr;
   size_t rowBytes = width * 4;
 
-  // Ensure we don't read past the buffer or surface
   if (sourceStride < rowBytes) {
-    // This shouldn't happen if we allocated correctly, but safety first
+
     rowBytes = sourceStride;
   }
 
-  // Real copy from IOSurface
   for (uint32_t y = 0; y < height; y++) {
     memcpy(dst + y * (width * 4), src + y * sourceStride, rowBytes);
-  }
-
-  // DEBUG: Log sample pixels from BOTH source AND destination
-  static int logCounter = 0;
-  if (height > 0 && width > 0 && logCounter++ <= 10) {
-    // Sample center pixel from SOURCE (IOSurface)
-    uint32_t cx = width / 2;
-    uint32_t cy = height / 2;
-    uint8_t *centerPixelSrc = src + cy * sourceStride + cx * 4;
-    // Sample corner from SOURCE
-    uint8_t *cornerPixelSrc = src;
-
-    // Sample center pixel from DESTINATION (Java buffer)
-    uint8_t *centerPixelDst = dst + cy * width * 4 + cx * 4;
-    // Sample corner from DESTINATION
-    uint8_t *cornerPixelDst = dst;
-
-    printf("[MetalRender] IOSurface SRC: center(%u,%u) BGRA=%d,%d,%d,%d  "
-           "corner(0,0) BGRA=%d,%d,%d,%d\n",
-           cx, cy, centerPixelSrc[0], centerPixelSrc[1], centerPixelSrc[2],
-           centerPixelSrc[3], cornerPixelSrc[0], cornerPixelSrc[1],
-           cornerPixelSrc[2], cornerPixelSrc[3]);
-    printf("[MetalRender] Java DST: center(%u,%u) BGRA=%d,%d,%d,%d  "
-           "corner(0,0) BGRA=%d,%d,%d,%d\n",
-           cx, cy, centerPixelDst[0], centerPixelDst[1], centerPixelDst[2],
-           centerPixelDst[3], cornerPixelDst[0], cornerPixelDst[1],
-           cornerPixelDst[2], cornerPixelDst[3]);
   }
 
   IOSurfaceUnlock(ctx->ioSurface, kIOSurfaceLockReadOnly, nullptr);
@@ -2018,7 +2241,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nReadbackPixels(JNIEnv *env,
   return JNI_TRUE;
 }
 
-// Shader path for loading compiled metallib
 JNIEXPORT void JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nSetShadersPath(JNIEnv *env,
                                                                jclass,
@@ -2041,8 +2263,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nSetShadersPath(JNIEnv *env,
   }
 }
 
-// Surface attachment for window integration - FULL METAL MODE
-// This REPLACES OpenGL entirely - Metal becomes the sole renderer
 JNIEXPORT jboolean JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nAttachSurface(
     JNIEnv *, jclass, jlong handle, jlong cocoaWindow) {
@@ -2067,47 +2287,38 @@ Java_com_metalrender_nativebridge_NativeBridge_nAttachSurface(
       return JNI_FALSE;
     }
 
-    // Get the content view
     NSView *contentView = [window contentView];
     if (!contentView) {
       printf("[MetalRender] nAttachSurface: no content view\n");
       return JNI_FALSE;
     }
 
-    // For 100% Metal mode, we add CAMetalLayer ON TOP of everything
-    // and cancel the OpenGL swap buffer in Java
     CAMetalLayer *metalLayer = [CAMetalLayer layer];
     metalLayer.device = ctx->device;
     metalLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
-    metalLayer.framebufferOnly = NO; // Allow reading for screenshots
+    metalLayer.framebufferOnly = NO;
     metalLayer.drawableSize =
         CGSizeMake(ctx->ioSurfaceWidth, ctx->ioSurfaceHeight);
-    metalLayer.opaque = YES; // OPAQUE - Metal is the only renderer now!
+    metalLayer.opaque = YES;
     metalLayer.frame = contentView.bounds;
     metalLayer.contentsScale = contentView.window.backingScaleFactor;
 
-    // CRITICAL: Disable display sync to prevent blocking on nextDrawable
-    // This avoids freezes when OpenGL/Metal vsync conflict
     metalLayer.displaySyncEnabled = NO;
 
-    // Use triple buffering for smooth presentation
     metalLayer.maximumDrawableCount = 3;
 
-    // Allow next drawable to return nil instead of blocking
     metalLayer.allowsNextDrawableTimeout = YES;
 
-    // Add as sublayer ON TOP (zPosition > 0)
-    // Use dispatch_sync to ensure layer is added before we return
     __block bool layerAdded = false;
     if ([NSThread isMainThread]) {
-      // Already on main thread, just add it
+
       [contentView setWantsLayer:YES];
       metalLayer.zPosition = 1000;
       [[contentView layer] addSublayer:metalLayer];
       layerAdded = true;
       printf("[MetalRender] CAMetalLayer added on main thread (direct)\n");
     } else {
-      // Dispatch synchronously to main thread
+
       dispatch_sync(dispatch_get_main_queue(), ^{
         [contentView setWantsLayer:YES];
         metalLayer.zPosition = 1000;
@@ -2143,76 +2354,38 @@ Java_com_metalrender_nativebridge_NativeBridge_nDetachSurface(JNIEnv *, jclass,
   }
 }
 
-// Present the current frame directly to screen (Full Metal mode)
 JNIEXPORT jboolean JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nPresentFrame(JNIEnv *, jclass,
                                                              jlong handle) {
   MetalContext *ctx = getContext(handle);
 
-  // Debug logging - always log for now to diagnose
   static int presentFrameCount = 0;
   presentFrameCount++;
 
-  // Very verbose logging for first 10 frames
-  if (presentFrameCount <= 10) {
-    printf("[MetalRender] nPresentFrame #%d: ctx=%p\\n", presentFrameCount,
-           ctx);
-    if (ctx) {
-      printf("  -> directPresentEnabled=%d, metalLayer=%p, "
-             "ioSurfaceTexture=%p, size=%ux%u\\n",
-             ctx->directPresentEnabled, (void *)ctx->metalLayer,
-             (void *)ctx->ioSurfaceTexture, ctx->ioSurfaceWidth,
-             ctx->ioSurfaceHeight);
-    }
-  } else if (presentFrameCount % 300 == 0) {
-    printf("[MetalRender] nPresentFrame #%d: enabled=%d, layer=%p\\n",
-           presentFrameCount, ctx ? ctx->directPresentEnabled : 0,
-           ctx ? (void *)ctx->metalLayer : nullptr);
-  }
-
   if (!ctx || !ctx->directPresentEnabled || !ctx->metalLayer ||
       !ctx->ioSurfaceTexture) {
-    if (presentFrameCount <= 10) {
-      printf("[MetalRender] nPresentFrame: FAILED - missing state (enabled=%d, "
-             "layer=%p, tex=%p)\\n",
-             ctx ? ctx->directPresentEnabled : 0,
-             ctx ? (void *)ctx->metalLayer : nullptr,
-             ctx ? (void *)ctx->ioSurfaceTexture : nullptr);
-    }
     return JNI_FALSE;
   }
 
   @autoreleasepool {
-    // Update layer drawable size to match IOSurface
+
     CGSize currentSize = ctx->metalLayer.drawableSize;
     if (currentSize.width != ctx->ioSurfaceWidth ||
         currentSize.height != ctx->ioSurfaceHeight) {
       ctx->metalLayer.drawableSize =
           CGSizeMake(ctx->ioSurfaceWidth, ctx->ioSurfaceHeight);
-      printf("[MetalRender] nPresentFrame: updated layer size to %ux%u\n",
-             ctx->ioSurfaceWidth, ctx->ioSurfaceHeight);
     }
 
-    // Get next drawable from the layer - use non-blocking approach
-    // With allowsNextDrawableTimeout=YES and displaySyncEnabled=NO,
-    // this should return nil quickly if no drawable available
     id<CAMetalDrawable> drawable = [ctx->metalLayer nextDrawable];
     if (!drawable) {
-      if (presentFrameCount <= 10 || presentFrameCount % 300 == 0) {
-        printf("[MetalRender] nPresentFrame #%d: no drawable available "
-               "(skipping frame)\n",
-               presentFrameCount);
-      }
       return JNI_FALSE;
     }
 
-    // Create command buffer
     id<MTLCommandBuffer> commandBuffer = [ctx->graphicsQueue commandBuffer];
     if (!commandBuffer) {
       return JNI_FALSE;
     }
 
-    // Blit IOSurface texture to drawable texture
     id<MTLBlitCommandEncoder> blitEncoder = [commandBuffer blitCommandEncoder];
     [blitEncoder copyFromTexture:ctx->ioSurfaceTexture
                      sourceSlice:0
@@ -2226,20 +2399,13 @@ Java_com_metalrender_nativebridge_NativeBridge_nPresentFrame(JNIEnv *, jclass,
                destinationOrigin:MTLOriginMake(0, 0, 0)];
     [blitEncoder endEncoding];
 
-    // Present and commit
     [commandBuffer presentDrawable:drawable];
     [commandBuffer commit];
-
-    if (presentFrameCount <= 10) {
-      printf("[MetalRender] nPresentFrame #%d: successfully presented\n",
-             presentFrameCount);
-    }
 
     return JNI_TRUE;
   }
 }
 
-// Memory monitoring
 JNIEXPORT jlong JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nGetDeviceMemory(JNIEnv *,
                                                                 jclass,
@@ -2247,7 +2413,7 @@ Java_com_metalrender_nativebridge_NativeBridge_nGetDeviceMemory(JNIEnv *,
   MetalContext *ctx = getContext(handle);
   if (!ctx || !ctx->device)
     return 0;
-  // Return recommended max working set size (unified memory)
+
   if (@available(macOS 10.13, *)) {
     return static_cast<jlong>([ctx->device recommendedMaxWorkingSetSize]);
   }
@@ -2260,14 +2426,13 @@ Java_com_metalrender_nativebridge_NativeBridge_nGetMemoryUsage(JNIEnv *, jclass,
   MetalContext *ctx = getContext(handle);
   if (!ctx || !ctx->device)
     return 0;
-  // Return current allocated size
+
   if (@available(macOS 10.13, *)) {
     return static_cast<jlong>([ctx->device currentAllocatedSize]);
   }
   return 0;
 }
 
-// Fence synchronization
 JNIEXPORT jlong JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nCreateFence(JNIEnv *, jclass,
                                                             jlong handle) {
@@ -2277,7 +2442,7 @@ Java_com_metalrender_nativebridge_NativeBridge_nCreateFence(JNIEnv *, jclass,
   id<MTLFence> fence = [ctx->device newFence];
   if (!fence)
     return 0;
-  // Store the fence and return a handle
+
   return reinterpret_cast<jlong>((__bridge_retained void *)fence);
 }
 
@@ -2288,8 +2453,7 @@ Java_com_metalrender_nativebridge_NativeBridge_nPollFence(JNIEnv *, jclass,
   (void)handle;
   if (fenceHandle == 0)
     return JNI_TRUE;
-  // Metal fences don't have a poll mechanism - they're for GPU-GPU sync
-  // Return true as "completed" since we can't really poll
+
   return JNI_TRUE;
 }
 
@@ -2301,10 +2465,9 @@ Java_com_metalrender_nativebridge_NativeBridge_nWaitFence(JNIEnv *, jclass,
   (void)handle;
   (void)timeout;
   if (fenceHandle == 0)
-    return 0; // Success - nothing to wait for
-  // Metal fences are GPU-GPU only, can't wait on CPU side
-  // For CPU sync, use command buffer completion handlers
-  return 0; // Return success
+    return 0;
+
+  return 0;
 }
 
 JNIEXPORT void JNICALL
@@ -2314,13 +2477,8 @@ Java_com_metalrender_nativebridge_NativeBridge_nDestroyFence(
   if (fenceHandle == 0)
     return;
   id<MTLFence> fence = (__bridge_transfer id<MTLFence>)(void *)fenceHandle;
-  fence = nil; // Release the fence
+  fence = nil;
 }
-
-// ============================================================================
-// Entity Rendering - Stub implementations
-// These will be filled in when entity rendering is fully implemented
-// ============================================================================
 
 JNIEXPORT jlong JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nUploadEntityTexture(
@@ -2338,8 +2496,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nUploadEntityTexture(
     return 0;
   }
 
-  // Create texture descriptor
-  // Note: Java uploads BGRA format from OpenGL readback
   MTLTextureDescriptor *desc = [MTLTextureDescriptor
       texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                                    width:width
@@ -2355,24 +2511,15 @@ Java_com_metalrender_nativebridge_NativeBridge_nUploadEntityTexture(
     return 0;
   }
 
-  // Upload pixel data
   MTLRegion region = MTLRegionMake2D(0, 0, width, height);
   [texture replaceRegion:region
              mipmapLevel:0
                withBytes:pixelData
              bytesPerRow:width * 4];
 
-  // Store in texture cache and return handle
   uint64_t texHandle =
       reinterpret_cast<uint64_t>((__bridge_retained void *)texture);
   ctx->entityTextures[texHandle] = texture;
-
-  static int uploadCount = 0;
-  if (uploadCount++ < 20) {
-    printf("[metalrender] nUploadEntityTexture: created %dx%d texture "
-           "handle=%llu\n",
-           width, height, texHandle);
-  }
 
   return static_cast<jlong>(texHandle);
 }
@@ -2387,7 +2534,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nDestroyEntityTexture(
   auto it = ctx->entityTextures.find(static_cast<uint64_t>(textureHandle));
   if (it != ctx->entityTextures.end()) {
     ctx->entityTextures.erase(it);
-    // ARC will release the texture
   }
 }
 
@@ -2405,7 +2551,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginEntityPass(
     return;
   }
 
-  // Ensure entity pipeline exists
   if (!ensureEntityPipeline(ctx)) {
     static int errCount = 0;
     if (errCount++ < 10) {
@@ -2415,29 +2560,34 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginEntityPass(
     return;
   }
 
-  // End any existing entity pass
   if (ctx->entityPassActive && ctx->currentEntityEncoder) {
     [ctx->currentEntityEncoder endEncoding];
     [ctx->currentEntityCommandBuffer commit];
-    [ctx->currentEntityCommandBuffer waitUntilCompleted];
+    ctx->lastEntityCommandBuffer = ctx->currentEntityCommandBuffer;
     ctx->currentEntityEncoder = nil;
     ctx->currentEntityCommandBuffer = nil;
   }
 
-  // Create render pass - LOAD depth from terrain pass, don't clear
+  if (ctx->lastTerrainCommandBuffer) {
+    [ctx->lastTerrainCommandBuffer waitUntilCompleted];
+    ctx->lastTerrainCommandBuffer = nil;
+  }
+
+  if (ctx->lastEntityCommandBuffer) {
+    [ctx->lastEntityCommandBuffer waitUntilCompleted];
+    ctx->lastEntityCommandBuffer = nil;
+  }
+
   MTLRenderPassDescriptor *passDesc =
       [MTLRenderPassDescriptor renderPassDescriptor];
   passDesc.colorAttachments[0].texture = ctx->ioSurfaceTexture;
-  passDesc.colorAttachments[0].loadAction =
-      MTLLoadActionLoad; // Keep terrain colors
+  passDesc.colorAttachments[0].loadAction = MTLLoadActionLoad;
   passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
 
   passDesc.depthAttachment.texture = ctx->depthTexture;
-  passDesc.depthAttachment.loadAction =
-      MTLLoadActionLoad; // KEEP terrain depth!
+  passDesc.depthAttachment.loadAction = MTLLoadActionLoad;
   passDesc.depthAttachment.storeAction = MTLStoreActionStore;
 
-  // Create command buffer and encoder
   ctx->currentEntityCommandBuffer = [ctx->graphicsQueue commandBuffer];
   if (!ctx->currentEntityCommandBuffer) {
     fprintf(
@@ -2456,15 +2606,12 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginEntityPass(
     return;
   }
 
-  // Set up pipeline state
   [ctx->currentEntityEncoder setRenderPipelineState:ctx->entityPipeline];
   [ctx->currentEntityEncoder setDepthStencilState:ctx->entityDepthState];
-  [ctx->currentEntityEncoder
-      setCullMode:MTLCullModeNone]; // Disable culling - entities have varying
-                                    // winding
+  [ctx->currentEntityEncoder setCullMode:MTLCullModeNone];
+
   [ctx->currentEntityEncoder setFrontFacingWinding:MTLWindingCounterClockwise];
 
-  // Set viewport
   MTLViewport viewport;
   viewport.originX = 0.0;
   viewport.originY = 0.0;
@@ -2474,7 +2621,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginEntityPass(
   viewport.zfar = 1.0;
   [ctx->currentEntityEncoder setViewport:viewport];
 
-  // Set up frame uniforms from passed data
   EntityFrameUniforms frameUniforms;
   memset(&frameUniforms, 0, sizeof(frameUniforms));
 
@@ -2497,7 +2643,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginEntityPass(
     }
   }
 
-  // Set fog params from context
   frameUniforms.fogColor[0] = ctx->fogR;
   frameUniforms.fogColor[1] = ctx->fogG;
   frameUniforms.fogColor[2] = ctx->fogB;
@@ -2507,6 +2652,11 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginEntityPass(
   frameUniforms.fogParams[2] = 0.0f;
   frameUniforms.fogParams[3] = 0.0f;
 
+  frameUniforms.lightParams[0] = ctx->dayBrightness;
+  frameUniforms.lightParams[1] = ctx->ambientLight;
+  frameUniforms.lightParams[2] = ctx->skyAngle;
+  frameUniforms.lightParams[3] = 0.0f;
+
   [ctx->currentEntityEncoder setVertexBytes:&frameUniforms
                                      length:sizeof(frameUniforms)
                                     atIndex:1];
@@ -2515,11 +2665,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginEntityPass(
                                       atIndex:1];
 
   ctx->entityPassActive = true;
-
-  static int beginCount = 0;
-  if (beginCount++ < 20) {
-    printf("[metalrender] nBeginEntityPass: started entity render pass\n");
-  }
 }
 
 JNIEXPORT void JNICALL
@@ -2544,10 +2689,8 @@ Java_com_metalrender_nativebridge_NativeBridge_nDrawEntity(
     return;
   }
 
-  // Vertex data: 32 bytes per vertex (position, UV, color, normal, padding)
   size_t vertexDataSize = static_cast<size_t>(vertexCount) * 32;
 
-  // Create temporary buffer for vertex data
   id<MTLBuffer> vertexBuffer =
       [ctx->device newBufferWithBytes:vertexData
                                length:vertexDataSize
@@ -2558,10 +2701,8 @@ Java_com_metalrender_nativebridge_NativeBridge_nDrawEntity(
     return;
   }
 
-  // Bind vertex buffer
   [ctx->currentEntityEncoder setVertexBuffer:vertexBuffer offset:0 atIndex:0];
 
-  // Determine which texture to use
   id<MTLTexture> textureToUse = nil;
 
   if (textureHandle != 0) {
@@ -2571,30 +2712,18 @@ Java_com_metalrender_nativebridge_NativeBridge_nDrawEntity(
     }
   }
 
-  // If no texture, use fallback white texture
   if (!textureToUse && ctx->whiteTexture) {
     textureToUse = ctx->whiteTexture;
   }
 
-  // Bind texture and sampler
   if (textureToUse) {
     [ctx->currentEntityEncoder setFragmentTexture:textureToUse atIndex:0];
-    [ctx->currentEntityEncoder setFragmentSamplerState:ctx->entitySampler
-                                               atIndex:0];
   }
 
-  // Draw triangles
   [ctx->currentEntityEncoder
       drawPrimitives:MTLPrimitiveTypeTriangle
          vertexStart:0
          vertexCount:static_cast<NSUInteger>(vertexCount)];
-
-  static int drawCount = 0;
-  if (drawCount++ < 100) {
-    printf("[metalrender] nDrawEntity: drew %d vertices, tex=%llu (using=%p)\n",
-           vertexCount, static_cast<unsigned long long>(textureHandle),
-           textureToUse);
-  }
 }
 
 JNIEXPORT void JNICALL
@@ -2608,32 +2737,19 @@ Java_com_metalrender_nativebridge_NativeBridge_nEndEntityPass(JNIEnv *, jclass,
     [ctx->currentEntityEncoder endEncoding];
     [ctx->currentEntityCommandBuffer commit];
 
-    // Store for waitForRender to sync on
     ctx->lastEntityCommandBuffer = ctx->currentEntityCommandBuffer;
 
     ctx->currentEntityEncoder = nil;
     ctx->currentEntityCommandBuffer = nil;
     ctx->entityPassActive = false;
-
-    static int endCount = 0;
-    if (endCount++ < 20) {
-      printf("[metalrender] nEndEntityPass: ended entity render pass\n");
-    }
   }
 }
 
-// =========================================================================
-// Item Rendering Pass - For GUI items with optional depth testing
-// 3D block items need depth testing, flat items don't
-// =========================================================================
-
-// Item pass state - tracks whether we're in an item pass and current depth mode
 static bool itemPassActive = false;
 static bool currentItemDepthTest = false;
 
-// Depth states for items
-static id<MTLDepthStencilState> itemDepthTestState = nil;   // For 3D blocks
-static id<MTLDepthStencilState> itemNoDepthTestState = nil; // For flat items
+static id<MTLDepthStencilState> itemDepthTestState = nil;
+static id<MTLDepthStencilState> itemNoDepthTestState = nil;
 
 static void ensureItemDepthStates(MetalContext *ctx) {
   if (!itemDepthTestState) {
@@ -2667,7 +2783,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginItemPass(
     return;
   }
 
-  // Ensure entity pipeline exists (reuse it for items)
   if (!ensureEntityPipeline(ctx)) {
     static int errCount = 0;
     if (errCount++ < 10) {
@@ -2677,10 +2792,8 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginItemPass(
     return;
   }
 
-  // Ensure item depth states exist
   ensureItemDepthStates(ctx);
 
-  // End any existing entity pass
   if (ctx->entityPassActive && ctx->currentEntityEncoder) {
     [ctx->currentEntityEncoder endEncoding];
     [ctx->currentEntityCommandBuffer commit];
@@ -2689,11 +2802,9 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginItemPass(
     ctx->entityPassActive = false;
   }
 
-  // Get Java arrays
   jfloat *viewProjData = env->GetFloatArrayElements(viewProj, nullptr);
   jfloat *cameraPosData = env->GetFloatArrayElements(cameraPos, nullptr);
 
-  // Create render pass descriptor - load existing content, store result
   MTLRenderPassDescriptor *passDesc =
       [MTLRenderPassDescriptor renderPassDescriptor];
   passDesc.colorAttachments[0].texture = ctx->ioSurfaceTexture;
@@ -2722,49 +2833,48 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginItemPass(
     return;
   }
 
-  // Store in entity context (reuse same encoder storage)
   ctx->currentEntityEncoder = encoder;
   ctx->currentEntityCommandBuffer = commandBuffer;
 
-  // Set up render state
   [encoder setRenderPipelineState:ctx->entityPipeline];
   [encoder setCullMode:MTLCullModeNone];
   [encoder setFrontFacingWinding:MTLWindingCounterClockwise];
 
-  // Start with no depth test (will be set per-draw)
   [encoder setDepthStencilState:itemNoDepthTestState];
   currentItemDepthTest = false;
 
-  // Set uniforms
   EntityFrameUniforms uniforms;
   memcpy(uniforms.viewProj, viewProjData, 16 * sizeof(float));
   uniforms.cameraPos[0] = cameraPosData[0];
   uniforms.cameraPos[1] = cameraPosData[1];
   uniforms.cameraPos[2] = cameraPosData[2];
   uniforms.cameraPos[3] = 1.0f;
-  // Set default fog values
+
   uniforms.fogColor[0] = 1.0f;
   uniforms.fogColor[1] = 1.0f;
   uniforms.fogColor[2] = 1.0f;
   uniforms.fogColor[3] = 0.0f;
-  uniforms.fogParams[0] = 1000.0f;  // Far fog start
-  uniforms.fogParams[1] = 10000.0f; // Far fog end
+  uniforms.fogParams[0] = 1000.0f;
+  uniforms.fogParams[1] = 10000.0f;
   uniforms.fogParams[2] = 0.0f;
   uniforms.fogParams[3] = 0.0f;
+
+  uniforms.lightParams[0] = 1.0f;
+  uniforms.lightParams[1] = 0.1f;
+  uniforms.lightParams[2] = 0.0f;
+  uniforms.lightParams[3] = 0.0f;
   [encoder setVertexBytes:&uniforms
                    length:sizeof(EntityFrameUniforms)
                   atIndex:1];
+  [encoder setFragmentBytes:&uniforms
+                     length:sizeof(EntityFrameUniforms)
+                    atIndex:1];
 
   env->ReleaseFloatArrayElements(viewProj, viewProjData, JNI_ABORT);
   env->ReleaseFloatArrayElements(cameraPos, cameraPosData, JNI_ABORT);
 
   itemPassActive = true;
   ctx->entityPassActive = true;
-
-  static int beginCount = 0;
-  if (beginCount++ < 20) {
-    printf("[metalrender] nBeginItemPass: started item render pass\n");
-  }
 }
 
 JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nDrawItem(
@@ -2788,7 +2898,6 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nDrawItem(
     return;
   }
 
-  // Switch depth state if needed
   bool needsDepth = (useDepthTest == JNI_TRUE);
   if (needsDepth != currentItemDepthTest) {
     if (needsDepth) {
@@ -2799,10 +2908,8 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nDrawItem(
     currentItemDepthTest = needsDepth;
   }
 
-  // Vertex data: 32 bytes per vertex (position, UV, color, normal, padding)
   size_t vertexDataSize = static_cast<size_t>(vertexCount) * 32;
 
-  // Create temporary buffer for vertex data
   id<MTLBuffer> vertexBuffer =
       [ctx->device newBufferWithBytes:vertexData
                                length:vertexDataSize
@@ -2813,10 +2920,8 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nDrawItem(
     return;
   }
 
-  // Bind vertex buffer
   [ctx->currentEntityEncoder setVertexBuffer:vertexBuffer offset:0 atIndex:0];
 
-  // Determine which texture to use
   id<MTLTexture> textureToUse = nil;
 
   if (textureHandle != 0) {
@@ -2826,30 +2931,18 @@ JNIEXPORT void JNICALL Java_com_metalrender_nativebridge_NativeBridge_nDrawItem(
     }
   }
 
-  // If no texture, use fallback white texture
   if (!textureToUse && ctx->whiteTexture) {
     textureToUse = ctx->whiteTexture;
   }
 
-  // Bind texture and sampler
   if (textureToUse) {
     [ctx->currentEntityEncoder setFragmentTexture:textureToUse atIndex:0];
-    [ctx->currentEntityEncoder setFragmentSamplerState:ctx->entitySampler
-                                               atIndex:0];
   }
 
-  // Draw triangles
   [ctx->currentEntityEncoder
       drawPrimitives:MTLPrimitiveTypeTriangle
          vertexStart:0
          vertexCount:static_cast<NSUInteger>(vertexCount)];
-
-  static int drawCount = 0;
-  if (drawCount++ < 100) {
-    printf("[metalrender] nDrawItem: drew %d vertices, tex=%llu, depth=%s\n",
-           vertexCount, static_cast<unsigned long long>(textureHandle),
-           needsDepth ? "ON" : "OFF");
-  }
 }
 
 JNIEXPORT void JNICALL
@@ -2868,17 +2961,8 @@ Java_com_metalrender_nativebridge_NativeBridge_nEndItemPass(JNIEnv *, jclass,
     ctx->currentEntityCommandBuffer = nil;
     ctx->entityPassActive = false;
     itemPassActive = false;
-
-    static int endCount = 0;
-    if (endCount++ < 20) {
-      printf("[metalrender] nEndItemPass: ended item render pass\n");
-    }
   }
 }
-
-// =========================================================================
-// Hand Rendering - Clear depth buffer so hand renders in front of everything
-// =========================================================================
 
 JNIEXPORT void JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nClearDepthForHand(
@@ -2892,17 +2976,13 @@ Java_com_metalrender_nativebridge_NativeBridge_nClearDepthForHand(
     return;
   }
 
-  // Create a render pass that ONLY clears the depth buffer
-  // This ensures hand/item rendering will always be in front
   MTLRenderPassDescriptor *passDesc =
       [MTLRenderPassDescriptor renderPassDescriptor];
 
-  // Don't touch color - keep terrain/entities
   passDesc.colorAttachments[0].texture = ctx->ioSurfaceTexture;
   passDesc.colorAttachments[0].loadAction = MTLLoadActionLoad;
   passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
 
-  // Clear depth to far plane (1.0)
   passDesc.depthAttachment.texture = ctx->depthTexture;
   passDesc.depthAttachment.loadAction = MTLLoadActionClear;
   passDesc.depthAttachment.storeAction = MTLStoreActionStore;
@@ -2925,23 +3005,10 @@ Java_com_metalrender_nativebridge_NativeBridge_nClearDepthForHand(
     return;
   }
 
-  // Just end immediately - the clear happens on encoder creation
   [encoder endEncoding];
   [commandBuffer commit];
-  // Don't wait - async is fine
-
-  static int clearCount = 0;
-  if (clearCount++ < 20) {
-    printf(
-        "[metalrender] nClearDepthForHand: cleared depth for hand rendering\n");
-  }
 }
 
-// =========================================================================
-// GUI Rendering Pass - No depth testing, always renders in front
-// =========================================================================
-
-// GUI-specific depth state (no depth testing)
 static id<MTLDepthStencilState> guiDepthState = nil;
 
 JNIEXPORT void JNICALL
@@ -2957,7 +3024,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginGuiPass(
     return;
   }
 
-  // Ensure entity pipeline exists (reuse it for GUI)
   if (!ensureEntityPipeline(ctx)) {
     static int errCount = 0;
     if (errCount++ < 10) {
@@ -2967,12 +3033,11 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginGuiPass(
     return;
   }
 
-  // Create GUI depth state (disable depth testing) if needed
   if (!guiDepthState) {
     MTLDepthStencilDescriptor *depthDesc =
         [[MTLDepthStencilDescriptor alloc] init];
-    depthDesc.depthCompareFunction = MTLCompareFunctionAlways; // Always pass
-    depthDesc.depthWriteEnabled = NO; // Don't write depth
+    depthDesc.depthCompareFunction = MTLCompareFunctionAlways;
+    depthDesc.depthWriteEnabled = NO;
     guiDepthState = [ctx->device newDepthStencilStateWithDescriptor:depthDesc];
     if (!guiDepthState) {
       printf("[MetalRender] Failed to create GUI depth stencil state\n");
@@ -2981,32 +3046,31 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginGuiPass(
     printf("[MetalRender] Created GUI depth state (depth test disabled)\n");
   }
 
-  // End any existing entity pass
   if (ctx->entityPassActive && ctx->currentEntityEncoder) {
     [ctx->currentEntityEncoder endEncoding];
     [ctx->currentEntityCommandBuffer commit];
-    [ctx->currentEntityCommandBuffer waitUntilCompleted];
+    ctx->lastEntityCommandBuffer = ctx->currentEntityCommandBuffer;
     ctx->currentEntityEncoder = nil;
     ctx->currentEntityCommandBuffer = nil;
   }
 
-  // SINGLE-PASS GUI: Render directly to ioSurfaceTexture over terrain
-  // This fixes GUI appearing behind terrain - GUI blends directly over existing
-  // content
+  if (ctx->lastTerrainCommandBuffer) {
+    [ctx->lastTerrainCommandBuffer waitUntilCompleted];
+    ctx->lastTerrainCommandBuffer = nil;
+  }
+  if (ctx->lastEntityCommandBuffer) {
+    [ctx->lastEntityCommandBuffer waitUntilCompleted];
+    ctx->lastEntityCommandBuffer = nil;
+  }
+
   MTLRenderPassDescriptor *passDesc =
       [MTLRenderPassDescriptor renderPassDescriptor];
-  passDesc.colorAttachments[0].texture =
-      ctx->ioSurfaceTexture; // GUI renders DIRECTLY to final texture
-  passDesc.colorAttachments[0].loadAction =
-      MTLLoadActionLoad; // KEEP terrain content underneath
+  passDesc.colorAttachments[0].texture = ctx->ioSurfaceTexture;
+  passDesc.colorAttachments[0].loadAction = MTLLoadActionLoad;
   passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
-  // No clear - we're drawing OVER existing terrain
 
-  // No depth attachment for GUI - GUI is always in front, no depth testing
-  // needed
   passDesc.depthAttachment.texture = nil;
 
-  // Create command buffer and encoder
   ctx->currentEntityCommandBuffer = [ctx->graphicsQueue commandBuffer];
   if (!ctx->currentEntityCommandBuffer) {
     fprintf(stderr,
@@ -3023,12 +3087,10 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginGuiPass(
     return;
   }
 
-  // Set up pipeline state - use GUI pipeline (no depth format) with GUI depth
-  // state
   if (ctx->guiPipeline) {
     [ctx->currentEntityEncoder setRenderPipelineState:ctx->guiPipeline];
   } else {
-    // Fallback - should not happen but log it
+
     printf("[metalrender] WARNING: guiPipeline not created, using "
            "entityPipeline\n");
     [ctx->currentEntityEncoder setRenderPipelineState:ctx->entityPipeline];
@@ -3037,7 +3099,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginGuiPass(
   [ctx->currentEntityEncoder setCullMode:MTLCullModeNone];
   [ctx->currentEntityEncoder setFrontFacingWinding:MTLWindingCounterClockwise];
 
-  // Set viewport
   MTLViewport viewport;
   viewport.originX = 0.0;
   viewport.originY = 0.0;
@@ -3047,7 +3108,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginGuiPass(
   viewport.zfar = 1.0;
   [ctx->currentEntityEncoder setViewport:viewport];
 
-  // Set up frame uniforms from passed data (orthographic for GUI)
   EntityFrameUniforms frameUniforms;
   memset(&frameUniforms, 0, sizeof(frameUniforms));
 
@@ -3070,15 +3130,19 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginGuiPass(
     }
   }
 
-  // No fog for GUI
   frameUniforms.fogColor[0] = 0.0f;
   frameUniforms.fogColor[1] = 0.0f;
   frameUniforms.fogColor[2] = 0.0f;
   frameUniforms.fogColor[3] = 0.0f;
-  frameUniforms.fogParams[0] = 10000.0f; // Far fog start
-  frameUniforms.fogParams[1] = 10001.0f; // Far fog end
+  frameUniforms.fogParams[0] = 10000.0f;
+  frameUniforms.fogParams[1] = 10001.0f;
   frameUniforms.fogParams[2] = 0.0f;
   frameUniforms.fogParams[3] = 0.0f;
+
+  frameUniforms.lightParams[0] = 1.0f;
+  frameUniforms.lightParams[1] = 1.0f;
+  frameUniforms.lightParams[2] = 0.0f;
+  frameUniforms.lightParams[3] = 0.0f;
 
   [ctx->currentEntityEncoder setVertexBytes:&frameUniforms
                                      length:sizeof(frameUniforms)
@@ -3088,11 +3152,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nBeginGuiPass(
                                       atIndex:1];
 
   ctx->entityPassActive = true;
-
-  static int beginCount = 0;
-  if (beginCount++ < 20) {
-    printf("[metalrender] nBeginGuiPass: started GUI render pass (no depth)\n");
-  }
 }
 
 JNIEXPORT void JNICALL
@@ -3105,8 +3164,6 @@ Java_com_metalrender_nativebridge_NativeBridge_nEndGuiPass(JNIEnv *, jclass,
   if (ctx->entityPassActive && ctx->currentEntityEncoder) {
     [ctx->currentEntityEncoder endEncoding];
 
-    // CRITICAL: Synchronize IOSurface texture to ensure GUI content is visible
-    // to CPU Without this, the blit may read stale terrain-only data
     id<MTLBlitCommandEncoder> blitEncoder =
         [ctx->currentEntityCommandBuffer blitCommandEncoder];
     [blitEncoder synchronizeResource:ctx->ioSurfaceTexture];
@@ -3114,29 +3171,14 @@ Java_com_metalrender_nativebridge_NativeBridge_nEndGuiPass(JNIEnv *, jclass,
 
     [ctx->currentEntityCommandBuffer commit];
 
-    // Store the GUI command buffer so nWaitForRender can sync on it
     ctx->lastGuiCommandBuffer = ctx->currentEntityCommandBuffer;
 
     ctx->currentEntityEncoder = nil;
     ctx->currentEntityCommandBuffer = nil;
     ctx->entityPassActive = false;
-
-    // No longer need composite pass - GUI rendered directly to ioSurfaceTexture
-    // ctx->guiNeedsComposite = true; // REMOVED - single-pass GUI
-
-    static int endCount = 0;
-    if (endCount++ < 20) {
-      printf("[metalrender] nEndGuiPass: ended GUI render pass (direct to "
-             "IOSurface, synchronized)\n");
-    }
   }
 }
 
-// =========================================================================
-// GUI Composite - Composite GUI texture over terrain (ioSurfaceTexture)
-// =========================================================================
-
-// Composite shader source - blends GUI over terrain with alpha
 static const char *kCompositeShaderSource = R"METAL(
 #include <metal_stdlib>
 using namespace metal;
@@ -3159,15 +3201,13 @@ fragment float4 composite_fragment(CompositeVertexOut in [[stage_in]],
                                    texture2d<float> terrainTex [[texture(0)]],
                                    texture2d<float> guiTex [[texture(1)]]) {
     constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest);
-    
+
     float4 terrain = terrainTex.sample(texSampler, in.texCoord);
     float4 gui = guiTex.sample(texSampler, in.texCoord);
-    
-    // Standard alpha compositing: GUI over terrain
-    // result = gui * gui.a + terrain * (1 - gui.a)
+
     float3 resultColor = gui.rgb * gui.a + terrain.rgb * (1.0 - gui.a);
     float resultAlpha = gui.a + terrain.a * (1.0 - gui.a);
-    
+
     return float4(resultColor, resultAlpha);
 }
 )METAL";
@@ -3176,7 +3216,6 @@ static bool ensureCompositePipeline(MetalContext *ctx) {
   if (ctx->compositePipeline)
     return true;
 
-  // Compile composite shader
   NSError *error = nil;
   MTLCompileOptions *options = [[MTLCompileOptions alloc] init];
   options.fastMathEnabled = YES;
@@ -3200,13 +3239,12 @@ static bool ensureCompositePipeline(MetalContext *ctx) {
     return false;
   }
 
-  // Create pipeline
   MTLRenderPipelineDescriptor *pipelineDesc =
       [[MTLRenderPipelineDescriptor alloc] init];
   pipelineDesc.vertexFunction = vertexFunc;
   pipelineDesc.fragmentFunction = fragFunc;
   pipelineDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
-  // No blending - fragment shader handles compositing
+
   pipelineDesc.colorAttachments[0].blendingEnabled = NO;
 
   ctx->compositePipeline =
@@ -3218,15 +3256,10 @@ static bool ensureCompositePipeline(MetalContext *ctx) {
     return false;
   }
 
-  // Create fullscreen quad vertex buffer
-  // Positions (x, y) and texture coords (u, v)
   float quadVerts[] = {
-      -1.0f, -1.0f, 0.0f, 1.0f, // bottom-left
-      1.0f,  -1.0f, 1.0f, 1.0f, // bottom-right
-      -1.0f, 1.0f,  0.0f, 0.0f, // top-left
-      1.0f,  -1.0f, 1.0f, 1.0f, // bottom-right
-      1.0f,  1.0f,  1.0f, 0.0f, // top-right
-      -1.0f, 1.0f,  0.0f, 0.0f, // top-left
+      -1.0f, -1.0f, 0.0f, 1.0f, 1.0f,  -1.0f, 1.0f, 1.0f,
+      -1.0f, 1.0f,  0.0f, 0.0f, 1.0f,  -1.0f, 1.0f, 1.0f,
+      1.0f,  1.0f,  1.0f, 0.0f, -1.0f, 1.0f,  0.0f, 0.0f,
   };
   ctx->compositeQuadVB =
       [ctx->device newBufferWithBytes:quadVerts
@@ -3237,7 +3270,6 @@ static bool ensureCompositePipeline(MetalContext *ctx) {
   return true;
 }
 
-// Called before readback to composite GUI over terrain
 JNIEXPORT void JNICALL
 Java_com_metalrender_nativebridge_NativeBridge_nCompositeGui(JNIEnv *, jclass,
                                                              jlong handle) {
@@ -3245,22 +3277,19 @@ Java_com_metalrender_nativebridge_NativeBridge_nCompositeGui(JNIEnv *, jclass,
   if (!ctx || !ctx->graphicsQueue)
     return;
 
-  // Skip if no GUI was drawn this frame
   if (!ctx->guiNeedsComposite || !ctx->guiTexture) {
     return;
   }
 
-  // Ensure composite pipeline
   if (!ensureCompositePipeline(ctx)) {
     printf("[MetalRender] nCompositeGui: failed to create pipeline\n");
     return;
   }
 
-  // Create render pass to composite GUI over terrain into ioSurfaceTexture
   MTLRenderPassDescriptor *passDesc =
       [MTLRenderPassDescriptor renderPassDescriptor];
   passDesc.colorAttachments[0].texture = ctx->ioSurfaceTexture;
-  passDesc.colorAttachments[0].loadAction = MTLLoadActionLoad; // Keep terrain
+  passDesc.colorAttachments[0].loadAction = MTLLoadActionLoad;
   passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
 
   id<MTLCommandBuffer> cb = [ctx->graphicsQueue commandBuffer];
@@ -3275,8 +3304,8 @@ Java_com_metalrender_nativebridge_NativeBridge_nCompositeGui(JNIEnv *, jclass,
 
   [enc setRenderPipelineState:ctx->compositePipeline];
   [enc setVertexBuffer:ctx->compositeQuadVB offset:0 atIndex:0];
-  [enc setFragmentTexture:ctx->ioSurfaceTexture atIndex:0]; // terrain
-  [enc setFragmentTexture:ctx->guiTexture atIndex:1];       // GUI
+  [enc setFragmentTexture:ctx->ioSurfaceTexture atIndex:0];
+  [enc setFragmentTexture:ctx->guiTexture atIndex:1];
 
   MTLViewport viewport;
   viewport.originX = 0.0;
@@ -3294,10 +3323,1245 @@ Java_com_metalrender_nativebridge_NativeBridge_nCompositeGui(JNIEnv *, jclass,
   [cb waitUntilCompleted];
 
   ctx->guiNeedsComposite = false;
+}
 
-  static int compCount = 0;
-  if (compCount++ < 20) {
-    printf("[metalrender] nCompositeGui: composited GUI over terrain\n");
+JNIEXPORT jboolean JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nInitMultiICB(
+    JNIEnv *, jclass, jlong handle, jint maxChunksPerLOD) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !ctx->device || !ctx->icbSupported)
+    return JNI_FALSE;
+
+  if (ctx->multiICBInitialized)
+    return JNI_TRUE;
+
+  uint32_t maxPerLOD = std::max(1, static_cast<int>(maxChunksPerLOD));
+  ctx->multiICBMaxPerLOD = maxPerLOD;
+
+  if (@available(macOS 12.0, *)) {
+    MTLIndirectCommandBufferDescriptor *icbDesc =
+        [[MTLIndirectCommandBufferDescriptor alloc] init];
+    icbDesc.commandTypes = MTLIndirectCommandTypeDraw;
+    icbDesc.inheritBuffers = NO;
+    icbDesc.inheritPipelineState = NO;
+    icbDesc.maxVertexBufferBindCount = 3;
+    icbDesc.maxFragmentBufferBindCount = 3;
+
+    for (uint32_t i = 0; i < MetalContext::LOD_COUNT; i++) {
+      ctx->lodICBs[i] = [ctx->device
+          newIndirectCommandBufferWithDescriptor:icbDesc
+                                 maxCommandCount:maxPerLOD
+                                         options:MTLResourceStorageModeShared];
+      if (!ctx->lodICBs[i]) {
+        fprintf(stderr, "[MetalRender] Failed to create ICB for LOD %u\n", i);
+
+        for (uint32_t j = 0; j < i; j++) {
+          ctx->lodICBs[j] = nil;
+        }
+        return JNI_FALSE;
+      }
+
+      ctx->lodDrawUniformsBuffers[i] =
+          [ctx->device newBufferWithLength:maxPerLOD * sizeof(DrawUniforms)
+                                   options:MTLResourceStorageModeShared];
+      if (!ctx->lodDrawUniformsBuffers[i]) {
+        fprintf(
+            stderr,
+            "[MetalRender] Failed to create draw uniforms buffer for LOD %u\n",
+            i);
+        return JNI_FALSE;
+      }
+    }
+  } else {
+    return JNI_FALSE;
   }
+
+  ctx->lodDrawCountsBuffer = [ctx->device
+      newBufferWithLength:MetalContext::LOD_COUNT * sizeof(uint32_t)
+                  options:MTLResourceStorageModeShared];
+  if (!ctx->lodDrawCountsBuffer) {
+    fprintf(stderr, "[MetalRender] Failed to create LOD draw counts buffer\n");
+    return JNI_FALSE;
+  }
+
+  float defaultThresholds[6] = {32.0f, 64.0f, 128.0f, 256.0f, 512.0f, 4096.0f};
+  ctx->lodThresholdsBuffer =
+      [ctx->device newBufferWithBytes:defaultThresholds
+                               length:6 * sizeof(float)
+                              options:MTLResourceStorageModeShared];
+
+  if (ctx->terrainLibrary) {
+    id<MTLFunction> lodSelectFunc =
+        [ctx->terrainLibrary newFunctionWithName:@"cull_and_encode_multi_lod"];
+    if (lodSelectFunc) {
+      NSError *error = nil;
+      ctx->multiLodCullPipeline =
+          [ctx->device newComputePipelineStateWithFunction:lodSelectFunc
+                                                     error:&error];
+      if (!ctx->multiLodCullPipeline) {
+        fprintf(stderr,
+                "[MetalRender] Failed to create multi-LOD cull pipeline: %s\n",
+                error ? [[error localizedDescription] UTF8String] : "unknown");
+      }
+    }
+  }
+
+  ctx->multiICBInitialized = true;
+  printf("[MetalRender] Multi-ICB initialized: %u LOD tracks, %u max commands "
+         "each\n",
+         MetalContext::LOD_COUNT, maxPerLOD);
+  return JNI_TRUE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nDestroyMultiICB(JNIEnv *,
+                                                                jclass,
+                                                                jlong handle) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx)
+    return;
+
+  for (uint32_t i = 0; i < MetalContext::LOD_COUNT; i++) {
+    ctx->lodICBs[i] = nil;
+    ctx->lodDrawUniformsBuffers[i] = nil;
+    ctx->lodTerrainPipelines[i] = nil;
+  }
+  ctx->lodDrawCountsBuffer = nil;
+  ctx->lodThresholdsBuffer = nil;
+  ctx->lodSelectPipeline = nil;
+  ctx->multiLodCullPipeline = nil;
+  ctx->multiICBInitialized = false;
+  printf("[MetalRender] Multi-ICB destroyed\n");
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nDispatchGpuLodSelect(
+    JNIEnv *env, jclass, jlong handle, jfloatArray cameraPos,
+    jfloatArray frustumPlanes, jint totalChunks) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !ctx->multiICBInitialized || !ctx->computeQueue)
+    return;
+
+  if (ctx->lodDrawCountsBuffer) {
+    memset(ctx->lodDrawCountsBuffer.contents, 0,
+           MetalContext::LOD_COUNT * sizeof(uint32_t));
+  }
+
+  float camPos[3] = {ctx->cameraX, ctx->cameraY, ctx->cameraZ};
+  if (cameraPos && env->GetArrayLength(cameraPos) >= 3) {
+    jfloat *cp = env->GetFloatArrayElements(cameraPos, nullptr);
+    if (cp) {
+      camPos[0] = cp[0];
+      camPos[1] = cp[1];
+      camPos[2] = cp[2];
+      env->ReleaseFloatArrayElements(cameraPos, cp, JNI_ABORT);
+    }
+  }
+
+  float *thresholds = static_cast<float *>(ctx->lodThresholdsBuffer.contents);
+
+  uint32_t lodCounts[MetalContext::LOD_COUNT] = {};
+
+  for (uint32_t i = 0;
+       i < ctx->currentIndirectCount && i < ctx->drawCommands.size(); i++) {
+    const DrawCommandData &cmd = ctx->drawCommands[i];
+    if (cmd.vertexCount == 0)
+      continue;
+
+    float dx = cmd.originX - camPos[0];
+    float dy = cmd.originY - camPos[1];
+    float dz = cmd.originZ - camPos[2];
+    float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+
+    uint32_t lodLevel = 5;
+    for (uint32_t lod = 0; lod < MetalContext::LOD_COUNT; lod++) {
+      if (dist < thresholds[lod]) {
+        lodLevel = lod;
+        break;
+      }
+    }
+
+    uint32_t idx = lodCounts[lodLevel];
+    if (idx < ctx->multiICBMaxPerLOD && ctx->lodDrawUniformsBuffers[lodLevel]) {
+      DrawUniforms *uniforms = static_cast<DrawUniforms *>(
+          ctx->lodDrawUniformsBuffers[lodLevel].contents);
+      uniforms[idx].originX = cmd.originX;
+      uniforms[idx].originY = cmd.originY;
+      uniforms[idx].originZ = cmd.originZ;
+      uniforms[idx].renderLayer = static_cast<float>(cmd.renderLayer);
+      lodCounts[lodLevel]++;
+    }
+  }
+
+  uint32_t *counts = static_cast<uint32_t *>(ctx->lodDrawCountsBuffer.contents);
+  for (uint32_t i = 0; i < MetalContext::LOD_COUNT; i++) {
+    counts[i] = lodCounts[i];
+    ctx->lodDrawCounts[i] = static_cast<int>(lodCounts[i]);
+  }
+}
+
+JNIEXPORT jint JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nExecuteMultiICB(JNIEnv *,
+                                                                jclass,
+                                                                jlong handle) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !ctx->multiICBInitialized || !ctx->graphicsQueue)
+    return 0;
+  if (!ctx->ioSurfaceTexture || !ctx->depthTexture)
+    return 0;
+  if (!ensureTerrainPipeline(ctx))
+    return 0;
+
+  int totalDraws = 0;
+
+  id<MTLCommandBuffer> commandBuffer = [ctx->graphicsQueue commandBuffer];
+  if (!commandBuffer)
+    return 0;
+
+  MTLRenderPassDescriptor *passDesc =
+      [MTLRenderPassDescriptor renderPassDescriptor];
+  passDesc.colorAttachments[0].texture = ctx->ioSurfaceTexture;
+  passDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
+  passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
+  passDesc.colorAttachments[0].clearColor =
+      MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
+  passDesc.depthAttachment.texture = ctx->depthTexture;
+  passDesc.depthAttachment.loadAction = MTLLoadActionClear;
+  passDesc.depthAttachment.storeAction = MTLStoreActionStore;
+  passDesc.depthAttachment.clearDepth = 1.0;
+
+  id<MTLRenderCommandEncoder> encoder =
+      [commandBuffer renderCommandEncoderWithDescriptor:passDesc];
+  if (!encoder) {
+    [commandBuffer commit];
+    return 0;
+  }
+
+  id<MTLRenderPipelineState> pipeline = ctx->terrainPipeline;
+
+  [encoder setRenderPipelineState:pipeline];
+  [encoder setDepthStencilState:ctx->depthState];
+  [encoder setCullMode:MTLCullModeNone];
+  [encoder setFrontFacingWinding:MTLWindingCounterClockwise];
+
+  MTLViewport viewport;
+  viewport.originX = 0.0;
+  viewport.originY = 0.0;
+  viewport.width = static_cast<double>(ctx->ioSurfaceWidth);
+  viewport.height = static_cast<double>(ctx->ioSurfaceHeight);
+  viewport.znear = 0.0;
+  viewport.zfar = 1.0;
+  [encoder setViewport:viewport];
+
+  FrameUniforms frameUniforms;
+  memcpy(frameUniforms.viewProj, ctx->viewProj, sizeof(ctx->viewProj));
+  frameUniforms.cameraX = ctx->cameraX;
+  frameUniforms.cameraY = ctx->cameraY;
+  frameUniforms.cameraZ = ctx->cameraZ;
+  frameUniforms.cameraPad = 0;
+  frameUniforms.fogR = ctx->fogR;
+  frameUniforms.fogG = ctx->fogG;
+  frameUniforms.fogB = ctx->fogB;
+  frameUniforms.fogA = ctx->fogA;
+  frameUniforms.fogStart = ctx->fogStart;
+  frameUniforms.fogEnd = ctx->fogEnd;
+  frameUniforms.fogPad1 = 0;
+  frameUniforms.fogPad2 = 0;
+  frameUniforms.texShrinkU = ctx->texShrinkU;
+  frameUniforms.texShrinkV = ctx->texShrinkV;
+  frameUniforms.texShrinkPad1 = 0;
+  frameUniforms.texShrinkPad2 = 0;
+  frameUniforms.lightParams[0] = ctx->dayBrightness;
+  frameUniforms.lightParams[1] = ctx->ambientLight;
+  frameUniforms.lightParams[2] = ctx->skyAngle;
+  frameUniforms.lightParams[3] = 0.0f;
+
+  [encoder setVertexBytes:&frameUniforms
+                   length:sizeof(frameUniforms)
+                  atIndex:2];
+  [encoder setFragmentBytes:&frameUniforms
+                     length:sizeof(frameUniforms)
+                    atIndex:2];
+
+  if (ctx->atlasTexture) {
+    [encoder setFragmentTexture:ctx->atlasTexture atIndex:0];
+  }
+
+  [encoder setVertexBuffer:ctx->persistentBuffer offset:0 atIndex:0];
+
+  for (uint32_t lod = 0; lod < MetalContext::LOD_COUNT; lod++) {
+    uint32_t drawCount = static_cast<uint32_t>(ctx->lodDrawCounts[lod]);
+    if (drawCount == 0)
+      continue;
+
+    if (ctx->lodTerrainPipelines[lod]) {
+      [encoder setRenderPipelineState:ctx->lodTerrainPipelines[lod]];
+    }
+
+    if (ctx->lodDrawUniformsBuffers[lod]) {
+      [encoder setVertexBuffer:ctx->lodDrawUniformsBuffers[lod]
+                        offset:0
+                       atIndex:1];
+      [encoder setFragmentBuffer:ctx->lodDrawUniformsBuffers[lod]
+                          offset:0
+                         atIndex:0];
+    }
+
+    int32_t lastRenderLayer = -1;
+    for (uint32_t i = 0; i < drawCount; i++) {
+
+      size_t uniformOffset = i * sizeof(DrawUniforms);
+      [encoder setVertexBufferOffset:uniformOffset atIndex:1];
+      [encoder setFragmentBufferOffset:uniformOffset atIndex:0];
+
+      DrawUniforms *uniforms = static_cast<DrawUniforms *>(
+          ctx->lodDrawUniformsBuffers[lod].contents);
+      float ox = uniforms[i].originX;
+      float oy = uniforms[i].originY;
+      float oz = uniforms[i].originZ;
+      int32_t renderLayer = static_cast<int32_t>(uniforms[i].renderLayer);
+
+      if (renderLayer != lastRenderLayer) {
+        if (renderLayer == 1 || renderLayer == 2) {
+          [encoder setDepthBias:-1.0f slopeScale:-1.0f clamp:-0.01f];
+        } else {
+          [encoder setDepthBias:0.0f slopeScale:0.0f clamp:0.0f];
+        }
+        lastRenderLayer = renderLayer;
+      }
+
+      for (uint32_t j = 0;
+           j < ctx->currentIndirectCount && j < ctx->drawCommands.size(); j++) {
+        const DrawCommandData &cmd = ctx->drawCommands[j];
+        if (cmd.originX == ox && cmd.originY == oy && cmd.originZ == oz &&
+            static_cast<int32_t>(cmd.renderLayer) == renderLayer &&
+            cmd.vertexCount > 0) {
+          [encoder setVertexBufferOffset:cmd.bufferOffset atIndex:0];
+          [encoder drawPrimitives:MTLPrimitiveTypeTriangle
+                      vertexStart:0
+                      vertexCount:cmd.vertexCount];
+          totalDraws++;
+          break;
+        }
+      }
+    }
+  }
+
+  [encoder endEncoding];
+
+  id<MTLBlitCommandEncoder> blitEncoder = [commandBuffer blitCommandEncoder];
+  [blitEncoder synchronizeResource:ctx->ioSurfaceTexture];
+  [blitEncoder endEncoding];
+
+  [commandBuffer commit];
+  ctx->lastTerrainCommandBuffer = commandBuffer;
+
+  return static_cast<jint>(totalDraws);
+}
+
+JNIEXPORT jintArray JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nGetLodDrawCounts(JNIEnv *env,
+                                                                 jclass,
+                                                                 jlong handle) {
+  MetalContext *ctx = getContext(handle);
+  jintArray result = env->NewIntArray(MetalContext::LOD_COUNT);
+  if (!ctx)
+    return result;
+
+  jint counts[MetalContext::LOD_COUNT];
+  for (uint32_t i = 0; i < MetalContext::LOD_COUNT; i++) {
+    counts[i] = ctx->lodDrawCounts[i];
+  }
+  env->SetIntArrayRegion(result, 0, MetalContext::LOD_COUNT, counts);
+  return result;
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nSetLodThresholds(
+    JNIEnv *env, jclass, jlong handle, jfloatArray thresholds) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !thresholds)
+    return;
+
+  jint len = env->GetArrayLength(thresholds);
+  if (len < static_cast<jint>(MetalContext::LOD_COUNT))
+    return;
+
+  jfloat *data = env->GetFloatArrayElements(thresholds, nullptr);
+  if (!data)
+    return;
+
+  if (ctx->lodThresholdsBuffer) {
+    float *buf = static_cast<float *>(ctx->lodThresholdsBuffer.contents);
+    for (uint32_t i = 0; i < MetalContext::LOD_COUNT; i++) {
+      buf[i] = data[i];
+    }
+  }
+  env->ReleaseFloatArrayElements(thresholds, data, JNI_ABORT);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nSetLodFunctionConstants(
+    JNIEnv *, jclass, jlong handle, jint lodLevel, jboolean enableBlockLight,
+    jboolean enableTextureSample, jboolean enableFog) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !ctx->device || !ctx->terrainLibrary)
+    return;
+  if (lodLevel < 0 || lodLevel >= static_cast<jint>(MetalContext::LOD_COUNT))
+    return;
+
+  MTLFunctionConstantValues *constants =
+      [[MTLFunctionConstantValues alloc] init];
+
+  uint32_t lodVal = static_cast<uint32_t>(lodLevel);
+  bool blockLight = (enableBlockLight == JNI_TRUE);
+  bool texSample = (enableTextureSample == JNI_TRUE);
+  bool fog = (enableFog == JNI_TRUE);
+
+  [constants setConstantValue:&lodVal type:MTLDataTypeUInt atIndex:0];
+  [constants setConstantValue:&blockLight type:MTLDataTypeBool atIndex:1];
+  [constants setConstantValue:&texSample type:MTLDataTypeBool atIndex:2];
+  [constants setConstantValue:&fog type:MTLDataTypeBool atIndex:3];
+
+  NSError *error = nil;
+  id<MTLFunction> vertexFunc =
+      [ctx->terrainLibrary newFunctionWithName:@"terrain_color_vertex"
+                                constantValues:constants
+                                         error:&error];
+  if (!vertexFunc) {
+    fprintf(stderr,
+            "[MetalRender] Failed to create LOD %d vertex function: %s\n",
+            lodLevel,
+            error ? [[error localizedDescription] UTF8String] : "unknown");
+    return;
+  }
+
+  id<MTLFunction> fragmentFunc =
+      [ctx->terrainLibrary newFunctionWithName:@"terrain_color_fragment"
+                                constantValues:constants
+                                         error:&error];
+  if (!fragmentFunc) {
+    fprintf(stderr,
+            "[MetalRender] Failed to create LOD %d fragment function: %s\n",
+            lodLevel,
+            error ? [[error localizedDescription] UTF8String] : "unknown");
+    return;
+  }
+
+  MTLRenderPipelineDescriptor *desc =
+      [[MTLRenderPipelineDescriptor alloc] init];
+  desc.vertexFunction = vertexFunc;
+  desc.fragmentFunction = fragmentFunc;
+  desc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+  desc.colorAttachments[0].blendingEnabled = YES;
+  desc.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+  desc.colorAttachments[0].destinationRGBBlendFactor =
+      MTLBlendFactorOneMinusSourceAlpha;
+  desc.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
+  desc.colorAttachments[0].destinationAlphaBlendFactor =
+      MTLBlendFactorOneMinusSourceAlpha;
+  desc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+  desc.label = [NSString stringWithFormat:@"TerrainLOD%dPipeline", lodLevel];
+
+  ctx->lodTerrainPipelines[lodLevel] =
+      [ctx->device newRenderPipelineStateWithDescriptor:desc error:&error];
+  if (!ctx->lodTerrainPipelines[lodLevel]) {
+    fprintf(stderr, "[MetalRender] Failed to create LOD %d pipeline: %s\n",
+            lodLevel,
+            error ? [[error localizedDescription] UTF8String] : "unknown");
+  } else {
+    printf("[MetalRender] Created LOD %d pipeline (blockLight=%d, tex=%d, "
+           "fog=%d)\n",
+           lodLevel, blockLight, texSample, fog);
+  }
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nSetTripleBuffering(
+    JNIEnv *, jclass, jlong handle, jboolean enabled) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx)
+    return;
+
+  bool enable = (enabled == JNI_TRUE);
+  if (enable == ctx->tripleBufferingEnabled)
+    return;
+
+  if (enable && !ctx->frameSemaphore) {
+    ctx->frameSemaphore = dispatch_semaphore_create(3);
+    ctx->currentFrameIndex = 0;
+    printf("[MetalRender] Triple buffering enabled (semaphore count=3)\n");
+  } else if (!enable && ctx->frameSemaphore) {
+
+    for (int i = 0; i < 3; i++) {
+      dispatch_semaphore_signal(ctx->frameSemaphore);
+    }
+    ctx->frameSemaphore = nullptr;
+    ctx->currentFrameIndex = 0;
+    printf("[MetalRender] Triple buffering disabled\n");
+  }
+  ctx->tripleBufferingEnabled = enable;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nGetCurrentFrameIndex(
+    JNIEnv *, jclass, jlong handle) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx)
+    return 0;
+
+  if (ctx->tripleBufferingEnabled && ctx->frameSemaphore) {
+
+    dispatch_semaphore_wait(ctx->frameSemaphore, DISPATCH_TIME_FOREVER);
+    uint32_t idx = ctx->currentFrameIndex;
+    ctx->currentFrameIndex = (ctx->currentFrameIndex + 1) % 3;
+    return static_cast<jint>(idx);
+  }
+  return 0;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nInitMetalFXSpatial(
+    JNIEnv *, jclass, jlong handle, jint renderWidth, jint renderHeight,
+    jint outputWidth, jint outputHeight) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !ctx->device)
+    return JNI_FALSE;
+
+#if METALRENDER_HAS_METALFX
+  if (!ctx->metalFxSupported)
+    return JNI_FALSE;
+
+  ctx->metalFxEnabled = true;
+  float scale =
+      static_cast<float>(renderWidth) / static_cast<float>(outputWidth);
+  bool ok = ensureMetalFXResources(ctx, static_cast<uint32_t>(outputWidth),
+                                   static_cast<uint32_t>(outputHeight), scale);
+  if (ok) {
+    printf("[MetalRender] MetalFX Spatial initialized: render=%dx%d "
+           "output=%dx%d\n",
+           renderWidth, renderHeight, outputWidth, outputHeight);
+  }
+  return ok ? JNI_TRUE : JNI_FALSE;
+#else
+  (void)renderWidth;
+  (void)renderHeight;
+  (void)outputWidth;
+  (void)outputHeight;
+  return JNI_FALSE;
+#endif
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nApplyMetalFXSpatial(
+    JNIEnv *, jclass, jlong handle) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !ctx->graphicsQueue)
+    return;
+
+#if METALRENDER_HAS_METALFX
+  if (!ctx->metalFxScaler || !ctx->metalFxColor || !ctx->metalFxOutput)
+    return;
+
+  id<MTLCommandBuffer> cb = [ctx->graphicsQueue commandBuffer];
+  if (!cb)
+    return;
+
+  id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+  if (blit && ctx->ioSurfaceTexture && ctx->metalFxColor) {
+
+    [blit copyFromTexture:ctx->ioSurfaceTexture toTexture:ctx->metalFxColor];
+    [blit endEncoding];
+  }
+
+  ctx->metalFxScaler.colorTexture = ctx->metalFxColor;
+  ctx->metalFxScaler.outputTexture = ctx->metalFxOutput;
+  [ctx->metalFxScaler encodeToCommandBuffer:cb];
+
+  id<MTLBlitCommandEncoder> blit2 = [cb blitCommandEncoder];
+  if (blit2 && ctx->metalFxOutput) {
+    [blit2 copyFromTexture:ctx->metalFxOutput toTexture:ctx->ioSurfaceTexture];
+    [blit2 synchronizeResource:ctx->ioSurfaceTexture];
+    [blit2 endEncoding];
+  }
+
+  [cb commit];
+  [cb waitUntilCompleted];
+#endif
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nDestroyMetalFXSpatial(
+    JNIEnv *, jclass, jlong handle) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx)
+    return;
+
+#if METALRENDER_HAS_METALFX
+  destroyMetalFXResources(ctx);
+  ctx->metalFxEnabled = false;
+  printf("[MetalRender] MetalFX Spatial destroyed\n");
+#endif
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nCreateArgumentBuffer(
+    JNIEnv *, jclass, jlong handle) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !ctx->device)
+    return 0;
+
+  static const uint32_t MAX_SLOTS = 32;
+  size_t bufferSize = MAX_SLOTS * 16;
+
+  id<MTLBuffer> argBuffer =
+      [ctx->device newBufferWithLength:bufferSize
+                               options:MTLResourceStorageModeShared];
+  if (!argBuffer)
+    return 0;
+
+  memset(argBuffer.contents, 0, bufferSize);
+
+  uint64_t bufHandle =
+      reinterpret_cast<uint64_t>((__bridge_retained void *)argBuffer);
+  ctx->argumentBuffers[bufHandle] = argBuffer;
+
+  printf("[MetalRender] Created argument buffer: %llu (%zu bytes)\n", bufHandle,
+         bufferSize);
+  return static_cast<jlong>(bufHandle);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nUpdateArgumentBuffer(
+    JNIEnv *, jclass, jlong handle, jlong argBufferHandle, jint index,
+    jlong textureHandle) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx)
+    return;
+
+  auto it = ctx->argumentBuffers.find(static_cast<uint64_t>(argBufferHandle));
+  if (it == ctx->argumentBuffers.end())
+    return;
+
+  if (index >= 0 && index < 32) {
+    uint64_t *slots = static_cast<uint64_t *>(it->second.contents);
+    slots[index * 2] = static_cast<uint64_t>(textureHandle);
+  }
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nDestroyArgumentBuffer(
+    JNIEnv *, jclass, jlong handle, jlong argBufferHandle) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx)
+    return;
+
+  auto it = ctx->argumentBuffers.find(static_cast<uint64_t>(argBufferHandle));
+  if (it != ctx->argumentBuffers.end()) {
+    ctx->argumentBuffers.erase(it);
+
+    id<MTLBuffer> buf =
+        (__bridge_transfer id<MTLBuffer>)(void *)static_cast<uintptr_t>(
+            argBufferHandle);
+    buf = nil;
+  }
+}
+}
+
+extern "C" {
+
+__attribute__((visibility("default"))) void
+mr_beginFrame(jlong handle, const float *viewProj, const float *cameraPos,
+              float fogStart, float fogEnd) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !ctx->graphicsQueue || !ctx->persistentBuffer ||
+      !ctx->indirectArgs)
+    return;
+  if (viewProj) {
+    memcpy(ctx->viewProj, viewProj, 16 * sizeof(float));
+    ctx->hasViewProj = true;
+  }
+  if (cameraPos) {
+    ctx->cameraX = cameraPos[0];
+    ctx->cameraY = cameraPos[1];
+    ctx->cameraZ = cameraPos[2];
+  }
+  ctx->fogStart = fogStart;
+  ctx->fogEnd = fogEnd;
+}
+
+__attribute__((visibility("default"))) void mr_drawTerrain(jlong handle,
+                                                           jint pass) {
+  JNIEnv *env = nullptr;
+  JavaVM *vm = nullptr;
+  if (vm == nullptr) {
+  }
+  Java_com_metalrender_nativebridge_NativeBridge_nDrawTerrain(nullptr, nullptr,
+                                                              handle, pass);
+}
+
+__attribute__((visibility("default"))) void
+mr_clearIndirectCommands(jlong handle) {
+  Java_com_metalrender_nativebridge_NativeBridge_nClearIndirectCommands(
+      nullptr, nullptr, handle);
+}
+
+__attribute__((visibility("default"))) void
+mr_batchDrawCommands(jlong handle, const void *data, int commandCount) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || commandCount <= 0 || !data)
+    return;
+
+  uint32_t count = static_cast<uint32_t>(commandCount);
+  if (count > ctx->maxIndirectCommands)
+    count = ctx->maxIndirectCommands;
+
+  ctx->drawCommands.resize(count);
+  ctx->currentIndirectCount = count;
+
+  static const size_t ENTRY_SIZE = 32;
+  const uint8_t *src = static_cast<const uint8_t *>(data);
+  for (uint32_t i = 0; i < count; i++) {
+    const uint8_t *entry = src + i * ENTRY_SIZE;
+    DrawCommandData &cmd = ctx->drawCommands[i];
+    uint32_t offset, vertexCount, renderLayer, lodLevel;
+    float ox, oy, oz;
+    memcpy(&offset, entry + 0, 4);
+    memcpy(&vertexCount, entry + 4, 4);
+    memcpy(&ox, entry + 8, 4);
+    memcpy(&oy, entry + 12, 4);
+    memcpy(&oz, entry + 16, 4);
+    memcpy(&renderLayer, entry + 20, 4);
+    memcpy(&lodLevel, entry + 28, 4);
+    cmd.bufferOffset = offset;
+    cmd.vertexCount = vertexCount;
+    cmd.originX = ox;
+    cmd.originY = oy;
+    cmd.originZ = oz;
+    cmd.renderLayer = renderLayer;
+    cmd.lodLevel = lodLevel;
+  }
+}
+
+__attribute__((visibility("default"))) int mr_executeIndirect(jlong handle,
+                                                              jint pass) {
+  return (int)Java_com_metalrender_nativebridge_NativeBridge_nExecuteIndirect(
+      nullptr, nullptr, handle, pass);
+}
+
+__attribute__((visibility("default"))) void
+mr_setTemporalJitter(jlong handle, float jitterX, float jitterY,
+                     float blendFactor) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx)
+    return;
+  ctx->temporalJitterX = jitterX;
+  ctx->temporalJitterY = jitterY;
+  ctx->temporalBlend = blendFactor;
+}
+
+__attribute__((visibility("default"))) void
+mr_setLightParams(jlong handle, float dayBrightness, float ambientLight,
+                  float skyAngle) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx)
+    return;
+  ctx->dayBrightness = dayBrightness;
+  ctx->ambientLight = ambientLight;
+  ctx->skyAngle = skyAngle;
+}
+
+__attribute__((visibility("default"))) void
+mr_beginEntityPass(jlong handle, const float *viewProj,
+                   const float *cameraPos) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !ctx->graphicsQueue || !ctx->ioSurfaceTexture ||
+      !ctx->depthTexture)
+    return;
+  if (!ensureEntityPipeline(ctx))
+    return;
+  if (ctx->entityPassActive && ctx->currentEntityEncoder) {
+    [ctx->currentEntityEncoder endEncoding];
+    [ctx->currentEntityCommandBuffer commit];
+    ctx->lastEntityCommandBuffer = ctx->currentEntityCommandBuffer;
+    ctx->currentEntityEncoder = nil;
+    ctx->currentEntityCommandBuffer = nil;
+  }
+  if (ctx->lastTerrainCommandBuffer) {
+    [ctx->lastTerrainCommandBuffer waitUntilCompleted];
+    ctx->lastTerrainCommandBuffer = nil;
+  }
+  if (ctx->lastEntityCommandBuffer) {
+    [ctx->lastEntityCommandBuffer waitUntilCompleted];
+    ctx->lastEntityCommandBuffer = nil;
+  }
+  MTLRenderPassDescriptor *passDesc =
+      [MTLRenderPassDescriptor renderPassDescriptor];
+  passDesc.colorAttachments[0].texture = ctx->ioSurfaceTexture;
+  passDesc.colorAttachments[0].loadAction = MTLLoadActionLoad;
+  passDesc.colorAttachments[0].storeAction = MTLStoreActionStore;
+  passDesc.depthAttachment.texture = ctx->depthTexture;
+  passDesc.depthAttachment.loadAction = MTLLoadActionLoad;
+  passDesc.depthAttachment.storeAction = MTLStoreActionStore;
+  ctx->currentEntityCommandBuffer = [ctx->graphicsQueue commandBuffer];
+  if (!ctx->currentEntityCommandBuffer)
+    return;
+  ctx->currentEntityEncoder = [ctx->currentEntityCommandBuffer
+      renderCommandEncoderWithDescriptor:passDesc];
+  if (!ctx->currentEntityEncoder) {
+    [ctx->currentEntityCommandBuffer commit];
+    ctx->currentEntityCommandBuffer = nil;
+    return;
+  }
+  [ctx->currentEntityEncoder setRenderPipelineState:ctx->entityPipeline];
+  [ctx->currentEntityEncoder setDepthStencilState:ctx->entityDepthState];
+  [ctx->currentEntityEncoder setCullMode:MTLCullModeNone];
+  [ctx->currentEntityEncoder setFrontFacingWinding:MTLWindingCounterClockwise];
+  MTLViewport viewport;
+  viewport.originX = 0.0;
+  viewport.originY = 0.0;
+  viewport.width = static_cast<double>(ctx->ioSurfaceWidth);
+  viewport.height = static_cast<double>(ctx->ioSurfaceHeight);
+  viewport.znear = 0.0;
+  viewport.zfar = 1.0;
+  [ctx->currentEntityEncoder setViewport:viewport];
+  EntityFrameUniforms frameUniforms;
+  memset(&frameUniforms, 0, sizeof(frameUniforms));
+  if (viewProj)
+    memcpy(frameUniforms.viewProj, viewProj, 16 * sizeof(float));
+  if (cameraPos) {
+    frameUniforms.cameraPos[0] = cameraPos[0];
+    frameUniforms.cameraPos[1] = cameraPos[1];
+    frameUniforms.cameraPos[2] = cameraPos[2];
+    frameUniforms.cameraPos[3] = 0.0f;
+  }
+  frameUniforms.fogColor[0] = ctx->fogR;
+  frameUniforms.fogColor[1] = ctx->fogG;
+  frameUniforms.fogColor[2] = ctx->fogB;
+  frameUniforms.fogColor[3] = ctx->fogA;
+  frameUniforms.fogParams[0] = ctx->fogStart;
+  frameUniforms.fogParams[1] = ctx->fogEnd;
+  frameUniforms.fogParams[2] = 0.0f;
+  frameUniforms.fogParams[3] = 0.0f;
+  frameUniforms.lightParams[0] = ctx->dayBrightness;
+  frameUniforms.lightParams[1] = ctx->ambientLight;
+  frameUniforms.lightParams[2] = ctx->skyAngle;
+  frameUniforms.lightParams[3] = 0.0f;
+  [ctx->currentEntityEncoder setVertexBytes:&frameUniforms
+                                     length:sizeof(frameUniforms)
+                                    atIndex:1];
+  [ctx->currentEntityEncoder setFragmentBytes:&frameUniforms
+                                       length:sizeof(frameUniforms)
+                                      atIndex:1];
+  ctx->entityPassActive = true;
+}
+
+__attribute__((visibility("default"))) void
+mr_drawEntity(jlong handle, const void *vertexData, int vertexCount,
+              jlong textureHandle) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !ctx->entityPassActive || !ctx->currentEntityEncoder)
+    return;
+  if (vertexCount <= 0 || !vertexData)
+    return;
+  size_t vertexDataSize = static_cast<size_t>(vertexCount) * 32;
+  id<MTLBuffer> vertexBuffer =
+      [ctx->device newBufferWithBytes:vertexData
+                               length:vertexDataSize
+                              options:MTLResourceStorageModeShared];
+  if (!vertexBuffer)
+    return;
+  [ctx->currentEntityEncoder setVertexBuffer:vertexBuffer offset:0 atIndex:0];
+  id<MTLTexture> textureToUse = nil;
+  if (textureHandle != 0) {
+    auto it = ctx->entityTextures.find(static_cast<uint64_t>(textureHandle));
+    if (it != ctx->entityTextures.end() && it->second)
+      textureToUse = it->second;
+  }
+  if (!textureToUse && ctx->whiteTexture)
+    textureToUse = ctx->whiteTexture;
+  if (textureToUse)
+    [ctx->currentEntityEncoder setFragmentTexture:textureToUse atIndex:0];
+  [ctx->currentEntityEncoder
+      drawPrimitives:MTLPrimitiveTypeTriangle
+         vertexStart:0
+         vertexCount:static_cast<NSUInteger>(vertexCount)];
+}
+
+__attribute__((visibility("default"))) void mr_endEntityPass(jlong handle) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx)
+    return;
+  if (ctx->entityPassActive && ctx->currentEntityEncoder) {
+    [ctx->currentEntityEncoder endEncoding];
+    [ctx->currentEntityCommandBuffer commit];
+    ctx->lastEntityCommandBuffer = ctx->currentEntityCommandBuffer;
+    ctx->currentEntityEncoder = nil;
+    ctx->currentEntityCommandBuffer = nil;
+    ctx->entityPassActive = false;
+  }
+}
+
+__attribute__((visibility("default"))) void
+mr_batchDrawEntities(jlong handle, const void *vertexData, int totalVertexBytes,
+                     const void *cmdData, int cmdCount) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !ctx->entityPassActive || !ctx->currentEntityEncoder)
+    return;
+  if (cmdCount <= 0 || !vertexData || !cmdData || totalVertexBytes <= 0)
+    return;
+
+  id<MTLBuffer> vertexBuffer =
+      [ctx->device newBufferWithBytes:vertexData
+                               length:static_cast<NSUInteger>(totalVertexBytes)
+                              options:MTLResourceStorageModeShared];
+  if (!vertexBuffer)
+    return;
+
+  struct EntityCmd {
+    int32_t vertexOffset;
+    int32_t vertexCount;
+    int64_t textureHandle;
+    int32_t pad0;
+    int32_t pad1;
+  };
+  const EntityCmd *cmds = reinterpret_cast<const EntityCmd *>(cmdData);
+
+  id<MTLTexture> lastTexture = nil;
+  int64_t lastTextureHandle = -1;
+
+  for (int i = 0; i < cmdCount; i++) {
+    const EntityCmd &cmd = cmds[i];
+    if (cmd.vertexCount <= 0)
+      continue;
+
+    NSUInteger byteOffset = static_cast<NSUInteger>(cmd.vertexOffset);
+    [ctx->currentEntityEncoder setVertexBuffer:vertexBuffer
+                                        offset:byteOffset
+                                       atIndex:0];
+
+    if (cmd.textureHandle != lastTextureHandle) {
+      lastTextureHandle = cmd.textureHandle;
+      lastTexture = nil;
+      if (cmd.textureHandle != 0) {
+        auto it =
+            ctx->entityTextures.find(static_cast<uint64_t>(cmd.textureHandle));
+        if (it != ctx->entityTextures.end() && it->second)
+          lastTexture = it->second;
+      }
+      if (!lastTexture && ctx->whiteTexture)
+        lastTexture = ctx->whiteTexture;
+      if (lastTexture)
+        [ctx->currentEntityEncoder setFragmentTexture:lastTexture atIndex:0];
+    }
+
+    [ctx->currentEntityEncoder
+        drawPrimitives:MTLPrimitiveTypeTriangle
+           vertexStart:0
+           vertexCount:static_cast<NSUInteger>(cmd.vertexCount)];
+  }
+}
+}
+
+extern "C" {
+
+JNIEXPORT jboolean JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nInitComputeMesher(
+    JNIEnv *, jclass, jlong handle, jint maxVertsPerSection) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !ctx->device || !ctx->terrainLibrary)
+    return JNI_FALSE;
+  if (ctx->computeMesherInitialized)
+    return JNI_TRUE;
+
+  NSError *error = nil;
+  id<MTLFunction> countFunc =
+      [ctx->terrainLibrary newFunctionWithName:@"lod_compute_count_faces"];
+  id<MTLFunction> emitFunc =
+      [ctx->terrainLibrary newFunctionWithName:@"lod_compute_emit_faces"];
+  id<MTLFunction> clearFunc =
+      [ctx->terrainLibrary newFunctionWithName:@"lod_compute_clear_counters"];
+
+  if (!countFunc || !emitFunc || !clearFunc)
+    return JNI_FALSE;
+
+  ctx->computeMesherCountPipeline =
+      [ctx->device newComputePipelineStateWithFunction:countFunc error:&error];
+  if (!ctx->computeMesherCountPipeline)
+    return JNI_FALSE;
+
+  ctx->computeMesherEmitPipeline =
+      [ctx->device newComputePipelineStateWithFunction:emitFunc error:&error];
+  if (!ctx->computeMesherEmitPipeline)
+    return JNI_FALSE;
+
+  ctx->computeMesherClearPipeline =
+      [ctx->device newComputePipelineStateWithFunction:clearFunc error:&error];
+  if (!ctx->computeMesherClearPipeline)
+    return JNI_FALSE;
+
+  uint32_t maxVerts =
+      static_cast<uint32_t>(std::max(1, static_cast<int>(maxVertsPerSection)));
+  ctx->computeMesherMaxVerts = maxVerts;
+
+  ctx->computeMesherCountersBuffer =
+      [ctx->device newBufferWithLength:sizeof(uint32_t) * 2
+                               options:MTLResourceStorageModeShared];
+  ctx->computeMesherFaceMaskBuffer =
+      [ctx->device newBufferWithLength:4096 * sizeof(uint32_t)
+                               options:MTLResourceStorageModeShared];
+
+  ctx->computeMesherInitialized = true;
+  return JNI_TRUE;
+}
+
+JNIEXPORT jint JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nDispatchComputeMesh(
+    JNIEnv *env, jclass, jlong handle, jobject stagingBuffer, jint outputOffset,
+    jint sectionX, jint sectionY, jint sectionZ, jint maxVerts) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || !ctx->computeMesherInitialized || !ctx->computeQueue)
+    return -1;
+
+  void *stagingData = env->GetDirectBufferAddress(stagingBuffer);
+  if (!stagingData)
+    return -1;
+
+  uint32_t blockCount = 4096;
+  size_t blockDataSize = blockCount * sizeof(uint32_t);
+  size_t lightDataSize = blockCount;
+
+  id<MTLBuffer> blockBuffer =
+      [ctx->device newBufferWithBytes:stagingData
+                               length:blockDataSize
+                              options:MTLResourceStorageModeShared];
+  id<MTLBuffer> lightBuffer = [ctx->device
+      newBufferWithBytes:static_cast<uint8_t *>(stagingData) + blockDataSize
+                  length:lightDataSize
+                 options:MTLResourceStorageModeShared];
+  if (!blockBuffer || !lightBuffer)
+    return -1;
+
+  memset(ctx->computeMesherCountersBuffer.contents, 0, sizeof(uint32_t) * 2);
+  memset(ctx->computeMesherFaceMaskBuffer.contents, 0, 4096 * sizeof(uint32_t));
+
+  id<MTLCommandBuffer> cb = [ctx->computeQueue commandBuffer];
+  if (!cb)
+    return -1;
+
+  id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
+  if (!enc) {
+    [cb commit];
+    return -1;
+  }
+
+  [enc setComputePipelineState:ctx->computeMesherClearPipeline];
+  [enc setBuffer:ctx->computeMesherCountersBuffer offset:0 atIndex:0];
+  [enc dispatchThreads:MTLSizeMake(1, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+
+  [enc setComputePipelineState:ctx->computeMesherCountPipeline];
+  [enc setBuffer:blockBuffer offset:0 atIndex:0];
+  [enc setBuffer:ctx->computeMesherCountersBuffer offset:0 atIndex:1];
+  [enc setBuffer:ctx->computeMesherFaceMaskBuffer offset:0 atIndex:2];
+  [enc setBytes:&blockCount length:sizeof(uint32_t) atIndex:3];
+  NSUInteger threadWidth = ctx->computeMesherCountPipeline.threadExecutionWidth;
+  [enc dispatchThreads:MTLSizeMake(blockCount, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(threadWidth, 1, 1)];
+
+  memset(ctx->computeMesherCountersBuffer.contents, 0, sizeof(uint32_t) * 2);
+
+  struct MeshUniforms {
+    float originX;
+    float originY;
+    float originZ;
+    uint32_t sectionIndex;
+    uint32_t outputBaseVertex;
+    uint32_t maxOutputVerts;
+  };
+
+  MeshUniforms uniforms;
+  uniforms.originX = static_cast<float>(sectionX) * 16.0f;
+  uniforms.originY = static_cast<float>(sectionY) * 16.0f;
+  uniforms.originZ = static_cast<float>(sectionZ) * 16.0f;
+  uniforms.sectionIndex = 0;
+  uniforms.outputBaseVertex = 0;
+  uniforms.maxOutputVerts = static_cast<uint32_t>(maxVerts);
+
+  [enc setComputePipelineState:ctx->computeMesherEmitPipeline];
+  [enc setBuffer:blockBuffer offset:0 atIndex:0];
+  [enc setBuffer:lightBuffer offset:0 atIndex:1];
+  [enc setBuffer:ctx->computeMesherFaceMaskBuffer offset:0 atIndex:2];
+
+  size_t outputSize = static_cast<size_t>(maxVerts) * 8;
+  id<MTLBuffer> outputBuffer =
+      [ctx->device newBufferWithLength:outputSize
+                               options:MTLResourceStorageModeShared];
+  [enc setBuffer:outputBuffer offset:0 atIndex:3];
+  [enc setBuffer:ctx->computeMesherCountersBuffer offset:0 atIndex:4];
+  [enc setBytes:&uniforms length:sizeof(MeshUniforms) atIndex:5];
+  [enc setBytes:&blockCount length:sizeof(uint32_t) atIndex:6];
+
+  threadWidth = ctx->computeMesherEmitPipeline.threadExecutionWidth;
+  [enc dispatchThreads:MTLSizeMake(blockCount, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(threadWidth, 1, 1)];
+
+  [enc endEncoding];
+  [cb commit];
+  [cb waitUntilCompleted];
+
+  uint32_t *counters =
+      static_cast<uint32_t *>(ctx->computeMesherCountersBuffer.contents);
+  uint32_t vertexCount = counters[0];
+
+  if (vertexCount > 0 && ctx->persistentBuffer &&
+      static_cast<size_t>(outputOffset) + vertexCount * 8 <=
+          ctx->persistentCapacity) {
+    uint8_t *dst =
+        static_cast<uint8_t *>(ctx->persistentBuffer.contents) + outputOffset;
+    memcpy(dst, outputBuffer.contents, vertexCount * 8);
+  }
+
+  return static_cast<jint>(vertexCount);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nDestroyComputeMesher(
+    JNIEnv *, jclass, jlong handle) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx)
+    return;
+  ctx->computeMesherCountPipeline = nil;
+  ctx->computeMesherEmitPipeline = nil;
+  ctx->computeMesherClearPipeline = nil;
+  ctx->computeMesherCountersBuffer = nil;
+  ctx->computeMesherFaceMaskBuffer = nil;
+  ctx->computeMesherInitialized = false;
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nSetThreadQoS(JNIEnv *, jclass,
+                                                             jint qosClass) {
+  qos_class_t qos;
+  switch (qosClass) {
+  case 0x21:
+    qos = QOS_CLASS_USER_INTERACTIVE;
+    break;
+  case 0x19:
+    qos = QOS_CLASS_USER_INITIATED;
+    break;
+  case 0x11:
+    qos = QOS_CLASS_UTILITY;
+    break;
+  case 0x09:
+    qos = QOS_CLASS_BACKGROUND;
+    break;
+  default:
+    qos = QOS_CLASS_DEFAULT;
+    break;
+  }
+  pthread_set_qos_class_self_np(qos, 0);
+}
+}
+
+extern "C" {
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nBeginFrame_1jni(
+    JNIEnv *env, jclass cls, jlong handle, jfloatArray viewProj,
+    jfloatArray cameraPos, jfloat fogStart, jfloat fogEnd) {
+  Java_com_metalrender_nativebridge_NativeBridge_nBeginFrame(
+      env, cls, handle, viewProj, cameraPos, fogStart, fogEnd);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nDrawTerrain_1jni(JNIEnv *env,
+                                                                 jclass cls,
+                                                                 jlong handle,
+                                                                 jint pass) {
+  Java_com_metalrender_nativebridge_NativeBridge_nDrawTerrain(env, cls, handle,
+                                                              pass);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nClearIndirectCommands_1jni(
+    JNIEnv *env, jclass cls, jlong handle) {
+  Java_com_metalrender_nativebridge_NativeBridge_nClearIndirectCommands(
+      env, cls, handle);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nBatchDrawCommands_1jni(
+    JNIEnv *env, jclass cls, jlong handle, jobject buffer, jint commandCount) {
+  Java_com_metalrender_nativebridge_NativeBridge_nBatchDrawCommands(
+      env, cls, handle, buffer, commandCount);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nExecuteIndirect_1jni(
+    JNIEnv *env, jclass cls, jlong handle, jint pass) {
+  return Java_com_metalrender_nativebridge_NativeBridge_nExecuteIndirect(
+      env, cls, handle, pass);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nSetTemporalJitter_1jni(
+    JNIEnv *env, jclass cls, jlong handle, jfloat jitterX, jfloat jitterY,
+    jfloat blendFactor) {
+  Java_com_metalrender_nativebridge_NativeBridge_nSetTemporalJitter(
+      env, cls, handle, jitterX, jitterY, blendFactor);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nSetLightParams_1jni(
+    JNIEnv *env, jclass cls, jlong handle, jfloat dayBrightness,
+    jfloat ambientLight, jfloat skyAngle) {
+  Java_com_metalrender_nativebridge_NativeBridge_nSetLightParams(
+      env, cls, handle, dayBrightness, ambientLight, skyAngle);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nBeginEntityPass_1jni(
+    JNIEnv *env, jclass cls, jlong handle, jfloatArray viewProj,
+    jfloatArray cameraPos) {
+  Java_com_metalrender_nativebridge_NativeBridge_nBeginEntityPass(
+      env, cls, handle, viewProj, cameraPos);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nDrawEntity_1jni(
+    JNIEnv *env, jclass cls, jlong handle, jobject vertices, jint vertexCount,
+    jlong textureHandle) {
+  Java_com_metalrender_nativebridge_NativeBridge_nDrawEntity(
+      env, cls, handle, vertices, vertexCount, textureHandle);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nEndEntityPass_1jni(
+    JNIEnv *env, jclass cls, jlong handle) {
+  Java_com_metalrender_nativebridge_NativeBridge_nEndEntityPass(env, cls,
+                                                                handle);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nBatchDrawEntities(
+    JNIEnv *env, jclass, jlong handle, jobject vertexBuf, jint totalVertexBytes,
+    jobject cmdBuf, jint cmdCount) {
+  MetalContext *ctx = getContext(handle);
+  if (!ctx || cmdCount <= 0)
+    return;
+  void *vertexData = env->GetDirectBufferAddress(vertexBuf);
+  void *cmdData = env->GetDirectBufferAddress(cmdBuf);
+  if (!vertexData || !cmdData)
+    return;
+  mr_batchDrawEntities(handle, vertexData, totalVertexBytes, cmdData, cmdCount);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metalrender_nativebridge_NativeBridge_nBatchDrawEntities_1jni(
+    JNIEnv *env, jclass cls, jlong handle, jobject vertexBuf,
+    jint totalVertexBytes, jobject cmdBuf, jint cmdCount) {
+  Java_com_metalrender_nativebridge_NativeBridge_nBatchDrawEntities(
+      env, cls, handle, vertexBuf, totalVertexBytes, cmdBuf, cmdCount);
 }
 }

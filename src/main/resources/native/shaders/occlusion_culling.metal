@@ -23,9 +23,10 @@ kernel void occlusion_test(const device Aabb* aabbs [[buffer(0)]], constant floa
     float minDepth = 1.0f;
     float maxDepth = -1.0f;
     for (uint i = 0; i < 8; ++i) {
-        float4 clip = viewProj * float4(corners[i], 1.0);
+        float3 corner_f = float3(corners[i]);
+        float4 clip = viewProj * float4(corner_f, 1.0f);
         if (clip.w == 0.0f) continue;
-        half3 ndc = clip.xyz / clip.w;
+        float3 ndc = clip.xyz / clip.w;
         minDepth = min(minDepth, ndc.z);
         maxDepth = max(maxDepth, ndc.z);
         if (ndc.x >= -1.05f && ndc.x <= 1.05f && ndc.y >= -1.05f && ndc.y <= 1.05f && ndc.z >= -1.05f && ndc.z <= 1.05f) {

@@ -1,6 +1,8 @@
 package com.metalrender.sodium.mixins;
 
 import com.metalrender.MetalRenderClient;
+import com.metalrender.config.MetalRenderConfig;
+import com.metalrender.lod.LodChunkIngestor;
 import com.metalrender.render.MetalWorldRenderer;
 import com.metalrender.sodium.format.MetalChunkVertex;
 import com.metalrender.sodium.hooks.ChunkOutputBridge;
@@ -84,7 +86,7 @@ public class RenderSectionManagerMixin {
         }
       }
     }
-    if (chunkCount > 0) {
+    if (chunkCount > 0 && chunkCount % 50 == 1) {
       MetalLogger.info(
           "[RenderSectionManagerMixin] processChunkBuildResults called with %d chunk outputs (enabled=%s, sodiumless=%s)",
           chunkCount, MetalRenderClient.isEnabled(), MetalRenderClient.issodiumless());
@@ -130,6 +132,26 @@ public class RenderSectionManagerMixin {
         output.destroy();
       } catch (Exception e) {
         MetalLogger.warn("[RenderSectionManagerMixin] Failed to destroy non-chunk output", e);
+      }
+    }
+  }
+
+  @Inject(method = "onChunkAdded", at = @At("HEAD"), require = 0)
+  private void metalrender$captureChunkOnAdd(int x, int z, CallbackInfo ci) {
+    if (MetalRenderConfig.extendedLodEnabled() && MetalRenderConfig.extendedLodIngestEnabled()) {
+      LodChunkIngestor ingestor = LodChunkIngestor.getInstance();
+      if (ingestor.isRunning()) {
+        ingestor.captureChunkAt(x, z);
+      }
+    }
+  }
+
+  @Inject(method = "onChunkRemoved", at = @At("HEAD"), require = 0)
+  private void metalrender$captureChunkOnRemove(int x, int z, CallbackInfo ci) {
+    if (MetalRenderConfig.extendedLodEnabled() && MetalRenderConfig.extendedLodIngestEnabled()) {
+      LodChunkIngestor ingestor = LodChunkIngestor.getInstance();
+      if (ingestor.isRunning()) {
+        ingestor.captureChunkAt(x, z);
       }
     }
   }

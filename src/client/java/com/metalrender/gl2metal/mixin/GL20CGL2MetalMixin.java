@@ -11,20 +11,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.nio.ByteBuffer;
 
-/**
- * GL20 interception for GL2Metal mode.
- * Intercepts shader and program calls and routes them to Metal.
- * 
- * NOTE: We target GL20 (wrapper class) instead of GL20C because GL20C methods are 
- * native and cannot be injected into. GL20 wraps GL20C with regular Java methods.
- */
 @Pseudo
 @Mixin(targets = { "org.lwjgl.opengl.GL20" })
 public class GL20CGL2MetalMixin {
-
-    // ========================================================================
-    // Program Functions
-    // ========================================================================
 
     @Inject(method = "glCreateProgram", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glCreateProgram(CallbackInfoReturnable<Integer> cir) {
@@ -57,10 +46,6 @@ public class GL20CGL2MetalMixin {
         }
     }
 
-    // ========================================================================
-    // Shader Functions
-    // ========================================================================
-
     @Inject(method = "glCreateShader", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glCreateShader(int type, CallbackInfoReturnable<Integer> cir) {
         if (GL2MetalManager.shouldInterceptShaders()) {
@@ -91,15 +76,6 @@ public class GL20CGL2MetalMixin {
             ci.cancel();
         }
     }
-
-    // ========================================================================
-    // Uniform Functions
-    // NOTE: Uniform location lookup has complex overloads - for now we skip these
-    // and let OpenGL handle them. The uniform values will still be intercepted.
-    // ========================================================================
-
-    // Skip glGetUniformLocation - complex overloads with ByteBuffer vs CharSequence
-    // TODO: Figure out proper signature matching for LWJGL wrapper methods
 
     @Inject(method = "glUniform1i", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glUniform1i(int location, int v0, CallbackInfo ci) {
@@ -140,21 +116,6 @@ public class GL20CGL2MetalMixin {
             ci.cancel();
         }
     }
-
-    // ========================================================================
-    // Vertex Attribute Functions - SKIPPED
-    // NOTE: GL20 wrapper uses ByteBuffer for pointer params, not long.
-    // These methods have signature mismatches and need special handling.
-    // TODO: Implement proper interception at a higher level (GlStateManager)
-    // ========================================================================
-
-    // @Inject for glVertexAttribPointer - SKIPPED due to signature mismatch
-    // @Inject for glEnableVertexAttribArray - SKIPPED due to signature mismatch  
-    // @Inject for glDisableVertexAttribArray - SKIPPED due to signature mismatch
-
-    // ========================================================================
-    // Blend Function Separate (STATE category)
-    // ========================================================================
 
     @Inject(method = "glBlendFuncSeparate", at = @At("HEAD"), cancellable = true, remap = false)
     private static void metalrender$glBlendFuncSeparate(int srcRGB, int dstRGB, int srcAlpha, int dstAlpha,

@@ -82,32 +82,20 @@ public final class MetalRenderClient implements ClientModInitializer {
   }
 
   public static boolean isEnabled() {
-    // GL2Metal mode intercepts OpenGL calls and renders via Metal directly
-    // It's a different approach than MetalRender's custom rendering pipeline
-    // Both can be configured, but GL2Metal takes priority when enabled
     if (GL2MetalManager.isEnabled()) {
       return false;
     }
     return ENABLED;
   }
 
-  /**
-   * Check if GL2Metal mode is active (OpenGL call interception → Metal)
-   */
   public static boolean isGL2MetalMode() {
     return GL2MetalManager.isEnabled();
   }
 
-  /**
-   * Check if custom MetalRender mode is active (custom Metal rendering)
-   */
   public static boolean isMetalRenderMode() {
     return ENABLED && !GL2MetalManager.isEnabled();
   }
 
-  /**
-   * Get a description of the current rendering mode.
-   */
   public static String getRenderingModeDescription() {
     if (GL2MetalManager.isEnabled()) {
       return "GL2Metal (OpenGL→Metal interception)";
@@ -124,6 +112,16 @@ public final class MetalRenderClient implements ClientModInitializer {
 
   public static MeshShaderBackend getMeshBackend() {
     return MESH_BACKEND;
+  }
+
+  public static String getDeviceName() {
+    try {
+      if (WORLD != null && WORLD.isReady() && WORLD.getHandle() != 0L) {
+        return com.metalrender.nativebridge.NativeBridge.nGetDeviceName(WORLD.getHandle());
+      }
+    } catch (Throwable e) {
+    }
+    return "";
   }
 
   public static AsyncOcclusionTracker getOcclusionTracker() {
@@ -187,11 +185,8 @@ public final class MetalRenderClient implements ClientModInitializer {
     WORLD = renderer;
     MESH_BACKEND = new MeshShaderBackend();
     OCCLUSION_TRACKER = new AsyncOcclusionTracker();
-
-    // Initialize entity renderer with the Metal device handle
     long deviceHandle = renderer.getHandle();
     if (deviceHandle != 0) {
-      // Initialize the unified render coordinator (initializes all sub-renderers)
       MetalRenderCoordinator.getInstance().initialize(deviceHandle);
       MetalLogger.info("MetalRenderCoordinator initialized with all sub-renderers");
     }
@@ -204,8 +199,6 @@ public final class MetalRenderClient implements ClientModInitializer {
 
   private static void disableRenderer() {
     ENABLED = false;
-
-    // Destroy the unified coordinator (destroys all sub-renderers)
     MetalRenderCoordinator.getInstance().destroy();
 
     if (WORLD != null) {
@@ -226,11 +219,15 @@ public final class MetalRenderClient implements ClientModInitializer {
   }
 
   public static void resetRenderer() {
-    MinecraftClient client = MinecraftClient.getInstance();
-    if (client != null && !client.isOnThread()) {
-      client.execute(MetalRenderClient::forceRebuildRenderer);
-    } else {
-      forceRebuildRenderer();
+    try {
+      MinecraftClient client = MinecraftClient.getInstance();
+      if (client != null && !client.isOnThread()) {
+        client.execute(MetalRenderClient::forceRebuildRenderer);
+      } else {
+        forceRebuildRenderer();
+      }
+    } catch (Throwable e) {
+      MetalLogger.error("[MetalRender] resetRenderer failed: %s", e.getMessage());
     }
   }
 

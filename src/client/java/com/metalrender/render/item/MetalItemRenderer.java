@@ -27,28 +27,25 @@ public class MetalItemRenderer {
     private final ItemVertexConsumer vertexConsumer = new ItemVertexConsumer();
     private final List<ItemMesh> pendingMeshes = new ArrayList<>();
 
-    /** Current transform matrices */
+    
     private final Matrix4f positionMatrix = new Matrix4f();
     private final Matrix3f normalMatrix = new Matrix3f();
 
-    /** Frame uniforms */
+    
     private final float[] viewProjection = new float[16];
     private final float[] cameraPos = new float[4];
 
-    /** Debug counters */
+    
     private int frameCount = 0;
     private int itemsRenderedThisFrame = 0;
     private int verticesRenderedThisFrame = 0;
 
-    /** Track whether current item is a 3D block or flat item */
+    
     private boolean currentItemIs3DBlock = false;
     private int blockItemsThisFrame = 0;
     private int flatItemsThisFrame = 0;
 
-    /**
-     * Track whether items are being rendered in GUI mode (inventory) or world mode
-     * (hotbar)
-     */
+    
     private boolean currentGuiMode = false;
 
     private MetalItemRenderer() {
@@ -58,9 +55,7 @@ public class MetalItemRenderer {
         return INSTANCE;
     }
 
-    /**
-     * Initialize with Metal device handle.
-     */
+    
     public void initialize(long device) {
         this.deviceHandle = device;
         this.enabled = true;
@@ -71,9 +66,7 @@ public class MetalItemRenderer {
         return enabled && deviceHandle != 0;
     }
 
-    /**
-     * Begin a new item frame.
-     */
+    
     public void beginFrame(Matrix4f viewProj, float camX, float camY, float camZ) {
         if (!enabled)
             return;
@@ -95,66 +88,46 @@ public class MetalItemRenderer {
         currentItemIs3DBlock = false;
     }
 
-    /**
-     * Set whether the current item being rendered is a 3D block or flat item.
-     * 3D block items have full cube geometry and need proper depth testing.
-     * Flat items are essentially billboards (2 quads - front and back).
-     */
+    
     public void setIs3DBlockItem(boolean is3DBlock) {
         this.currentItemIs3DBlock = is3DBlock;
         vertexConsumer.setIs3DBlock(is3DBlock);
     }
 
-    /**
-     * Check if current item is a 3D block.
-     */
+    
     public boolean isCurrentItem3DBlock() {
         return currentItemIs3DBlock;
     }
 
-    /**
-     * Set whether items are being rendered in GUI mode (inventory screen)
-     * or world mode (hotbar, held item).
-     * This affects the projection matrix used for rendering.
-     */
+    
     public void setGuiMode(boolean guiMode) {
         this.currentGuiMode = guiMode;
         vertexConsumer.setGuiMode(guiMode);
     }
 
-    /**
-     * Check if currently in GUI mode.
-     */
+    
     public boolean isGuiMode() {
         return currentGuiMode;
     }
 
-    /**
-     * Set transform for the current item.
-     */
+    
     public void setItemTransform(Matrix4f position, Matrix3f normal) {
         positionMatrix.set(position);
         normalMatrix.set(normal);
         vertexConsumer.setTransforms(positionMatrix, normalMatrix);
     }
 
-    /**
-     * Set the current item texture.
-     */
+    
     public void setItemTexture(Identifier texture) {
         vertexConsumer.setTexture(texture != null ? texture.toString() : null);
     }
 
-    /**
-     * Get the vertex consumer for item rendering.
-     */
+    
     public VertexConsumer getVertexConsumer() {
         return vertexConsumer;
     }
 
-    /**
-     * Finish rendering the current item.
-     */
+    
     public void finishItem() {
         vertexConsumer.flushMesh();
         itemsRenderedThisFrame++;
@@ -163,13 +136,10 @@ public class MetalItemRenderer {
         } else {
             flatItemsThisFrame++;
         }
-        // Reset for next item
         currentItemIs3DBlock = false;
     }
 
-    /**
-     * End item capture and prepare for rendering.
-     */
+    
     public void endCapture() {
         List<ItemVertexConsumer.CapturedMesh> meshes = vertexConsumer.harvest();
 
@@ -185,13 +155,7 @@ public class MetalItemRenderer {
         }
     }
 
-    /**
-     * Render all captured items.
-     * 
-     * 3D block items use depth testing to render as proper 3D cubes.
-     * Flat items (swords, diamonds) don't need depth testing as they're essentially
-     * billboards.
-     */
+    
     public void renderItems() {
         if (frameCount <= 10 || frameCount % 300 == 0) {
             System.out.println("[MetalItemRenderer] renderItems called: enabled=" + enabled +
@@ -202,7 +166,6 @@ public class MetalItemRenderer {
             return;
 
         try {
-            // Try to use the dedicated item pass if available, fallback to entity pass
             boolean useItemPass = tryBeginItemPass();
 
             if (frameCount <= 10 || frameCount % 300 == 0) {
@@ -211,7 +174,6 @@ public class MetalItemRenderer {
             }
 
             if (!useItemPass) {
-                // Fallback: use entity pass
                 NativeBridge.nBeginEntityPass(deviceHandle, viewProjection, cameraPos);
             }
 
@@ -229,14 +191,11 @@ public class MetalItemRenderer {
                     System.out.println("[MetalItemRenderer] Mesh " + drawnMeshes + ": verts=" + mesh.vertexCount +
                             ", texture=" + mesh.textureId + ", handle=" + textureHandle + ", is3D=" + mesh.is3DBlock);
                 }
-
-                // Use the new nDrawItem if available, with depth testing for 3D blocks
                 if (useItemPass) {
                     try {
                         NativeBridge.nDrawItem(deviceHandle, mesh.vertexData, mesh.vertexCount, textureHandle,
                                 mesh.is3DBlock);
                     } catch (UnsatisfiedLinkError e) {
-                        // Fallback to standard entity draw
                         NativeBridge.nDrawEntity(deviceHandle, mesh.vertexData, mesh.vertexCount, textureHandle);
                     }
                 } else {
@@ -260,10 +219,7 @@ public class MetalItemRenderer {
         pendingMeshes.clear();
     }
 
-    /**
-     * Try to begin item pass. Returns true if successful, false if native method
-     * not available.
-     */
+    
     private boolean tryBeginItemPass() {
         try {
             NativeBridge.nBeginItemPass(deviceHandle, viewProjection, cameraPos);
@@ -273,9 +229,7 @@ public class MetalItemRenderer {
         }
     }
 
-    /**
-     * Try to end item pass. Silently fails if native method not available.
-     */
+    
     private void tryEndItemPass() {
         try {
             NativeBridge.nEndItemPass(deviceHandle);
@@ -283,23 +237,17 @@ public class MetalItemRenderer {
         }
     }
 
-    /**
-     * Get items rendered this frame.
-     */
+    
     public int getItemsRenderedThisFrame() {
         return itemsRenderedThisFrame;
     }
 
-    /**
-     * Get vertices rendered this frame.
-     */
+    
     public int getVerticesRenderedThisFrame() {
         return verticesRenderedThisFrame;
     }
 
-    /**
-     * Clean up resources.
-     */
+    
     public void destroy() {
         enabled = false;
         vertexConsumer.beginFrame();
@@ -307,9 +255,7 @@ public class MetalItemRenderer {
         deviceHandle = 0;
     }
 
-    /**
-     * An item mesh for rendering.
-     */
+    
     public static class ItemMesh {
         public final ByteBuffer vertexData;
         public final int vertexCount;
@@ -324,9 +270,7 @@ public class MetalItemRenderer {
         }
     }
 
-    /**
-     * Vertex consumer for item rendering.
-     */
+    
     public static class ItemVertexConsumer implements VertexConsumer {
 
         private ByteBuffer buffer;
@@ -425,8 +369,6 @@ public class MetalItemRenderer {
             posY = y;
             posZ = z;
             hasVertex = true;
-
-            // Debug logging
             vertexCallCount++;
             if (vertexCallCount <= 20) {
                 System.out.println(
@@ -480,7 +422,6 @@ public class MetalItemRenderer {
 
         @Override
         public VertexConsumer lineWidth(float width) {
-            // Line width is not used for item rendering
             return this;
         }
 

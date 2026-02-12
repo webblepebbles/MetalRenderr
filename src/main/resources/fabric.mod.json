@@ -9,14 +9,13 @@
   "environment": "client",
   "entrypoints": {
     "client": ["com.metalrender.MetalRenderClient"],
-    "modmenu": ["com.metalrender.config.gui.MetalRenderModMenuIntegration"]
+    "sodium:config_api_user": ["com.metalrender.config.gui.MetalRenderSodiumConfig"]
   },
   "mixins": ["metalrender.mixins.json", "gl2metal.mixins.json"],
   "depends": {
     "fabricloader": ">=0.17.1",
-    "minecraft": ">=1.21.8",
+    "minecraft": ">=1.21.10",
     "fabric": "*",
-    "sodium": ">=0.6.0",
-    "modmenu": ">=16.0.0-rc.1"
+    "sodium": ">=0.6.0"
   }
 }

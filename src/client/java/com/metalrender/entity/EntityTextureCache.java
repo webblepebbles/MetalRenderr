@@ -17,31 +17,22 @@ import java.nio.ByteOrder;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * Caches entity textures as Metal textures for entity rendering.
- * 
- * Unlike the terrain atlas (which is a single large texture), entities use
- * individual textures per entity type. We need to:
- * 1. Read the GL texture data when first encountered
- * 2. Upload to Metal as an MTLTexture
- * 3. Cache by Identifier for reuse
- */
 public class EntityTextureCache {
 
     private static final EntityTextureCache INSTANCE = new EntityTextureCache();
 
-    /** Map from texture identifier string to native Metal texture handle */
+    
     private final Map<String, Long> textureHandles = new ConcurrentHashMap<>();
 
-    /** Map from texture identifier to dimensions */
+    
     private final Map<String, TextureInfo> textureInfo = new ConcurrentHashMap<>();
 
-    /** Native device handle */
+    
     private long deviceHandle = 0;
 
     private int texturesLoaded = 0;
 
-    /** Cached white 1x1 texture handle for solid color rendering */
+    
     private long whiteTextureHandle = 0;
 
     private EntityTextureCache() {
@@ -51,21 +42,14 @@ public class EntityTextureCache {
         return INSTANCE;
     }
 
-    /**
-     * Initialize with the Metal device handle.
-     */
+    
     public void initialize(long device) {
         this.deviceHandle = device;
         MetalLogger.info("[EntityTextureCache] Initialized with device handle: {}", device);
-
-        // Pre-create the white fallback texture
         createWhiteTexture();
     }
 
-    /**
-     * Get the white 1x1 texture handle for solid color rendering.
-     * This is used when no texture is bound (e.g., for solid fills).
-     */
+    
     public long getWhiteTextureHandle() {
         if (whiteTextureHandle == 0 && deviceHandle != 0) {
             createWhiteTexture();
@@ -73,21 +57,18 @@ public class EntityTextureCache {
         return whiteTextureHandle;
     }
 
-    /**
-     * Create a 1x1 white texture for solid color rendering.
-     */
+    
     private void createWhiteTexture() {
         if (deviceHandle == 0 || whiteTextureHandle != 0) {
             return;
         }
 
         try {
-            // Create 1x1 white RGBA pixel data (BGRA format for Metal)
             ByteBuffer whitePixel = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder());
-            whitePixel.put((byte) 255); // B
-            whitePixel.put((byte) 255); // G
-            whitePixel.put((byte) 255); // R
-            whitePixel.put((byte) 255); // A
+            whitePixel.put((byte) 255); 
+            whitePixel.put((byte) 255); 
+            whitePixel.put((byte) 255); 
+            whitePixel.put((byte) 255); 
             whitePixel.flip();
 
             whiteTextureHandle = NativeBridge.nUploadEntityTexture(deviceHandle, whitePixel, 1, 1);
@@ -97,44 +78,30 @@ public class EntityTextureCache {
         }
     }
 
-    /**
-     * Get or create a Metal texture handle for the given texture identifier string.
-     * Returns 0 if the texture couldn't be loaded.
-     */
+    
     public long getOrCreateTexture(String textureIdStr) {
         if (deviceHandle == 0 || textureIdStr == null) {
             return 0;
         }
-
-        // Check cache first
         Long cached = textureHandles.get(textureIdStr);
         if (cached != null) {
             return cached;
         }
-
-        // Try to parse as Identifier
         Identifier textureId = Identifier.tryParse(textureIdStr);
         if (textureId == null) {
             textureHandles.put(textureIdStr, 0L);
             return 0;
         }
-
-        // Need to load from GL and upload to Metal
         return loadAndUploadTexture(textureId, textureIdStr);
     }
 
-    /**
-     * Get texture info (dimensions) for a texture.
-     */
+    
     public TextureInfo getTextureInfo(String textureIdStr) {
         return textureInfo.get(textureIdStr);
     }
 
-    /**
-     * Load a texture from GL and upload to Metal.
-     */
+    
     private synchronized long loadAndUploadTexture(Identifier textureId, String key) {
-        // Double-check after acquiring lock
         Long cached = textureHandles.get(key);
         if (cached != null) {
             return cached;
@@ -143,8 +110,6 @@ public class EntityTextureCache {
         try {
             MinecraftClient mc = MinecraftClient.getInstance();
             TextureManager textureManager = mc.getTextureManager();
-
-            // Get the GL texture - this also ensures it's loaded
             AbstractTexture texture = textureManager.getTexture(textureId);
             if (texture == null) {
                 System.out.println("[EntityTextureCache] No texture found for: " + key);
@@ -154,8 +119,6 @@ public class EntityTextureCache {
 
             System.out.println(
                     "[EntityTextureCache] Loading texture: " + key + " type=" + texture.getClass().getSimpleName());
-
-            // Get GL texture ID through accessor chain
             int glTextureId = 0;
             if (texture instanceof AbstractTextureAccessor texAccessor) {
                 GpuTexture gpuTex = texAccessor.metalrender$getGlTexture();
@@ -171,8 +134,6 @@ public class EntityTextureCache {
             }
 
             System.out.println("[EntityTextureCache] Got GL texture ID: " + glTextureId + " for: " + key);
-
-            // Read the texture data from GL
             ByteBuffer pixelData = readGLTextureById(glTextureId, key);
             if (pixelData == null) {
                 System.out.println("[EntityTextureCache] Failed to read GL texture data for: " + key);
@@ -186,8 +147,6 @@ public class EntityTextureCache {
                 textureHandles.put(key, 0L);
                 return 0;
             }
-
-            // Upload to Metal
             long handle = NativeBridge.nUploadEntityTexture(deviceHandle, pixelData, info.width, info.height);
 
             System.out.println("[EntityTextureCache] Uploaded texture to Metal: " + key + " handle=" + handle + " size="
@@ -204,18 +163,11 @@ public class EntityTextureCache {
         }
     }
 
-    /**
-     * Read texture data from a GL texture by ID.
-     */
+    
     private ByteBuffer readGLTextureById(int glTextureId, String key) {
         try {
-            // Save current binding
             int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
-
-            // Bind the texture
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, glTextureId);
-
-            // Get dimensions
             int width = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH);
             int height = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT);
 
@@ -223,17 +175,9 @@ public class EntityTextureCache {
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
                 return null;
             }
-
-            // Store texture info
             textureInfo.put(key, new TextureInfo(width, height));
-
-            // Allocate buffer for BGRA data
             ByteBuffer buffer = ByteBuffer.allocateDirect(width * height * 4).order(ByteOrder.nativeOrder());
-
-            // Read texture data in BGRA format for Metal
             GL11.glGetTexImage(GL11.GL_TEXTURE_2D, 0, GL12.GL_BGRA, GL11.GL_UNSIGNED_BYTE, buffer);
-
-            // Restore previous binding
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
 
             buffer.rewind();
@@ -244,9 +188,7 @@ public class EntityTextureCache {
         }
     }
 
-    /**
-     * Clear all cached textures (e.g., on resource reload).
-     */
+    
     public void clear() {
         textureHandles.clear();
         textureInfo.clear();
@@ -254,16 +196,12 @@ public class EntityTextureCache {
         MetalLogger.info("[EntityTextureCache] Cleared all cached textures");
     }
 
-    /**
-     * Get cache statistics.
-     */
+    
     public int getCachedTextureCount() {
         return textureHandles.size();
     }
 
-    /**
-     * Texture dimension info.
-     */
+    
     public static class TextureInfo {
         public final int width;
         public final int height;
