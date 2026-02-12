@@ -36,7 +36,6 @@ dependencies {
     modImplementation "org.lwjgl:lwjgl-glfw:3.3.3:natives-macos"
     modImplementation 'org.joml:joml:1.10.5'
     modImplementation "maven.modrinth:sodium:mc1.21.11-0.8.0-fabric"
-    modImplementation "maven.modrinth:modmenu:17.0.0-alpha.1"
 }
 
 loom {
@@ -47,6 +46,8 @@ loom {
             client()
             source sourceSets.client
             vmArg "-Djava.library.path=${projectDir}/src/main/resources"
+            vmArg "--enable-preview"
+            vmArg "--enable-native-access=ALL-UNNAMED"
             
             // Enable GL2Metal mode if property is set
             // Usage: ./gradlew runClient -Pgl2metal
@@ -67,6 +68,7 @@ loom {
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
     options.release = 21
+    options.compilerArgs += ['--enable-preview']
 }
     jar {
         duplicatesStrategy = DuplicatesStrategy.EXCLUDE

@@ -32,3 +32,5 @@ compile_commands.json
 *.metallib
 *.dylib
 /work files/
+*.txt
+*.out
