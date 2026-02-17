@@ -30,7 +30,7 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 
 - Only works on Metal (macOS)
 - Will still load on other GPUs but won't offer any additional benefits or changes
-- Shaders are not yet supported yet, they might be added in the future
+- Shaders are not yet supported, they might be added in the future
 - This should be compatible with most other mods, if it isn't please add a Issue
 - MarioMastr helped me a ton by making a fork that addressed some MAJOR issues in native code! Thank them too!
 
@@ -44,7 +44,7 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
   every stable release and major bug clearance (a group of bugs that I fixed) or a new feature etc etc. I cannot flood the Modrinth page with 20 new releases every 5
   days or so.
 
-- When will Forge/Neoforge/Quilt be added?
+- When will Forge/Neoforge be added?
 
   I probably won't make support for other loaders in the future but for now, only Fabric is supported because its the most lightweight and popular.
 
@@ -60,7 +60,7 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 
 - Does it work with xxx launcher?
 
-  As long as your launcher doesn't mess with display libraries, GLFW or EGL (like Prism does), it would work. It has been verifyed to NOT work on Prism launcher. The Offical Mojang launcher works.
+  As long as your launcher doesn't mess with display libraries, GLFW or EGL (like Prism does), it would work. It has been verified to NOT work on Prism launcher. The Offical Mojang launcher works.
 
 ---
 
