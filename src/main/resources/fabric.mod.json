@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "metalrender",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "license": "Apache-2.0",
   "authors": [
     "pebbles_boon"
@@ -11,14 +11,16 @@
   "environment": "client",
   "entrypoints": {
     "client": [
-      "com.metalrender.MetalRenderClient"
+      "com.pebbles_boon.metalrender.MetalRenderClient"
     ]
   },
   "mixins": ["metalrender.mixins.json"],
   "depends": {
     "fabricloader": ">=0.17.1",
-    "minecraft": ">=1.21.8",
-    "fabric": "*",
-    "sodium": ">=0.6.0"
+    "minecraft": ">=1.21.11",
+    "fabric": "*"
+  },
+  "suggests": {
+    "sodium": ">=0.8.0"
   }
 }
