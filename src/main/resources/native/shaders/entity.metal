@@ -1,189 +1,246 @@
 #include <metal_stdlib>
 using namespace metal;
 
-struct EntityFrameUniforms {
-    float4x4 viewProj;
-    float4 cameraPos;
-    float4 fogColor;
-    float4 fogParams;
-    float4 lightParams;
-};
 
-struct EntityVertexIn {
-    float3 position [[attribute(0)]];
-    float2 texCoord [[attribute(1)]];
-    uint color [[attribute(2)]];
-    uint packedNormal [[attribute(3)]];
+
+
+
+
+
+
+
+
+struct EntityVertex {
+    packed_float3 position;
+    packed_short2 texCoord;
+    packed_uchar4 color;
+    packed_uchar4 normal;
+    packed_short2 overlay;
+    packed_short2 lightUV;
 };
 
 struct EntityVertexOut {
-    float4 position [[position]];
-    half2 texCoord;
-    half4 color;
-    half3 normal;
-    half distance;
-    half lightBrightness;
-    half dayBrightness;
+    float4 position  [[position]];
+    float2 texCoord;
+    float4 color;
+    float3 normal;
+    float2 lightUV;
+    float2 overlay;
+    float3 worldPos;
 };
 
-half4 decodeEntityColor(uint colorPacked) {
-    return half4(
-        half((colorPacked >> 0u) & 0xFFu) / 255.0h,
-        half((colorPacked >> 8u) & 0xFFu) / 255.0h,
-        half((colorPacked >> 16u) & 0xFFu) / 255.0h,
-        half((colorPacked >> 24u) & 0xFFu) / 255.0h
-    );
-}
 
-half3 decodeEntityNormal(uint packedNormal) {
-    half nx = half((packedNormal >> 0u) & 0x3FFu) / 1023.0h * 2.0h - 1.0h;
-    half ny = half((packedNormal >> 10u) & 0x3FFu) / 1023.0h * 2.0h - 1.0h;
-    half nz = half((packedNormal >> 20u) & 0x3FFu) / 1023.0h * 2.0h - 1.0h;
-    return normalize(half3(nx, ny, nz));
-}
+struct EntityInstanceData {
+    float4x4 modelMatrix;
+    float4   tintColor;
+    float4   overlayParams;
+    uint     textureIndex;
+    uint     flags;
+    float    _pad0;
+    float    _pad1;
+};
 
-half decodeLightBrightness(uint packedLight, half dayBrightness, half ambientLight) {
-    half blockLight = half(packedLight & 0xFFFFu) / 240.0h;
-    half skyLight = half((packedLight >> 16u) & 0xFFFFu) / 240.0h;
 
-    blockLight = clamp(blockLight, 0.0h, 1.0h);
-    skyLight = clamp(skyLight, 0.0h, 1.0h);
 
-    half blockBrightness = blockLight * blockLight * (3.0h - 2.0h * blockLight);
-    blockBrightness = 0.1h + blockBrightness * 0.9h;
-    if (blockLight < 0.01h) blockBrightness = 0.0h;
 
-    half effectiveDayBrightness = max(0.15h, dayBrightness);
-    half skyBrightness = skyLight * effectiveDayBrightness;
 
-    half brightness = max(blockBrightness, skyBrightness);
-    half ambient = max(0.03h, ambientLight * 0.15h);
-
-    return clamp(ambient + brightness * (1.0h - ambient), 0.0h, 1.0h);
-}
-
-vertex float4 entity_depth_vertex(
-    uint vertexId [[vertex_id]],
-    constant float* vertexData [[buffer(0)]],
-    constant EntityFrameUniforms& frame [[buffer(1)]]
+vertex EntityVertexOut vertex_entity(
+    device const EntityVertex*     vertices    [[buffer(0)]],
+    constant float4x4&             projection  [[buffer(1)]],
+    constant float4x4&             modelView   [[buffer(2)]],
+    uint vid [[vertex_id]]
 ) {
-    uint base = vertexId * 8u;
-
-    float3 worldPos = float3(
-        vertexData[base + 0u],
-        vertexData[base + 1u],
-        vertexData[base + 2u]
-    );
-
-    float3 cameraRelativePos = worldPos - frame.cameraPos.xyz;
-    return frame.viewProj * float4(cameraRelativePos, 1.0);
-}
-
-vertex EntityVertexOut entity_color_vertex(
-    uint vertexId [[vertex_id]],
-    constant uint* vertexData [[buffer(0)]],
-    constant EntityFrameUniforms& frame [[buffer(1)]]
-) {
-    uint base = vertexId * 8u;
-
-    float3 worldPos = float3(
-        as_type<float>(vertexData[base + 0u]),
-        as_type<float>(vertexData[base + 1u]),
-        as_type<float>(vertexData[base + 2u])
-    );
-
-    float2 uv = float2(
-        as_type<float>(vertexData[base + 3u]),
-        as_type<float>(vertexData[base + 4u])
-    );
-
-    uint colorPacked = vertexData[base + 5u];
-    uint normalPacked = vertexData[base + 6u];
-    uint packedLight = vertexData[base + 7u];
-
-    float3 cameraRelativePos = worldPos - frame.cameraPos.xyz;
-
+    EntityVertex v = vertices[vid];
     EntityVertexOut out;
-    out.position = frame.viewProj * float4(cameraRelativePos, 1.0);
-    out.texCoord = half2(uv);
-    out.color = decodeEntityColor(colorPacked);
-    out.normal = decodeEntityNormal(normalPacked);
-    out.distance = half(clamp(length(cameraRelativePos), 0.0f, 4096.0f));
-    out.dayBrightness = frame.lightParams.x;
-    out.lightBrightness = decodeLightBrightness(packedLight, frame.lightParams.x, frame.lightParams.y);
+
+    float3 pos     = float3(v.position);
+    float4 viewPos = modelView * float4(pos, 1.0);
+
+    out.position = projection * viewPos;
+    out.texCoord = float2(v.texCoord) / 32768.0;
+    out.color    = float4(v.color) / 255.0;
+    out.normal   = normalize(float3(v.normal.xyz) / 127.0 - 1.0);
+    out.lightUV  = float2(v.lightUV) / 256.0;
+    out.overlay  = float2(v.overlay.x, v.overlay.y);
+    out.worldPos = pos;
 
     return out;
 }
 
-fragment half4 entity_color_fragment(
+
+vertex EntityVertexOut vertex_entity_instanced(
+    device const EntityVertex*       vertices    [[buffer(0)]],
+    device const EntityInstanceData* instances   [[buffer(1)]],
+    constant float4x4&               projection  [[buffer(2)]],
+    constant float4x4&               viewMatrix  [[buffer(3)]],
+    uint vid [[vertex_id]],
+    uint iid [[instance_id]]
+) {
+    EntityVertex v = vertices[vid];
+    EntityInstanceData inst = instances[iid];
+    EntityVertexOut out;
+
+    float3 localPos = float3(v.position);
+    float4 worldPos = inst.modelMatrix * float4(localPos, 1.0);
+    float4 viewPos  = viewMatrix * worldPos;
+
+    out.position = projection * viewPos;
+    out.texCoord = float2(v.texCoord) / 32768.0;
+    out.color    = float4(v.color) / 255.0 * inst.tintColor;
+    out.normal   = normalize((inst.modelMatrix * float4(float3(v.normal.xyz) / 127.0 - 1.0, 0.0)).xyz);
+    out.lightUV  = float2(v.lightUV) / 256.0;
+    out.overlay  = inst.overlayParams.xy;
+    out.worldPos = worldPos.xyz;
+
+    return out;
+}
+
+
+
+
+
+fragment float4 fragment_entity(
     EntityVertexOut in [[stage_in]],
-    texture2d<half, access::sample> entityTexture [[texture(0)]]
+    texture2d<float> entityTex  [[texture(0)]],
+    constant float4& overlayParams [[buffer(5)]]
 ) {
+    constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
 
-    constexpr sampler entityPointSampler(coord::normalized,
-                                         address::clamp_to_edge,
-                                         filter::nearest,
-                                         mip_filter::nearest);
-    half4 texColor = entityTexture.sample(entityPointSampler, float2(in.texCoord));
+    float4 texColor = entityTex.sample(texSampler, in.texCoord);
+    if (texColor.a < 0.1) discard_fragment();
 
-    if (texColor.a < 0.1h) {
-        discard_fragment();
+    float4 finalColor = texColor * in.color;
+
+
+    float3 lightDir = normalize(float3(0.2, 1.0, 0.5));
+    float nDotL     = max(dot(in.normal, lightDir), 0.0);
+    float ambient   = 0.4;
+    finalColor.rgb *= (ambient + (1.0 - ambient) * nDotL);
+
+
+    float blockLight = clamp(in.lightUV.x, 0.0, 1.0);
+    float skyLight   = clamp(in.lightUV.y, 0.0, 1.0);
+    float lightLevel = max(blockLight, skyLight);
+
+    lightLevel = max(lightLevel, 0.5);
+    finalColor.rgb *= lightLevel;
+
+
+    float hurtTime = overlayParams.x;
+    if (hurtTime > 0.0) {
+        finalColor.rgb = mix(finalColor.rgb, float3(1.0, 0.0, 0.0), clamp(hurtTime, 0.0, 0.6));
     }
 
-    half4 finalColor = texColor * in.color;
 
-    half dayFactor = in.dayBrightness;
-    half sunAngle = dayFactor * 3.14159h;
-    half3 sunDir = normalize(half3(
-        cos(sunAngle) * 0.4h,
-        sin(sunAngle) * 0.8h + 0.2h,
-        0.3h
-    ));
-
-    half ndotl = max(dot(in.normal, sunDir), 0.0h);
-    half directional = 0.7h + 0.3h * ndotl;
-
-    half totalLight = in.lightBrightness * directional;
-    finalColor.rgb *= clamp(totalLight, 0.0h, 1.0h);
+    float whiteFlash = overlayParams.y;
+    if (whiteFlash > 0.0) {
+        finalColor.rgb = mix(finalColor.rgb, float3(1.0), clamp(whiteFlash, 0.0, 1.0));
+    }
 
     return finalColor;
 }
 
-fragment half4 entity_color_only_fragment(
-    EntityVertexOut in [[stage_in]]
+
+fragment float4 fragment_entity_translucent(
+    EntityVertexOut in [[stage_in]],
+    texture2d<float> entityTex  [[texture(0)]],
+    constant float4& overlayParams [[buffer(5)]]
 ) {
-    half4 finalColor = in.color;
+    constexpr sampler texSampler(filter::linear, address::clamp_to_edge);
 
-    if (finalColor.a < 0.1h) {
-        discard_fragment();
+    float4 texColor = entityTex.sample(texSampler, in.texCoord);
+    if (texColor.a < 0.004) discard_fragment();
+
+    float4 finalColor = texColor * in.color;
+
+    float3 lightDir = normalize(float3(0.2, 1.0, 0.5));
+    float nDotL     = max(dot(in.normal, lightDir), 0.0);
+    finalColor.rgb *= (0.4 + 0.6 * nDotL);
+
+
+    float blockLight = clamp(in.lightUV.x, 0.0, 1.0);
+    float skyLight   = clamp(in.lightUV.y, 0.0, 1.0);
+    float lightLevel = max(max(blockLight, skyLight), 0.5);
+    finalColor.rgb *= lightLevel;
+
+
+    float hurtTime = overlayParams.x;
+    if (hurtTime > 0.0) {
+        finalColor.rgb = mix(finalColor.rgb, float3(1.0, 0.0, 0.0), clamp(hurtTime, 0.0, 0.6));
     }
-
-    half dayFactor = in.dayBrightness;
-    half sunAngle = dayFactor * 3.14159h;
-    half3 sunDir = normalize(half3(cos(sunAngle) * 0.4h, sin(sunAngle) * 0.8h + 0.2h, 0.3h));
-    half ndotl = max(dot(in.normal, sunDir), 0.0h);
-    half directional = 0.75h + 0.25h * ndotl;
-
-    half totalLight = in.lightBrightness * directional;
-    finalColor.rgb *= clamp(totalLight, 0.0h, 1.0h);
 
     return finalColor;
 }
 
-vertex EntityVertexOut entity_color_vertex_vd(
-    EntityVertexIn in [[stage_in]],
-    constant EntityFrameUniforms& frame [[buffer(1)]]
+
+fragment float4 fragment_entity_emissive(
+    EntityVertexOut in [[stage_in]],
+    texture2d<float> entityTex  [[texture(0)]],
+    constant float4& overlayParams [[buffer(5)]]
 ) {
-    float3 cameraRelativePos = in.position - frame.cameraPos.xyz;
+    constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
 
-    EntityVertexOut out;
-    out.position = frame.viewProj * float4(cameraRelativePos, 1.0);
-    out.texCoord = half2(in.texCoord);
-    out.color = decodeEntityColor(in.color);
-    out.normal = decodeEntityNormal(in.packedNormal);
-    out.distance = half(clamp(length(cameraRelativePos), 0.0f, 4096.0f));
-    out.dayBrightness = frame.lightParams.x;
-    out.lightBrightness = decodeLightBrightness(0x00F000F0u, frame.lightParams.x, frame.lightParams.y);
+    float4 texColor = entityTex.sample(texSampler, in.texCoord);
+    if (texColor.a < 0.1) discard_fragment();
 
-    return out;
+    float4 finalColor = texColor * in.color;
+
+
+    float hurtTime = overlayParams.x;
+    if (hurtTime > 0.0) {
+        finalColor.rgb = mix(finalColor.rgb, float3(1.0, 0.0, 0.0), clamp(hurtTime, 0.0, 0.6));
+    }
+
+    return finalColor;
+}
+
+
+fragment float4 fragment_entity_outline(
+    EntityVertexOut in [[stage_in]],
+    constant float4& outlineColor [[buffer(4)]]
+) {
+    return outlineColor;
+}
+
+
+
+
+
+
+fragment float4 fragment_particle(
+    EntityVertexOut in [[stage_in]],
+    texture2d<float> entityTex  [[texture(0)]],
+    constant float4& overlayParams [[buffer(5)]]
+) {
+
+    constexpr sampler texSampler(filter::nearest, mip_filter::nearest,
+                                  address::clamp_to_edge);
+
+    float4 texColor = entityTex.sample(texSampler, in.texCoord);
+    if (texColor.a < 0.004) discard_fragment();
+
+    float4 finalColor = texColor * in.color;
+
+
+    float blockLight = clamp(in.lightUV.x, 0.0, 1.0);
+    float skyLight   = clamp(in.lightUV.y, 0.0, 1.0);
+    float lightLevel = max(max(blockLight, skyLight), 0.3);
+    finalColor.rgb  *= lightLevel;
+
+    return finalColor;
+}
+
+
+fragment float4 fragment_entity_shadow(
+    EntityVertexOut in [[stage_in]],
+    texture2d<float> entityTex  [[texture(0)]],
+    constant float4& overlayParams [[buffer(5)]]
+) {
+    constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
+
+    float4 texColor = entityTex.sample(texSampler, in.texCoord);
+    if (texColor.a < 0.1) discard_fragment();
+
+
+    return float4(0.0, 0.0, 0.0, 0.5 * texColor.a);
 }

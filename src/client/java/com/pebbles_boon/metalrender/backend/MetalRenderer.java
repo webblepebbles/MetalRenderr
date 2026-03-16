@@ -31,6 +31,18 @@ public final class MetalRenderer implements RenderBackend {
     public long getDefaultPipelineHandle() {
       return NativeBridge.nGetDefaultPipelineHandle(renderer.handle);
     }
+
+    public long getEntityPipelineHandle() {
+      return NativeBridge.nGetEntityPipelineHandle(renderer.handle);
+    }
+
+    public long getEntityTranslucentPipelineHandle() {
+      return NativeBridge.nGetEntityTranslucentPipelineHandle(renderer.handle);
+    }
+
+    public long getEntityEmissivePipelineHandle() {
+      return NativeBridge.nGetEntityEmissivePipelineHandle(renderer.handle);
+    }
   }
 
   public MetalRenderer() {

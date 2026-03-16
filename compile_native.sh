@@ -40,7 +40,9 @@ clang++ -O3 -std=c++17 -dynamiclib \
     -I"src/main/resources/native" \
     src/main/resources/native/metalrender.mm \
     src/main/resources/native/meshshader.mm \
-    src/main/resources/native/gl2metal.mm \
     -o src/main/resources/libmetalrender_debug_v2.dylib
 
+cp src/main/resources/libmetalrender_debug_v2.dylib src/main/resources/libmetalrender.dylib
+
 echo "Native library compiled to src/main/resources/libmetalrender_debug_v2.dylib"
+echo "Copied to src/main/resources/libmetalrender.dylib"

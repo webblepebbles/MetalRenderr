@@ -1,190 +1,162 @@
 #include <metal_stdlib>
 using namespace metal;
 
-constant half MODEL_ORIGIN_H = 8.0h;
-constant half MODEL_RANGE_H = 32.0h;
-constant uint POSITION_MAX_VALUE = 1u << 20u;
-constant uint TEXTURE_MAX_VALUE = 1u << 15u;
-
-constant uint LOD_LEVEL [[function_constant(0)]];
-constant bool ENABLE_BLOCK_LIGHT [[function_constant(1)]];
-constant bool ENABLE_TEXTURE_SAMPLE [[function_constant(2)]];
-constant bool ENABLE_FOG [[function_constant(3)]];
-constant bool IS_DISTANT_LOD = (LOD_LEVEL >= 3u);
-constant bool IS_ULTRA_DISTANT = (LOD_LEVEL >= 5u);
-
-struct DrawUniforms {
-    float originX;
-    float originY;
-    float originZ;
-    float renderLayer;
+struct SodiumVertex {
+    uint posHi;
+    uint posLo;
+    uint color;
+    uint texture;
+    uint lightData;
 };
 
-struct FrameUniforms {
-    float4x4 viewProj;
-    float4 cameraPos;
-    float4 fogColor;
-    float4 fogParams;
-    float4 texCoordShrink;
-    float4 lightParams;
+float3 decodeSodiumPosition(uint posHi, uint posLo) {
+    uint xHi = (posHi >>  0) & 0x3FF;
+    uint yHi = (posHi >> 10) & 0x3FF;
+    uint zHi = (posHi >> 20) & 0x3FF;
+    uint xLo = (posLo >>  0) & 0x3FF;
+    uint yLo = (posLo >> 10) & 0x3FF;
+    uint zLo = (posLo >> 20) & 0x3FF;
+    float x = float((xHi << 10) | xLo) / 1048576.0 * 32.0 - 8.0;
+    float y = float((yHi << 10) | yLo) / 1048576.0 * 32.0 - 8.0;
+    float z = float((zHi << 10) | zLo) / 1048576.0 * 32.0 - 8.0;
+    return float3(x, y, z);
+}
+
+float4 decodeSodiumColor(uint c) {
+    float a = float((c >> 24) & 0xFF) / 255.0;
+    float r = float((c >> 16) & 0xFF) / 255.0;
+    float g = float((c >>  8) & 0xFF) / 255.0;
+    float b = float((c >>  0) & 0xFF) / 255.0;
+    return float4(r, g, b, a);
+}
+
+
+float2 decodeSodiumTexCoord(uint tex) {
+    float u = float(tex & 0x7FFF) / 32768.0;
+    float v = float((tex >> 16) & 0x7FFF) / 32768.0;
+    return float2(u, v);
+}
+
+
+float2 decodeSodiumLight(uint lightData) {
+    uint light = lightData & 0xFFFF;
+    float blockLight = float(light & 0xFF) / 256.0;
+    float skyLight   = float((light >> 8) & 0xFF) / 256.0;
+    return float2(blockLight, skyLight);
+}
+
+
+
+struct SimpleVertexOut {
+    float4 position  [[position]];
+    float2 texCoord;
+    float4 color;
+    float2 lightUV;
 };
 
-struct TerrainVertexOut {
-    float4 position [[position]];
-    half2 texCoord;
-    half4 color;
-    half2 light;
-    half distance;
-};
-
-float3 decodePosition(uint posHi, uint posLo, float3 origin) {
-    float kScale = float(MODEL_RANGE_H) / float(POSITION_MAX_VALUE);
-    float kOffset = float(MODEL_ORIGIN_H);
-
-    uint3 hi = uint3(posHi & 0x3FFu, (posHi >> 10u) & 0x3FFu, (posHi >> 20u) & 0x3FFu);
-    uint3 lo = uint3(posLo & 0x3FFu, (posLo >> 10u) & 0x3FFu, (posLo >> 20u) & 0x3FFu);
-    uint3 q = (hi << 10u) | lo;
-
-    return fma(float3(q), float3(kScale), origin - kOffset);
-}
-
-half2 decodeTexCoord(uint texPacked) {
-    half kInvTex = 1.0h / half(TEXTURE_MAX_VALUE);
-    return half2(half(texPacked & 0x7FFFu), half((texPacked >> 16u) & 0x7FFFu)) * kInvTex;
-}
-
-half4 decodeColor(uint colorWord) {
-    half kInv255 = 1.0h / 255.0h;
-    return half4(
-        half(colorWord & 0xFFu),
-        half((colorWord >> 8u) & 0xFFu),
-        half((colorWord >> 16u) & 0xFFu),
-        255.0h
-    ) * kInv255;
-}
-
-half2 decodeLight(uint lightWord) {
-    half kInv255 = 1.0h / 255.0h;
-    return half2(half(lightWord & 0xFFu), half((lightWord >> 8u) & 0xFFu)) * kInv255;
-}
-
-half computeDistantLighting(half skyLight, half dayBrightness, half ambientLight) {
-    half effectiveSky = fast::max(dayBrightness, 0.15h);
-    half brightness = skyLight * effectiveSky;
-    brightness = brightness * brightness * fma(-2.0h, brightness, 3.0h);
-    return fast::max(brightness, ambientLight);
-}
-
-half computeFullLighting(half2 light, half dayBrightness, half ambientLight) {
-    half blockLight = light.x;
-    half skyLight = light.y;
-
-    half blockBrightness = blockLight * blockLight * fma(-2.0h, blockLight, 3.0h);
-    blockBrightness = fma(blockBrightness, 0.95h, 0.05h);
-
-    half effectiveSkyFactor = fast::max(dayBrightness, 0.15h);
-    half skyBrightness = skyLight * effectiveSkyFactor;
-    skyBrightness = skyBrightness * skyBrightness * fma(-2.0h, skyBrightness, 3.0h);
-
-    half combinedLight = fast::max(blockBrightness * blockLight, skyBrightness);
-    return fast::max(combinedLight, ambientLight);
-}
-
-half4 applyFog(half4 color, half distance, float4 fogColor, float4 fogParams) {
-    if (!ENABLE_FOG) return color;
-
-    half fogStart = half(fogParams.x);
-    half fogEnd = half(fogParams.y);
-    if (fogEnd <= fogStart) return color;
-
-    half fogFactor = saturate((distance - fogStart) / (fogEnd - fogStart));
-    return mix(color, half4(fogColor), fogFactor);
-}
-
-vertex float4 terrain_depth_vertex(
-    uint vertexId [[vertex_id]],
-    constant uint* vertexData [[buffer(0)]],
-    constant DrawUniforms& draw [[buffer(1)]],
-    constant FrameUniforms& frame [[buffer(2)]]
+vertex SimpleVertexOut vertex_terrain(
+    device const SodiumVertex* vertices       [[buffer(0)]],
+    constant float4x4& projectionMatrix       [[buffer(1)]],
+    constant float4x4& modelViewMatrix        [[buffer(2)]],
+    constant float4& cameraPosition           [[buffer(3)]],
+    constant float4& chunkOffset              [[buffer(4)]],
+    uint vid [[vertex_id]]
 ) {
-    uint base = vertexId * 5u;
-    float3 origin = float3(draw.originX, draw.originY, draw.originZ);
-    float3 worldPos = decodePosition(vertexData[base], vertexData[base + 1u], origin);
-    return frame.viewProj * float4(worldPos - frame.cameraPos.xyz, 1.0);
+    SodiumVertex v = vertices[vid];
+    SimpleVertexOut out;
+    float3 localPos = decodeSodiumPosition(v.posHi, v.posLo);
+    float3 worldPos = localPos + chunkOffset.xyz;
+
+    float4 viewPos = modelViewMatrix * float4(worldPos, 1.0);
+    out.position = projectionMatrix * viewPos;
+    out.texCoord = decodeSodiumTexCoord(v.texture);
+    out.color    = decodeSodiumColor(v.color);
+    out.lightUV  = decodeSodiumLight(v.lightData);
+
+    return out;
 }
-
-vertex TerrainVertexOut terrain_color_vertex(
-    uint vertexId [[vertex_id]],
-    constant uint* vertexData [[buffer(0)]],
-    constant DrawUniforms& draw [[buffer(1)]],
-    constant FrameUniforms& frame [[buffer(2)]]
+fragment float4 fragment_terrain(
+    SimpleVertexOut in [[stage_in]],
+    texture2d<float> blockAtlas  [[texture(0)]]
 ) {
-    uint base = vertexId * 5u;
-    float3 origin = float3(draw.originX, draw.originY, draw.originZ);
-    float3 worldPos = decodePosition(vertexData[base], vertexData[base + 1u], origin);
-    float3 cameraRelativePos = worldPos - frame.cameraPos.xyz;
+    constexpr sampler texSampler(mag_filter::nearest, min_filter::nearest, mip_filter::nearest);
+    float4 texColor = blockAtlas.sample(texSampler, in.texCoord);
 
-    TerrainVertexOut out;
-    out.position = frame.viewProj * float4(cameraRelativePos, 1.0);
-    out.texCoord = decodeTexCoord(vertexData[base + 3u]);
-    out.color = decodeColor(vertexData[base + 2u]);
-    out.light = decodeLight(vertexData[base + 4u]);
-    out.distance = half(fast::clamp(fast::length(cameraRelativePos), 0.0f, 8192.0f));
+
+    bool forceOpaque = (in.color.a < 0.998);
+    if (forceOpaque) {
+        if (texColor.a < 0.1) {
+
+            texColor = float4(0.05, 0.05, 0.05, 1.0);
+        } else {
+            texColor.a = 1.0;
+        }
+    } else {
+
+        if (texColor.a < 0.1) discard_fragment();
+    }
+
+    float4 tinted = texColor * in.color;
+    tinted.a = forceOpaque ? 1.0 : tinted.a;
+
+
+    float light = max(max(in.lightUV.x, in.lightUV.y), 0.1);
+    tinted.rgb *= light;
+
+    return float4(tinted.rgb, tinted.a);
+}
+struct InhouseTerrainVertex {
+    packed_short3 position;
+    packed_ushort2 texCoord;
+    packed_uchar4 color;
+    uchar packedLight;
+    uchar normalIndex;
+};
+
+
+vertex SimpleVertexOut vertex_terrain_inhouse(
+    device const InhouseTerrainVertex* vertices   [[buffer(0)]],
+    constant float4x4& projectionMatrix           [[buffer(1)]],
+    constant float4x4& modelViewMatrix            [[buffer(2)]],
+    constant float4& cameraPosition               [[buffer(3)]],
+    constant float4& chunkOffset                  [[buffer(4)]],
+    uint vid [[vertex_id]]
+) {
+    InhouseTerrainVertex v = vertices[vid];
+    SimpleVertexOut out;
+
+    float3 localPos = float3(short3(v.position)) / 256.0;
+    float3 worldPos = localPos + chunkOffset.xyz;
+
+    float4 viewPos = modelViewMatrix * float4(worldPos, 1.0);
+    out.position = projectionMatrix * viewPos;
+    out.texCoord = float2(v.texCoord) / 65535.0;
+    out.color    = float4(v.color) / 255.0;
+    float lightVal = float(v.packedLight) / 255.0;
+    out.lightUV  = float2(lightVal, lightVal);
 
     return out;
 }
 
-fragment half4 terrain_color_fragment(
-    TerrainVertexOut in [[stage_in]],
-    texture2d<half, access::sample> atlas [[texture(0)]],
-    constant DrawUniforms& draw [[buffer(0)]],
-    constant FrameUniforms& frame [[buffer(2)]]
+
+
+struct DebugVertexOut {
+    float4 position [[position]];
+    float4 color;
+};
+vertex DebugVertexOut vertex_debug(
+    device const packed_float3* positions     [[buffer(0)]],
+    constant float4x4& projectionMatrix       [[buffer(1)]],
+    constant float4x4& modelViewMatrix        [[buffer(2)]],
+    constant float4& debugColor               [[buffer(5)]],
+    uint vid [[vertex_id]]
 ) {
-    constexpr sampler nearSampler(coord::normalized,
-                                  address::repeat,
-                                  filter::linear,
-                                  mip_filter::nearest);
-    constexpr sampler voxySampler(coord::normalized,
-                                  address::repeat,
-                                  filter::nearest,
-                                  mip_filter::nearest);
-
-    half4 texColor;
-
-    if (ENABLE_TEXTURE_SAMPLE) {
-        if (IS_DISTANT_LOD) {
-            texColor = atlas.sample(voxySampler, float2(in.texCoord));
-        } else {
-            texColor = atlas.sample(nearSampler, float2(in.texCoord));
-        }
-    } else {
-        texColor = half4(1.0h);
-    }
-
-    uint renderLayer = uint(draw.renderLayer);
-
-    if (renderLayer == 1u) {
-        if (texColor.a < 0.5h) {
-            discard_fragment();
-        }
-    } else if (renderLayer == 0u) {
-        texColor.a = 1.0h;
-    }
-
-    half4 finalColor = texColor * in.color;
-
-    half dayBrightness = half(frame.lightParams.x);
-    half ambientLight = half(frame.lightParams.y);
-    half lightLevel;
-
-    if (ENABLE_BLOCK_LIGHT) {
-        lightLevel = computeFullLighting(in.light, dayBrightness, ambientLight);
-    } else {
-        lightLevel = computeDistantLighting(in.light.y, dayBrightness, ambientLight);
-    }
-
-    finalColor.rgb *= lightLevel;
-    finalColor.a = texColor.a;
-
-    return applyFog(finalColor, in.distance, frame.fogColor, frame.fogParams);
+    DebugVertexOut out;
+    float4 viewPos = modelViewMatrix * float4(float3(positions[vid]), 1.0);
+    out.position = projectionMatrix * viewPos;
+    out.color = debugColor;
+    return out;
+}
+fragment float4 fragment_debug(DebugVertexOut in [[stage_in]]) {
+    return in.color;
 }

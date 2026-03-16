@@ -1,9 +1,43 @@
-
 #include <metal_stdlib>
 using namespace metal;
-fragment float4 fragment_main(half3 normal [[stage_in]]) {
-    half3 lightDir = normalize(half3(0.5, 1.0, 0.7));
-    float diff = max(dot(normal, lightDir), 0.2);
-    half3 color = half3(0.7, 0.8, 1.0) * diff;
-    return float4(color, 1.0);
+
+
+
+
+
+struct SimpleVertexOut {
+    float4 position  [[position]];
+    float2 texCoord;
+    float4 color;
+    float2 lightUV;
+};
+
+fragment float4 fragment_terrain(
+    SimpleVertexOut in [[stage_in]],
+    texture2d<float> blockAtlas  [[texture(0)]]
+) {
+    constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
+    float4 texColor = blockAtlas.sample(texSampler, in.texCoord);
+
+
+    float4 baseColor = texColor * in.color;
+    float lightFactor = clamp(in.lightUV.x * 0.8 + 0.2, 0.2, 1.0);
+    baseColor.rgb *= lightFactor;
+
+    return float4(baseColor.rgb, 1.0);
+}
+
+
+
+
+
+
+
+struct DebugVertexOut {
+    float4 position [[position]];
+    float4 color;
+};
+
+fragment float4 fragment_debug(DebugVertexOut in [[stage_in]]) {
+    return in.color;
 }

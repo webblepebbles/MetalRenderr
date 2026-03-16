@@ -3,6 +3,7 @@ package com.pebbles_boon.metalrender.render;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
@@ -40,6 +41,16 @@ public final class IOSurfaceBlitter {
   private boolean readFboVerified = false;
   private boolean drawFboVerified = false;
 
+
+  private int depthTexture = 0;
+  private int depthShaderProgram = 0;
+  private int depthSrcFbo = 0;
+  private int depthBlitFrameCount = 0;
+  private int depthTextureWidth = 0;
+  private int depthTextureHeight = 0;
+  private ByteBuffer depthPixelBuffer =
+      null;
+
   private final float[] prevClearColor = new float[4];
   private final int[] diagViewport = new int[4];
 
@@ -65,6 +76,23 @@ public final class IOSurfaceBlitter {
                 fragColor = texColor;
             }
             """;
+
+
+
+
+
+  private static final String DEPTH_FRAGMENT_SHADER = """
+            #version 150 core
+            in vec2 vTexCoord;
+            out vec4 fragColor;
+            uniform sampler2D uDepthTexture;
+            void main() {
+                float depth = texture(uDepthTexture, vec2(vTexCoord.x, 1.0 - vTexCoord.y)).r;
+                gl_FragDepth = depth;
+                fragColor = vec4(0.0, 0.0, 0.0, 0.0);
+            }
+            """;
+
   private static final float[] QUAD_VERTICES = {
 
       -1.0f, -1.0f, 0.0f, 0.0f, 1.0f,  -1.0f, 1.0f, 0.0f,
@@ -601,6 +629,478 @@ public final class IOSurfaceBlitter {
       return 0;
     }
     return s;
+  }
+
+
+  public boolean blitDepth(long metalHandle, int width, int height) {
+    depthBlitFrameCount++;
+
+    if (metalHandle == 0 || width <= 0 || height <= 0) {
+      return false;
+    }
+
+
+    int depthDataSize = width * height * 4;
+
+
+    if (depthPixelBuffer == null ||
+        depthPixelBuffer.capacity() < depthDataSize) {
+      depthPixelBuffer = ByteBuffer.allocateDirect(depthDataSize)
+                             .order(ByteOrder.nativeOrder());
+    }
+
+    depthPixelBuffer.clear();
+    boolean readOk = NativeBridge.nReadbackDepth(metalHandle, depthPixelBuffer);
+    if (!readOk) {
+      if (depthBlitFrameCount <= 5) {
+        MetalLogger.warn(
+            "[IOSurfaceBlitter] Failed to read Metal depth buffer");
+      }
+      return false;
+    }
+
+
+
+
+
+    if (depthBlitFrameCount <= 5 || depthBlitFrameCount % 600 == 0) {
+      java.nio.FloatBuffer fb = depthPixelBuffer.asFloatBuffer();
+      int totalPixels = width * height;
+      float center = totalPixels > 0 ? fb.get(totalPixels / 2) : -1;
+      float topLeft = fb.get(0);
+      float bottomRight = totalPixels > 1 ? fb.get(totalPixels - 1) : -1;
+
+      float mn = Float.MAX_VALUE, mx = Float.MIN_VALUE;
+      int step = Math.max(1, totalPixels / 256);
+      for (int i = 0; i < totalPixels; i += step) {
+        float v = fb.get(i);
+        if (v < mn)
+          mn = v;
+        if (v > mx)
+          mx = v;
+      }
+      MetalLogger.info(
+          "[IOSurfaceBlitter] Depth readback (frame %d): center=%.6f, "
+              + "topLeft=%.6f, bottomRight=%.6f, min=%.6f, max=%.6f",
+          depthBlitFrameCount, center, topLeft, bottomRight, mn, mx);
+    }
+
+
+    if (depthTexture == 0 || depthTextureWidth != width ||
+        depthTextureHeight != height) {
+      if (depthTexture != 0) {
+        GL11.glDeleteTextures(depthTexture);
+      }
+      depthTexture = GL11.glGenTextures();
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTexture);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER,
+                           GL11.GL_NEAREST);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER,
+                           GL11.GL_NEAREST);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S,
+                           GL12.GL_CLAMP_TO_EDGE);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T,
+                           GL12.GL_CLAMP_TO_EDGE);
+      GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_R32F, width, height, 0,
+                        GL11.GL_RED, GL11.GL_FLOAT, (ByteBuffer)null);
+      depthTextureWidth = width;
+      depthTextureHeight = height;
+      MetalLogger.info("[IOSurfaceBlitter] Created depth texture: %d (%dx%d)",
+                       depthTexture, width, height);
+    }
+
+
+    GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTexture);
+    GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, width, height,
+                         GL11.GL_RED, GL11.GL_FLOAT, depthPixelBuffer);
+
+
+    if (depthShaderProgram == 0) {
+      depthShaderProgram = createDepthShaderProgram();
+      if (depthShaderProgram == 0) {
+        MetalLogger.error(
+            "[IOSurfaceBlitter] Depth shader program creation failed!");
+        return false;
+      }
+      GL20.glUseProgram(depthShaderProgram);
+      int loc = GL20.glGetUniformLocation(depthShaderProgram, "uDepthTexture");
+      if (loc >= 0)
+        GL20.glUniform1i(loc, 0);
+      GL20.glUseProgram(0);
+      MetalLogger.info("[IOSurfaceBlitter] Created depth shader: %d",
+                       depthShaderProgram);
+    }
+
+
+    int prevProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
+    int prevVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
+    int prevTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+    boolean depth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
+    boolean blend = GL11.glIsEnabled(GL11.GL_BLEND);
+    boolean depthMsk = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
+    boolean stencil = GL11.glIsEnabled(GL11.GL_STENCIL_TEST);
+    boolean scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
+    boolean cull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
+    int depthFunc = GL11.glGetInteger(GL11.GL_DEPTH_FUNC);
+    int[] prevViewport = new int[4];
+    GL11.glGetIntegerv(GL11.GL_VIEWPORT, prevViewport);
+    colorMaskBuf.clear();
+    GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK, colorMaskBuf);
+    boolean cmR = colorMaskBuf.get(0) != 0, cmG = colorMaskBuf.get(1) != 0,
+            cmB = colorMaskBuf.get(2) != 0, cmA = colorMaskBuf.get(3) != 0;
+
+    try {
+
+
+      GL11.glViewport(0, 0, width, height);
+      GL11.glEnable(GL11.GL_DEPTH_TEST);
+      GL11.glDepthFunc(GL11.GL_ALWAYS);
+      GL11.glDepthMask(true);
+      GL11.glColorMask(false, false, false, false);
+      GL11.glDisable(GL11.GL_BLEND);
+      GL11.glDisable(GL11.GL_STENCIL_TEST);
+      GL11.glDisable(GL11.GL_SCISSOR_TEST);
+      GL11.glDisable(GL11.GL_CULL_FACE);
+
+
+      GL20.glUseProgram(depthShaderProgram);
+      GL13.glActiveTexture(GL13.GL_TEXTURE0);
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTexture);
+
+
+      GL30.glBindVertexArray(vao);
+      GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 6);
+      GL30.glBindVertexArray(0);
+
+
+      if (depthBlitFrameCount <= 5 || depthBlitFrameCount % 600 == 0) {
+        int currentFbo = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+        int depthBits = GL11.glGetInteger(GL11.GL_DEPTH_BITS);
+
+        java.nio.FloatBuffer verifyBuf = BufferUtils.createFloatBuffer(1);
+        GL11.glReadPixels(width / 2, height / 2, 1, 1, GL11.GL_DEPTH_COMPONENT,
+                          GL11.GL_FLOAT, verifyBuf);
+        float centerDepth = verifyBuf.get(0);
+        GL11.glReadPixels(width / 4, height / 4, 1, 1, GL11.GL_DEPTH_COMPONENT,
+                          GL11.GL_FLOAT, verifyBuf);
+        float quarterDepth = verifyBuf.get(0);
+        int glErr = GL11.glGetError();
+        MetalLogger.info(
+            "[IOSurfaceBlitter] Depth verify (frame %d, FBO=%d, depthBits=%d): "
+                + "center=%.6f, quarter=%.6f, err=0x%X",
+            depthBlitFrameCount, currentFbo, depthBits, centerDepth,
+            quarterDepth, glErr);
+      }
+
+      if (depthBlitFrameCount <= 3 || depthBlitFrameCount % 600 == 0) {
+        MetalLogger.info(
+            "[IOSurfaceBlitter] Depth blit complete (frame %d, %dx%d)",
+            depthBlitFrameCount, width, height);
+      }
+
+      return true;
+    } finally {
+
+      GL20.glUseProgram(prevProgram);
+      GL30.glBindVertexArray(prevVao);
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
+      GL11.glViewport(prevViewport[0], prevViewport[1], prevViewport[2],
+                      prevViewport[3]);
+      if (depth)
+        GL11.glEnable(GL11.GL_DEPTH_TEST);
+      else
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+      GL11.glDepthFunc(depthFunc);
+      GL11.glDepthMask(depthMsk);
+      GL11.glColorMask(cmR, cmG, cmB, cmA);
+      if (blend)
+        GL11.glEnable(GL11.GL_BLEND);
+      else
+        GL11.glDisable(GL11.GL_BLEND);
+      if (stencil)
+        GL11.glEnable(GL11.GL_STENCIL_TEST);
+      else
+        GL11.glDisable(GL11.GL_STENCIL_TEST);
+      if (scissor)
+        GL11.glEnable(GL11.GL_SCISSOR_TEST);
+      else
+        GL11.glDisable(GL11.GL_SCISSOR_TEST);
+      if (cull)
+        GL11.glEnable(GL11.GL_CULL_FACE);
+      else
+        GL11.glDisable(GL11.GL_CULL_FACE);
+    }
+  }
+
+
+  public boolean uploadDepthDirect(long metalHandle, int mcDepthTexId,
+                                   int width, int height) {
+    depthBlitFrameCount++;
+
+    if (metalHandle == 0 || mcDepthTexId == 0 || width <= 0 || height <= 0) {
+      return false;
+    }
+
+
+    int depthDataSize = width * height * 4;
+    if (depthPixelBuffer == null ||
+        depthPixelBuffer.capacity() < depthDataSize) {
+      depthPixelBuffer = ByteBuffer.allocateDirect(depthDataSize)
+                             .order(java.nio.ByteOrder.nativeOrder());
+    }
+    depthPixelBuffer.clear();
+    boolean readOk = NativeBridge.nReadbackDepth(metalHandle, depthPixelBuffer);
+    if (!readOk) {
+      if (depthBlitFrameCount <= 5) {
+        MetalLogger.warn(
+            "[IOSurfaceBlitter] uploadDepthDirect: failed to read Metal depth");
+      }
+      return false;
+    }
+
+
+    if (depthBlitFrameCount <= 5 || depthBlitFrameCount % 600 == 0) {
+      java.nio.FloatBuffer fb = depthPixelBuffer.asFloatBuffer();
+      int totalPixels = width * height;
+      float center = totalPixels > 0 ? fb.get(totalPixels / 2) : -1;
+      float topLeft = fb.get(0);
+      float bottomRight = totalPixels > 1 ? fb.get(totalPixels - 1) : -1;
+      float mn = Float.MAX_VALUE, mx = Float.MIN_VALUE;
+      int step = Math.max(1, totalPixels / 256);
+      for (int i = 0; i < totalPixels; i += step) {
+        float v = fb.get(i);
+        if (v < mn)
+          mn = v;
+        if (v > mx)
+          mx = v;
+      }
+      MetalLogger.info(
+          "[IOSurfaceBlitter] Depth readback (frame %d): center=%.6f, "
+              + "topLeft=%.6f, bottomRight=%.6f, min=%.6f, max=%.6f",
+          depthBlitFrameCount, center, topLeft, bottomRight, mn, mx);
+    }
+
+
+
+    int rowBytes = width * 4;
+    byte[] rowA = new byte[rowBytes];
+    byte[] rowB = new byte[rowBytes];
+    for (int y = 0; y < height / 2; y++) {
+      int topOffset = y * rowBytes;
+      int botOffset = (height - 1 - y) * rowBytes;
+      depthPixelBuffer.get(topOffset, rowA);
+      depthPixelBuffer.get(botOffset, rowB);
+      depthPixelBuffer.put(topOffset, rowB);
+      depthPixelBuffer.put(botOffset, rowA);
+    }
+    depthPixelBuffer.clear();
+
+
+    int prevTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+    GL11.glBindTexture(GL11.GL_TEXTURE_2D, mcDepthTexId);
+    GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, width, height,
+                         GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT,
+                         depthPixelBuffer);
+
+    int err = GL11.glGetError();
+    if (err != GL11.GL_NO_ERROR && depthBlitFrameCount <= 5) {
+      MetalLogger.error(
+          "[IOSurfaceBlitter] uploadDepthDirect glTexSubImage2D error: 0x%X",
+          err);
+    }
+
+    GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
+
+    if (depthBlitFrameCount <= 3 || depthBlitFrameCount % 600 == 0) {
+      MetalLogger.info(
+          "[IOSurfaceBlitter] uploadDepthDirect complete (frame %d, "
+              + "mcTex=%d, %dx%d)",
+          depthBlitFrameCount, mcDepthTexId, width, height);
+    }
+
+    return err == GL11.GL_NO_ERROR;
+  }
+
+
+  public boolean blitDepthViaFBO(long metalHandle, int mcDepthTexId,
+                                 int mcFboId, int width, int height) {
+    depthBlitFrameCount++;
+
+    if (metalHandle == 0 || width <= 0 || height <= 0) {
+      return false;
+    }
+
+
+    int depthDataSize = width * height * 4;
+    if (depthPixelBuffer == null ||
+        depthPixelBuffer.capacity() < depthDataSize) {
+      depthPixelBuffer = ByteBuffer.allocateDirect(depthDataSize)
+                             .order(java.nio.ByteOrder.nativeOrder());
+    }
+    depthPixelBuffer.clear();
+    boolean readOk = NativeBridge.nReadbackDepth(metalHandle, depthPixelBuffer);
+    if (!readOk) {
+      if (depthBlitFrameCount <= 5) {
+        MetalLogger.warn("[IOSurfaceBlitter] blitDepthViaFBO: readback failed");
+      }
+      return false;
+    }
+
+
+    if (depthBlitFrameCount <= 5 || depthBlitFrameCount % 600 == 0) {
+      java.nio.FloatBuffer fb = depthPixelBuffer.asFloatBuffer();
+      int totalPixels = width * height;
+      float center = totalPixels > 0 ? fb.get(totalPixels / 2) : -1;
+      float topLeft = fb.get(0);
+      float mn = Float.MAX_VALUE, mx = Float.MIN_VALUE;
+      int step = Math.max(1, totalPixels / 256);
+      for (int i = 0; i < totalPixels; i += step) {
+        float v = fb.get(i);
+        if (v < mn)
+          mn = v;
+        if (v > mx)
+          mx = v;
+      }
+      MetalLogger.info(
+          "[IOSurfaceBlitter] Depth readback (frame %d): center=%.6f, "
+              + "topLeft=%.6f, min=%.6f, max=%.6f",
+          depthBlitFrameCount, center, topLeft, mn, mx);
+    }
+
+
+    int rowBytes = width * 4;
+    byte[] rowA = new byte[rowBytes];
+    byte[] rowB = new byte[rowBytes];
+    for (int y = 0; y < height / 2; y++) {
+      int topOffset = y * rowBytes;
+      int botOffset = (height - 1 - y) * rowBytes;
+      depthPixelBuffer.get(topOffset, rowA);
+      depthPixelBuffer.get(botOffset, rowB);
+      depthPixelBuffer.put(topOffset, rowB);
+      depthPixelBuffer.put(botOffset, rowA);
+    }
+    depthPixelBuffer.clear();
+
+
+    if (depthTexture == 0 || depthTextureWidth != width ||
+        depthTextureHeight != height) {
+      if (depthTexture != 0)
+        GL11.glDeleteTextures(depthTexture);
+      depthTexture = GL11.glGenTextures();
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTexture);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER,
+                           GL11.GL_NEAREST);
+      GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER,
+                           GL11.GL_NEAREST);
+
+      GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_DEPTH_COMPONENT32F,
+                        width, height, 0, GL11.GL_DEPTH_COMPONENT,
+                        GL11.GL_FLOAT, (ByteBuffer)null);
+      depthTextureWidth = width;
+      depthTextureHeight = height;
+      MetalLogger.info(
+          "[IOSurfaceBlitter] Created depth texture (DEPTH_COMPONENT32F): "
+              + "%d (%dx%d)",
+          depthTexture, width, height);
+    } else {
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTexture);
+    }
+
+
+    GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, width, height,
+                         GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT,
+                         depthPixelBuffer);
+
+    int err = GL11.glGetError();
+    if (err != GL11.GL_NO_ERROR && depthBlitFrameCount <= 5) {
+      MetalLogger.error(
+          "[IOSurfaceBlitter] blitDepthViaFBO texUpload error: 0x%X", err);
+      GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+      return false;
+    }
+    GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+
+
+    if (depthSrcFbo == 0) {
+      depthSrcFbo = GL30.glGenFramebuffers();
+    }
+
+
+    int prevReadFbo = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
+    int prevDrawFbo = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+
+
+    GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, depthSrcFbo);
+    GL30.glFramebufferTexture2D(GL30.GL_READ_FRAMEBUFFER,
+                                GL30.GL_DEPTH_ATTACHMENT, GL11.GL_TEXTURE_2D,
+                                depthTexture, 0);
+
+    int srcStatus = GL30.glCheckFramebufferStatus(GL30.GL_READ_FRAMEBUFFER);
+    if (srcStatus != GL30.GL_FRAMEBUFFER_COMPLETE) {
+      if (depthBlitFrameCount <= 3) {
+        MetalLogger.error(
+            "[IOSurfaceBlitter] blitDepthViaFBO: src FBO incomplete: 0x%X",
+            srcStatus);
+      }
+      GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevReadFbo);
+      return false;
+    }
+
+
+    GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, mcFboId);
+
+
+    GL30.glBlitFramebuffer(0, 0, width, height,
+                           0, 0, width, height,
+                           GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
+
+    err = GL11.glGetError();
+    if (err != GL11.GL_NO_ERROR && depthBlitFrameCount <= 5) {
+      MetalLogger.error(
+          "[IOSurfaceBlitter] blitDepthViaFBO glBlitFramebuffer error: 0x%X",
+          err);
+    }
+
+
+    GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevReadFbo);
+    GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, prevDrawFbo);
+
+    if (depthBlitFrameCount <= 3 || depthBlitFrameCount % 600 == 0) {
+      MetalLogger.info("[IOSurfaceBlitter] blitDepthViaFBO complete (frame %d, "
+                           + "srcFBO=%d, dstFBO=%d, %dx%d)",
+                       depthBlitFrameCount, depthSrcFbo, mcFboId, width,
+                       height);
+    }
+
+    return err == GL11.GL_NO_ERROR;
+  }
+
+  private int createDepthShaderProgram() {
+    int vertShader = compileShader(GL20.GL_VERTEX_SHADER, VERTEX_SHADER);
+    int fragShader =
+        compileShader(GL20.GL_FRAGMENT_SHADER, DEPTH_FRAGMENT_SHADER);
+    if (vertShader == 0 || fragShader == 0) {
+      if (vertShader != 0)
+        GL20.glDeleteShader(vertShader);
+      if (fragShader != 0)
+        GL20.glDeleteShader(fragShader);
+      return 0;
+    }
+    int prog = GL20.glCreateProgram();
+    GL20.glAttachShader(prog, vertShader);
+    GL20.glAttachShader(prog, fragShader);
+    GL20.glBindAttribLocation(prog, 0, "aPos");
+    GL20.glBindAttribLocation(prog, 1, "aTexCoord");
+    GL20.glLinkProgram(prog);
+    GL20.glDeleteShader(vertShader);
+    GL20.glDeleteShader(fragShader);
+    if (GL20.glGetProgrami(prog, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
+      String log = GL20.glGetProgramInfoLog(prog);
+      MetalLogger.error("[IOSurfaceBlitter] Depth shader link failed: %s", log);
+      GL20.glDeleteProgram(prog);
+      return 0;
+    }
+    return prog;
   }
 
   private void invalidateTextures() {

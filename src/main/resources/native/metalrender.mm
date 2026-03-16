@@ -7,8 +7,10 @@
 
 #include <atomic>
 #include <dispatch/dispatch.h>
+#include <dlfcn.h>
 #include <jni.h>
 #include <mutex>
+#include <shared_mutex>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -46,12 +48,24 @@ static id<MTLRenderPipelineState> g_pipelineOpaque = nil;
 static id<MTLRenderPipelineState> g_pipelineInhouse = nil;
 static id<MTLRenderPipelineState> g_pipelineCutout = nil;
 static id<MTLRenderPipelineState> g_pipelineTranslucent = nil;
+static id<MTLRenderPipelineState> g_pipelineEntity = nil;
+static id<MTLRenderPipelineState> g_pipelineEntityInstanced = nil;
+static id<MTLRenderPipelineState> g_pipelineEntityTranslucent = nil;
+static id<MTLRenderPipelineState> g_pipelineEntityEmissive = nil;
+static id<MTLRenderPipelineState> g_pipelineEntityOutline = nil;
+static id<MTLRenderPipelineState> g_pipelineEntityShadow = nil;
+static id<MTLRenderPipelineState> g_pipelineParticle = nil;
+static id<MTLRenderPipelineState> g_pipelineDebugLines = nil;
+static id<MTLDepthStencilState> g_depthState = nil;
+static id<MTLDepthStencilState> g_depthStateNoWrite = nil;
+static id<MTLDepthStencilState> g_depthStateLessEqual = nil;
 static id<MTLTexture> g_color = nil;
 static id<MTLTexture> g_depth = nil;
+static id<MTLBuffer> g_depthReadBuffer = nil;
+static id<MTLCommandBuffer> g_depthCmdBuffer = nil;
 static id<MTLTexture> g_blockAtlas = nil;
 static IOSurfaceRef g_ioSurface = NULL;
 static id<MTLLibrary> g_shaderLibrary = nil;
-static id<MTLDepthStencilState> g_depthState = nil;
 static int g_rtWidth = 16;
 static int g_rtHeight = 16;
 static float g_scale = 1.0f;
@@ -59,6 +73,9 @@ static int g_frameCount = 0;
 static int g_drawCallCount = 0;
 static int g_drawSkipCount = 0;
 static int g_totalDraws = 0;
+static id<MTLTexture> g_entityTexture = nil;
+static float g_entityOverlayParams[4] = {0, 0, 0, 1};
+static float g_entityTintColor[4] = {1, 1, 1, 1};
 
 static void ensure_device() {
   if (!g_device) {
@@ -75,7 +92,41 @@ static void load_shaders() {
   if (!g_device || g_shaderLibrary)
     return;
 
-  NSString *shaderSource = @R"(
+  NSError *error = nil;
+  NSArray<NSString *> *searchPaths = @[
+    @"src/main/resources/shaders.metallib",
+    [NSString
+        stringWithFormat:@"%@/shaders.metallib",
+                         [[NSFileManager defaultManager] currentDirectoryPath]],
+    @"shaders.metallib",
+  ];
+
+  Dl_info dlInfo;
+  if (dladdr((void *)load_shaders, &dlInfo) && dlInfo.dli_fname) {
+    NSString *dylibPath = [[NSString stringWithUTF8String:dlInfo.dli_fname]
+        stringByDeletingLastPathComponent];
+    NSString *metallibPath =
+        [dylibPath stringByAppendingPathComponent:@"shaders.metallib"];
+    searchPaths = [searchPaths arrayByAddingObject:metallibPath];
+  }
+
+  for (NSString *path in searchPaths) {
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+      NSURL *url = [NSURL fileURLWithPath:path];
+      g_shaderLibrary = [g_device newLibraryWithURL:url error:&error];
+      if (g_shaderLibrary) {
+        dbg("Loaded metallib from: %s\n", [path UTF8String]);
+        break;
+      } else {
+        dbg("Failed to load metallib from %s: %s\n", [path UTF8String],
+            error ? [[error localizedDescription] UTF8String] : "unknown");
+      }
+    }
+  }
+
+  if (!g_shaderLibrary) {
+    dbg("No metallib found, falling back to inline shader compilation\n");
+    NSString *shaderSource = @R"(
 #include <metal_stdlib>
 using namespace metal;
 
@@ -130,21 +181,123 @@ fragment float4 fragment_terrain(
 	if (texColor.a < 0.1) discard_fragment();
 	return float4(baseColor.rgb, 1.0);
 }
+
+
+struct EntityVertex {
+	packed_float3 position;
+	packed_short2 texCoord;
+	packed_uchar4 color;
+	packed_uchar4 normal;
+	packed_short2 overlay;
+	packed_short2 lightUV;
+};
+
+struct EntityVertexOut {
+	float4 position  [[position]];
+	float2 texCoord;
+	float4 color;
+	float3 normal;
+	float2 lightUV;
+	float2 overlay;
+	float3 worldPos;
+};
+
+vertex EntityVertexOut vertex_entity(
+	device const EntityVertex*     vertices    [[buffer(0)]],
+	constant float4x4&             projection  [[buffer(1)]],
+	constant float4x4&             modelView   [[buffer(2)]],
+	uint vid [[vertex_id]]
+) {
+	EntityVertex v = vertices[vid];
+	EntityVertexOut out;
+	float3 pos      = float3(v.position);
+	float4 viewPos  = modelView * float4(pos, 1.0);
+	out.position = projection * viewPos;
+	out.texCoord = float2(v.texCoord) / 32768.0;
+	out.color    = float4(v.color) / 255.0;
+	out.normal   = normalize(float3(v.normal.xyz) / 127.0 - 1.0);
+	out.lightUV  = float2(v.lightUV) / 256.0;
+	out.overlay  = float2(v.overlay.x, v.overlay.y);
+	out.worldPos = pos;
+	return out;
+}
+
+fragment float4 fragment_entity(
+	EntityVertexOut in [[stage_in]],
+	texture2d<float> entityTex  [[texture(0)]],
+	constant float4& overlayParams [[buffer(5)]]
+) {
+	constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
+	float4 texColor = entityTex.sample(texSampler, in.texCoord);
+	if (texColor.a < 0.1) discard_fragment();
+	float4 finalColor = texColor * in.color;
+	float3 lightDir = normalize(float3(0.2, 1.0, 0.5));
+	float nDotL     = max(dot(in.normal, lightDir), 0.0);
+	float ambient   = 0.4;
+	finalColor.rgb *= (ambient + (1.0 - ambient) * nDotL);
+	float blockLight = clamp(in.lightUV.x, 0.0, 1.0);
+	float skyLight   = clamp(in.lightUV.y, 0.0, 1.0);
+	float lightLevel = max(max(blockLight, skyLight), 0.5);
+	finalColor.rgb *= lightLevel;
+	float hurtTime = overlayParams.x;
+	if (hurtTime > 0.0) {
+		finalColor.rgb = mix(finalColor.rgb, float3(1.0, 0.0, 0.0),
+			clamp(hurtTime, 0.0, 0.6));
+	}
+	float whiteFlash = overlayParams.y;
+	if (whiteFlash > 0.0) {
+		finalColor.rgb = mix(finalColor.rgb, float3(1.0),
+			clamp(whiteFlash, 0.0, 1.0));
+	}
+	return finalColor;
+}
+
+fragment float4 fragment_entity_translucent(
+	EntityVertexOut in [[stage_in]],
+	texture2d<float> entityTex  [[texture(0)]],
+	constant float4& overlayParams [[buffer(5)]]
+) {
+	constexpr sampler texSampler(filter::linear, address::clamp_to_edge);
+	float4 texColor = entityTex.sample(texSampler, in.texCoord);
+	if (texColor.a < 0.004) discard_fragment();
+	float4 finalColor = texColor * in.color;
+	float3 lightDir = normalize(float3(0.2, 1.0, 0.5));
+	float nDotL     = max(dot(in.normal, lightDir), 0.0);
+	finalColor.rgb *= (0.4 + 0.6 * nDotL);
+	float blockLight = clamp(in.lightUV.x, 0.0, 1.0);
+	float skyLight   = clamp(in.lightUV.y, 0.0, 1.0);
+	float lightLevel = max(max(blockLight, skyLight), 0.5);
+	finalColor.rgb *= lightLevel;
+	float hurtTime = overlayParams.x;
+	if (hurtTime > 0.0) {
+		finalColor.rgb = mix(finalColor.rgb, float3(1.0, 0.0, 0.0),
+			clamp(hurtTime, 0.0, 0.6));
+	}
+	return finalColor;
+}
+
+fragment float4 fragment_entity_emissive(
+	EntityVertexOut in [[stage_in]],
+	texture2d<float> entityTex  [[texture(0)]]
+) {
+	constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
+	float4 texColor = entityTex.sample(texSampler, in.texCoord);
+	if (texColor.a < 0.1) discard_fragment();
+	return texColor * in.color;
+}
 	)";
 
-  NSError *error = nil;
-  MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
-  g_shaderLibrary = [g_device newLibraryWithSource:shaderSource
-                                           options:opts
-                                             error:&error];
-  dbg("newLibraryWithSource returned: lib=%p error=%p\n", g_shaderLibrary,
-      error);
-  if (!g_shaderLibrary) {
-    dbg("FATAL: Shader compilation failed: %s\n",
-        error ? [[error localizedDescription] UTF8String] : "unknown");
-    return;
+    MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
+    g_shaderLibrary = [g_device newLibraryWithSource:shaderSource
+                                             options:opts
+                                               error:&error];
+    if (!g_shaderLibrary) {
+      dbg("FATAL: Shader compilation failed: %s\n",
+          error ? [[error localizedDescription] UTF8String] : "unknown");
+      return;
+    }
+    dbg("Inline shader compilation OK\n");
   }
-  dbg("Shader library compiled OK\n");
 
   id<MTLFunction> vertexFn =
       [g_shaderLibrary newFunctionWithName:@"vertex_terrain_inhouse"];
@@ -163,17 +316,134 @@ fragment float4 fragment_terrain(
     g_pipelineInhouse = [g_device newRenderPipelineStateWithDescriptor:desc
                                                                  error:&error];
     if (!g_pipelineInhouse) {
-      dbg("FATAL: Pipeline creation failed: %s\n",
+      dbg("FATAL: Terrain pipeline creation failed: %s\n",
           [[error localizedDescription] UTF8String]);
     }
-
     g_pipelineOpaque = g_pipelineInhouse;
+  }
+
+  auto createEntityPipeline = [&](NSString *vertName, NSString *fragName,
+                                  NSString *label,
+                                  bool blending) -> id<MTLRenderPipelineState> {
+    id<MTLFunction> vf = [g_shaderLibrary newFunctionWithName:vertName];
+    id<MTLFunction> ff = [g_shaderLibrary newFunctionWithName:fragName];
+    if (!vf || !ff) {
+      dbg("Entity pipeline '%s': missing function (vert=%p frag=%p)\n",
+          [label UTF8String], vf, ff);
+      return nil;
+    }
+    MTLRenderPipelineDescriptor *pd =
+        [[MTLRenderPipelineDescriptor alloc] init];
+    pd.vertexFunction = vf;
+    pd.fragmentFunction = ff;
+    pd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+    pd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+    pd.label = label;
+
+    if (blending) {
+      pd.colorAttachments[0].blendingEnabled = YES;
+      pd.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
+      pd.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
+      pd.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+      pd.colorAttachments[0].destinationRGBBlendFactor =
+          MTLBlendFactorOneMinusSourceAlpha;
+      pd.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
+      pd.colorAttachments[0].destinationAlphaBlendFactor =
+          MTLBlendFactorOneMinusSourceAlpha;
+    } else {
+      pd.colorAttachments[0].blendingEnabled = NO;
+    }
+
+    id<MTLRenderPipelineState> ps =
+        [g_device newRenderPipelineStateWithDescriptor:pd error:&error];
+    if (!ps) {
+      dbg("Entity pipeline '%s' creation failed: %s\n", [label UTF8String],
+          error ? [[error localizedDescription] UTF8String] : "unknown");
+    } else {
+      dbg("Entity pipeline '%s' created OK\n", [label UTF8String]);
+    }
+    return ps;
+  };
+
+  g_pipelineEntity = createEntityPipeline(@"vertex_entity", @"fragment_entity",
+                                          @"EntityOpaque", false);
+  g_pipelineEntityTranslucent =
+      createEntityPipeline(@"vertex_entity", @"fragment_entity_translucent",
+                           @"EntityTranslucent", true);
+  g_pipelineEntityEmissive = createEntityPipeline(
+      @"vertex_entity", @"fragment_entity_emissive", @"EntityEmissive", true);
+
+  g_pipelineEntityInstanced =
+      createEntityPipeline(@"vertex_entity_instanced", @"fragment_entity",
+                           @"EntityInstanced", false);
+
+  id<MTLFunction> outlineFragFn =
+      [g_shaderLibrary newFunctionWithName:@"fragment_entity_outline"];
+  if (outlineFragFn) {
+    g_pipelineEntityOutline = createEntityPipeline(
+        @"vertex_entity", @"fragment_entity_outline", @"EntityOutline", true);
+  }
+
+  g_pipelineEntityShadow = createEntityPipeline(
+      @"vertex_entity", @"fragment_entity_shadow", @"EntityShadow", true);
+
+
+
+  g_pipelineParticle = createEntityPipeline(
+      @"vertex_entity", @"fragment_particle", @"Particle", true);
+
+  {
+    id<MTLFunction> dbgVert =
+        [g_shaderLibrary newFunctionWithName:@"vertex_debug"];
+    id<MTLFunction> dbgFrag =
+        [g_shaderLibrary newFunctionWithName:@"fragment_debug"];
+    if (dbgVert && dbgFrag) {
+      MTLRenderPipelineDescriptor *dbgDesc =
+          [[MTLRenderPipelineDescriptor alloc] init];
+      dbgDesc.vertexFunction = dbgVert;
+      dbgDesc.fragmentFunction = dbgFrag;
+      dbgDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+      dbgDesc.colorAttachments[0].blendingEnabled = YES;
+      dbgDesc.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
+      dbgDesc.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
+      dbgDesc.colorAttachments[0].sourceRGBBlendFactor =
+          MTLBlendFactorSourceAlpha;
+      dbgDesc.colorAttachments[0].destinationRGBBlendFactor =
+          MTLBlendFactorOneMinusSourceAlpha;
+      dbgDesc.colorAttachments[0].sourceAlphaBlendFactor = MTLBlendFactorOne;
+      dbgDesc.colorAttachments[0].destinationAlphaBlendFactor =
+          MTLBlendFactorOneMinusSourceAlpha;
+      dbgDesc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+      dbgDesc.label = @"DebugLines";
+      NSError *dbgErr = nil;
+      g_pipelineDebugLines =
+          [g_device newRenderPipelineStateWithDescriptor:dbgDesc error:&dbgErr];
+      if (!g_pipelineDebugLines) {
+        dbg("Debug line pipeline creation failed: %s\n",
+            dbgErr ? [[dbgErr localizedDescription] UTF8String] : "unknown");
+      } else {
+        dbg("Debug line pipeline created OK\n");
+      }
+    }
   }
 
   MTLDepthStencilDescriptor *dsDesc = [[MTLDepthStencilDescriptor alloc] init];
   dsDesc.depthCompareFunction = MTLCompareFunctionLess;
   dsDesc.depthWriteEnabled = YES;
   g_depthState = [g_device newDepthStencilStateWithDescriptor:dsDesc];
+
+  MTLDepthStencilDescriptor *dsNoWrite =
+      [[MTLDepthStencilDescriptor alloc] init];
+  dsNoWrite.depthCompareFunction = MTLCompareFunctionLess;
+  dsNoWrite.depthWriteEnabled = NO;
+  g_depthStateNoWrite = [g_device newDepthStencilStateWithDescriptor:dsNoWrite];
+
+  MTLDepthStencilDescriptor *dsLessEq =
+      [[MTLDepthStencilDescriptor alloc] init];
+  dsLessEq.depthCompareFunction = MTLCompareFunctionLessEqual;
+  dsLessEq.depthWriteEnabled = NO;
+  g_depthStateLessEqual =
+      [g_device newDepthStencilStateWithDescriptor:dsLessEq];
 
   if (!g_blockAtlas) {
     MTLTextureDescriptor *fallbackDesc = [MTLTextureDescriptor
@@ -192,8 +462,10 @@ fragment float4 fragment_terrain(
     dbg("Created 1x1 white fallback atlas texture\n");
   }
 
-  dbg("Shaders compiled OK, pipeline inhouse=%p opaque=%p depth=%p\n",
-      g_pipelineInhouse, g_pipelineOpaque, g_depthState);
+  dbg("Shaders loaded: terrain inhouse=%p opaque=%p entity=%p "
+      "entityTranslucent=%p entityEmissive=%p depth=%p\n",
+      g_pipelineInhouse, g_pipelineOpaque, g_pipelineEntity,
+      g_pipelineEntityTranslucent, g_pipelineEntityEmissive, g_depthState);
 }
 
 static void ensure_offscreen() {
@@ -248,6 +520,14 @@ static void ensure_offscreen() {
   dd.usage = MTLTextureUsageRenderTarget;
   dd.storageMode = MTLStorageModePrivate;
   g_depth = [g_device newTextureWithDescriptor:dd];
+
+
+  NSUInteger depthBufSize = (NSUInteger)(w * h * 4);
+  if (!g_depthReadBuffer || g_depthReadBuffer.length < depthBufSize) {
+    g_depthReadBuffer =
+        [g_device newBufferWithLength:depthBufSize
+                              options:MTLResourceStorageModeShared];
+  }
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -335,19 +615,19 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSupportsMeshShader
   return JNI_TRUE;
 }
 
-static std::mutex g_bufferMutex;
+static std::shared_mutex g_bufferMutex;
 
 static uint64_t store_buffer(id<MTLBuffer> buf) {
   if (!buf)
     return 0;
-  std::lock_guard<std::mutex> lock(g_bufferMutex);
+  std::unique_lock<std::shared_mutex> lock(g_bufferMutex);
   uint64_t h = g_nextHandle++;
   g_buffers[h] = buf;
   return h;
 }
 
 static id<MTLBuffer> get_buffer(uint64_t h) {
-  std::lock_guard<std::mutex> lock(g_bufferMutex);
+  std::shared_lock<std::shared_mutex> lock(g_bufferMutex);
   auto it = g_buffers.find(h);
   if (it == g_buffers.end())
     return nil;
@@ -417,7 +697,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MetalBackend_render(
     rp.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
     rp.depthAttachment.texture = g_depth;
     rp.depthAttachment.loadAction = MTLLoadActionClear;
-    rp.depthAttachment.storeAction = MTLStoreActionDontCare;
+    rp.depthAttachment.storeAction =
+        MTLStoreActionStore;
     rp.depthAttachment.clearDepth = 1.0;
 
     id<MTLRenderCommandEncoder> enc =
@@ -469,7 +750,7 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_MetalBackend_destroyBuffer(
     JNIEnv *, jclass, jlong handle, jlong bufferHandle) {
   (void)handle;
-  std::lock_guard<std::mutex> lock(g_bufferMutex);
+  std::unique_lock<std::shared_mutex> lock(g_bufferMutex);
   auto it = g_buffers.find((uint64_t)bufferHandle);
   if (it != g_buffers.end()) {
     g_buffers.erase(it);
@@ -505,9 +786,22 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadBufferData(
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadBufferDataDirect(
+    JNIEnv *env, jclass, jlong bufferHandle, jobject directBuffer, jint offset,
+    jint length) {
+  id<MTLBuffer> buf = get_buffer((uint64_t)bufferHandle);
+  if (!buf || !directBuffer)
+    return;
+  void *ptr = env->GetDirectBufferAddress(directBuffer);
+  if (ptr && length > 0 && (size_t)(offset + length) <= [buf length]) {
+    memcpy((uint8_t *)[buf contents], (uint8_t *)ptr + offset, (size_t)length);
+  }
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDestroyBuffer(
     JNIEnv *, jclass, jlong bufferHandle) {
-  std::lock_guard<std::mutex> lock(g_bufferMutex);
+  std::unique_lock<std::shared_mutex> lock(g_bufferMutex);
   auto it = g_buffers.find((uint64_t)bufferHandle);
   if (it != g_buffers.end()) {
     g_buffers.erase(it);
@@ -531,8 +825,18 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetPipelineState(
         (__bridge id<MTLRenderPipelineState>)(void *)(uintptr_t)pipelineHandle;
     [g_currentEncoder setRenderPipelineState:pipeline];
     g_currentPipeline = pipeline;
-    if (g_depthState)
-      [g_currentEncoder setDepthStencilState:g_depthState];
+
+
+
+
+
+
+    bool isTranslucentPipeline = (pipeline == g_pipelineEntityTranslucent ||
+                                  pipeline == g_pipelineParticle);
+    id<MTLDepthStencilState> ds =
+        isTranslucentPipeline ? g_depthStateLessEqual : g_depthState;
+    if (ds)
+      [g_currentEncoder setDepthStencilState:ds];
   } else if (g_currentEncoder && g_pipelineInhouse) {
     [g_currentEncoder setRenderPipelineState:g_pipelineInhouse];
     g_currentPipeline = g_pipelineInhouse;
@@ -606,6 +910,70 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBuffer(
   g_drawCallCount++;
 }
 
+
+
+
+
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
+    JNIEnv *env, jclass, jlong frameContext, jlong indexBuffer,
+    jfloatArray drawData, jint drawCount) {
+  (void)frameContext;
+  if (!g_currentEncoder || drawCount <= 0 || !drawData)
+    return;
+
+  id<MTLBuffer> ib = get_buffer((uint64_t)indexBuffer);
+  if (!ib)
+    return;
+
+  if (!g_currentPipeline && g_pipelineInhouse) {
+    [g_currentEncoder setRenderPipelineState:g_pipelineInhouse];
+    g_currentPipeline = g_pipelineInhouse;
+    if (g_depthState)
+      [g_currentEncoder setDepthStencilState:g_depthState];
+  }
+  if (!g_currentPipeline)
+    return;
+
+  int len = env->GetArrayLength(drawData);
+  int stride = 6;
+  if (len < drawCount * stride)
+    return;
+
+  jfloat *data = env->GetFloatArrayElements(drawData, nullptr);
+  if (!data)
+    return;
+
+  for (int i = 0; i < drawCount; i++) {
+    int off = i * stride;
+
+    uint32_t hi = *(uint32_t *)&data[off + 0];
+    uint32_t lo = *(uint32_t *)&data[off + 1];
+    uint64_t bufHandle = ((uint64_t)hi << 32) | (uint64_t)lo;
+    float ox = data[off + 2];
+    float oy = data[off + 3];
+    float oz = data[off + 4];
+    int idxCount = *(int *)&data[off + 5];
+
+    id<MTLBuffer> vb = get_buffer(bufHandle);
+    if (!vb || idxCount <= 0)
+      continue;
+
+    float offset[4] = {ox, oy, oz, 0.0f};
+    [g_currentEncoder setVertexBytes:offset length:sizeof(offset) atIndex:4];
+    [g_currentEncoder setVertexBuffer:vb offset:0 atIndex:0];
+    [g_currentEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                                 indexCount:(NSUInteger)idxCount
+                                  indexType:MTLIndexTypeUInt32
+                                indexBuffer:ib
+                          indexBufferOffset:0];
+    g_drawCallCount++;
+  }
+
+  env->ReleaseFloatArrayElements(drawData, data, JNI_ABORT);
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawBuffer(
     JNIEnv *, jclass, jlong frameContext, jlong vertexBuffer, jint vertexCount,
@@ -630,6 +998,63 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawBuffer(
                        vertexCount:(NSUInteger)vertexCount];
 }
 
+
+
+
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetDebugColor(
+    JNIEnv *, jclass, jlong frameContext, jfloat r, jfloat g, jfloat b,
+    jfloat a) {
+  (void)frameContext;
+  if (!g_currentEncoder)
+    return;
+  float color[4] = {r, g, b, a};
+  [g_currentEncoder setVertexBytes:color length:sizeof(color) atIndex:5];
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawLineBuffer(
+    JNIEnv *, jclass, jlong frameContext, jlong vertexBuffer,
+    jint vertexCount) {
+  (void)frameContext;
+
+  dbg("nDrawLineBuffer: encoder=%p, vtxCount=%d, pipeline=%p, buffer=%lld\n",
+      g_currentEncoder, vertexCount, g_pipelineDebugLines,
+      (long long)vertexBuffer);
+
+  if (!g_currentEncoder || vertexCount <= 0 || !g_pipelineDebugLines)
+    return;
+  id<MTLBuffer> vb = get_buffer((uint64_t)vertexBuffer);
+  if (!vb) {
+    dbg("nDrawLineBuffer: buffer lookup failed\n");
+    return;
+  }
+
+
+  [g_currentEncoder setRenderPipelineState:g_pipelineDebugLines];
+  if (g_depthStateLessEqual)
+    [g_currentEncoder setDepthStencilState:g_depthStateLessEqual];
+
+
+  [g_currentEncoder setVertexBytes:g_projMatrix length:64 atIndex:1];
+  [g_currentEncoder setVertexBytes:g_mvMatrix length:64 atIndex:2];
+
+  [g_currentEncoder setVertexBuffer:vb offset:0 atIndex:0];
+  [g_currentEncoder drawPrimitives:MTLPrimitiveTypeLine
+                       vertexStart:0
+                       vertexCount:(NSUInteger)vertexCount];
+
+  dbg("nDrawLineBuffer: drew %d vertices\n", vertexCount);
+
+
+  if (g_currentPipeline) {
+    [g_currentEncoder setRenderPipelineState:g_currentPipeline];
+    if (g_depthState)
+      [g_currentEncoder setDepthStencilState:g_depthState];
+  }
+}
+
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameContext(
     JNIEnv *, jclass, jlong handle) {
@@ -641,7 +1066,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
     return (jlong)0x1;
 
   @autoreleasepool {
-    g_currentCmdBuffer = [g_queue commandBuffer];
+    g_currentCmdBuffer = [[g_queue commandBuffer] retain];
     MTLRenderPassDescriptor *rp =
         [MTLRenderPassDescriptor renderPassDescriptor];
     rp.colorAttachments[0].texture = g_color;
@@ -651,11 +1076,12 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
     rp.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
     rp.depthAttachment.texture = g_depth;
     rp.depthAttachment.loadAction = MTLLoadActionClear;
-    rp.depthAttachment.storeAction = MTLStoreActionDontCare;
+    rp.depthAttachment.storeAction =
+        MTLStoreActionStore;
     rp.depthAttachment.clearDepth = 1.0;
 
     g_currentEncoder =
-        [g_currentCmdBuffer renderCommandEncoderWithDescriptor:rp];
+        [[g_currentCmdBuffer renderCommandEncoderWithDescriptor:rp] retain];
     g_currentPipeline = nil;
 
     MTLViewport vp;
@@ -720,11 +1146,41 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
   g_drawSkipCount = 0;
   if (g_currentEncoder) {
     [g_currentEncoder endEncoding];
+    [g_currentEncoder release];
     g_currentEncoder = nil;
   }
+
+
+  if (g_currentCmdBuffer && g_depth && g_depthReadBuffer) {
+    int w = (int)g_depth.width;
+    int h = (int)g_depth.height;
+    if (g_depthReadBuffer.length >= (NSUInteger)(w * h * 4)) {
+      id<MTLBlitCommandEncoder> blitEnc =
+          [g_currentCmdBuffer blitCommandEncoder];
+      [blitEnc copyFromTexture:g_depth
+                       sourceSlice:0
+                       sourceLevel:0
+                      sourceOrigin:MTLOriginMake(0, 0, 0)
+                        sourceSize:MTLSizeMake(w, h, 1)
+                          toBuffer:g_depthReadBuffer
+                 destinationOffset:0
+            destinationBytesPerRow:(NSUInteger)(w * 4)
+          destinationBytesPerImage:(NSUInteger)(w * h * 4)];
+      [blitEnc endEncoding];
+    }
+  }
   if (g_currentCmdBuffer) {
+
+
+    if (g_depthCmdBuffer) {
+      [g_depthCmdBuffer release];
+      g_depthCmdBuffer = nil;
+    }
+    g_depthCmdBuffer = [g_currentCmdBuffer retain];
     [g_currentCmdBuffer commit];
-    [g_currentCmdBuffer waitUntilCompleted];
+
+
+    [g_currentCmdBuffer release];
     g_currentCmdBuffer = nil;
   }
   g_currentPipeline = nil;
@@ -923,4 +1379,237 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nReadbackPixels(
         mipmapLevel:0];
 
   return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nReadbackDepth(
+    JNIEnv *env, jclass, jlong handle, jobject dest) {
+  (void)handle;
+
+
+  if (!g_depthReadBuffer || !dest || !env)
+    return JNI_FALSE;
+
+  void *destPtr = env->GetDirectBufferAddress(dest);
+  if (!destPtr)
+    return JNI_FALSE;
+
+  jlong capacity = env->GetDirectBufferCapacity(dest);
+  NSUInteger bufLen = g_depthReadBuffer.length;
+  if (capacity < (jlong)bufLen)
+    return JNI_FALSE;
+
+
+  if (g_depthCmdBuffer) {
+    [g_depthCmdBuffer waitUntilCompleted];
+    [g_depthCmdBuffer release];
+    g_depthCmdBuffer = nil;
+  }
+
+  memcpy(destPtr, g_depthReadBuffer.contents, bufLen);
+  return JNI_TRUE;
+}
+
+
+
+
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetEntityPipelineHandle(
+    JNIEnv *, jclass, jlong handle) {
+  (void)handle;
+  return (jlong)(uintptr_t)(__bridge void *)g_pipelineEntity;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetEntityTranslucentPipelineHandle(
+    JNIEnv *, jclass, jlong handle) {
+  (void)handle;
+  return (jlong)(uintptr_t)(__bridge void *)g_pipelineEntityTranslucent;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetEntityEmissivePipelineHandle(
+    JNIEnv *, jclass, jlong handle) {
+  (void)handle;
+  return (jlong)(uintptr_t)(__bridge void *)g_pipelineEntityEmissive;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetParticlePipelineHandle(
+    JNIEnv *, jclass, jlong handle) {
+  (void)handle;
+  return (jlong)(uintptr_t)(__bridge void *)g_pipelineParticle;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetEntityOverlay(
+    JNIEnv *, jclass, jlong frameContext, jfloat hurtTime, jfloat whiteFlash,
+    jfloat alpha) {
+  (void)frameContext;
+  g_entityOverlayParams[0] = hurtTime;
+  g_entityOverlayParams[1] = whiteFlash;
+  g_entityOverlayParams[2] = 0.0f;
+  g_entityOverlayParams[3] = alpha;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetEntityTintColor(
+    JNIEnv *, jclass, jlong frameContext, jfloat r, jfloat g, jfloat b,
+    jfloat a) {
+  (void)frameContext;
+  g_entityTintColor[0] = r;
+  g_entityTintColor[1] = g;
+  g_entityTintColor[2] = b;
+  g_entityTintColor[3] = a;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nBindEntityTexture(
+    JNIEnv *, jclass, jlong frameContext, jlong textureHandle) {
+  (void)frameContext;
+  if (textureHandle == 0) {
+    g_entityTexture = nil;
+    if (g_frameCount < 5) {
+      dbg("nBindEntityTexture: clearing entity texture\n");
+    }
+    return;
+  }
+  g_entityTexture = (__bridge id<MTLTexture>)(void *)(uintptr_t)textureHandle;
+
+  if (g_frameCount < 5) {
+    dbg("nBindEntityTexture: set g_entityTexture=%p (handle=%lld)\n",
+        g_entityTexture, textureHandle);
+  }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawEntityBuffer(
+    JNIEnv *, jclass, jlong frameContext, jlong vertexBuffer, jint vertexCount,
+    jint baseVertex, jint renderFlags) {
+  (void)frameContext;
+  if (!g_currentEncoder || vertexCount <= 0)
+    return;
+
+  id<MTLBuffer> vb = get_buffer((uint64_t)vertexBuffer);
+  if (!vb)
+    return;
+
+
+
+
+  if (!(renderFlags & 0x8)) {
+    id<MTLRenderPipelineState> pipeline = g_pipelineEntity;
+    id<MTLDepthStencilState> depthSt = g_depthState;
+
+    if (renderFlags & 0x2) {
+      pipeline = g_pipelineEntityEmissive ? g_pipelineEntityEmissive
+                                          : g_pipelineEntity;
+    } else if (renderFlags & 0x1) {
+      pipeline = g_pipelineEntityTranslucent ? g_pipelineEntityTranslucent
+                                             : g_pipelineEntity;
+      depthSt = g_depthStateNoWrite ? g_depthStateNoWrite : g_depthState;
+    }
+
+
+    if (!pipeline) {
+      pipeline = g_pipelineInhouse;
+      if (!pipeline)
+        return;
+    }
+
+    [g_currentEncoder setRenderPipelineState:pipeline];
+    [g_currentEncoder setDepthStencilState:depthSt];
+  }
+
+
+  [g_currentEncoder setVertexBuffer:vb offset:0 atIndex:0];
+
+
+
+  [g_currentEncoder setFragmentBytes:g_entityOverlayParams
+                              length:sizeof(g_entityOverlayParams)
+                             atIndex:5];
+
+
+  if (g_entityTexture) {
+    [g_currentEncoder setFragmentTexture:g_entityTexture atIndex:0];
+    if (g_frameCount < 5) {
+      dbg("Entity draw: bound texture %p at slot 0, verts=%d\n",
+          g_entityTexture, vertexCount);
+    }
+  } else {
+
+    if (g_blockAtlas) {
+      [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
+    }
+    if (g_frameCount < 5) {
+      dbg("Entity draw: NO entity texture, using blockAtlas fallback, "
+          "verts=%d\n",
+          vertexCount);
+    }
+  }
+
+
+
+  [g_currentEncoder setCullMode:MTLCullModeNone];
+
+  [g_currentEncoder drawPrimitives:MTLPrimitiveTypeTriangle
+                       vertexStart:(NSUInteger)baseVertex
+                       vertexCount:(NSUInteger)vertexCount];
+
+
+  [g_currentEncoder setCullMode:MTLCullModeBack];
+
+  g_drawCallCount++;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawEntityBufferIndexed(
+    JNIEnv *, jclass, jlong frameContext, jlong vertexBuffer, jlong indexBuffer,
+    jint indexCount, jint baseIndex, jint renderFlags) {
+  (void)frameContext;
+  if (!g_currentEncoder || indexCount <= 0)
+    return;
+
+  id<MTLBuffer> vb = get_buffer((uint64_t)vertexBuffer);
+  id<MTLBuffer> ib = get_buffer((uint64_t)indexBuffer);
+  if (!vb || !ib)
+    return;
+
+  id<MTLRenderPipelineState> pipeline = g_pipelineEntity;
+  id<MTLDepthStencilState> depthSt = g_depthState;
+
+  if (renderFlags & 0x2) {
+    pipeline =
+        g_pipelineEntityEmissive ? g_pipelineEntityEmissive : g_pipelineEntity;
+  } else if (renderFlags & 0x1) {
+    pipeline = g_pipelineEntityTranslucent ? g_pipelineEntityTranslucent
+                                           : g_pipelineEntity;
+    depthSt = g_depthStateNoWrite ? g_depthStateNoWrite : g_depthState;
+  }
+
+  if (!pipeline) {
+    pipeline = g_pipelineInhouse;
+    if (!pipeline)
+      return;
+  }
+
+  [g_currentEncoder setRenderPipelineState:pipeline];
+  [g_currentEncoder setDepthStencilState:depthSt];
+  [g_currentEncoder setVertexBuffer:vb offset:0 atIndex:0];
+  [g_currentEncoder setFragmentBytes:g_entityOverlayParams
+                              length:sizeof(g_entityOverlayParams)
+                             atIndex:5];
+  [g_currentEncoder setCullMode:MTLCullModeNone];
+
+  [g_currentEncoder
+      drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                 indexCount:(NSUInteger)indexCount
+                  indexType:MTLIndexTypeUInt32
+                indexBuffer:ib
+          indexBufferOffset:(NSUInteger)baseIndex * sizeof(uint32_t)];
+
+  [g_currentEncoder setCullMode:MTLCullModeBack];
+  g_drawCallCount++;
 }

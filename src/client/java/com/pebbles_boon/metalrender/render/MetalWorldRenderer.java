@@ -5,9 +5,13 @@ import com.pebbles_boon.metalrender.backend.MetalRenderer;
 import com.pebbles_boon.metalrender.culling.FrustumCuller;
 import com.pebbles_boon.metalrender.entity.MetalEntityRenderer;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
+import com.pebbles_boon.metalrender.nativebridge.NativeMemory;
+import com.pebbles_boon.metalrender.particle.MetalParticleRenderer;
 import com.pebbles_boon.metalrender.render.chunk.CustomChunkMesher;
 import com.pebbles_boon.metalrender.render.chunk.MetalChunkContext;
 import com.pebbles_boon.metalrender.util.MetalLogger;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -15,6 +19,9 @@ import java.util.Set;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.Camera;
 import net.minecraft.client.world.ClientWorld;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.chunk.ChunkSection;
 import net.minecraft.world.chunk.WorldChunk;
 import org.joml.Matrix4f;
@@ -26,6 +33,7 @@ public class MetalWorldRenderer {
 
   private final FrustumCuller frustumCuller;
   private final MetalEntityRenderer entityRenderer;
+  private final MetalParticleRenderer particleRenderer;
   private final CustomChunkMesher chunkMesher;
   private final MetalTextureManager textureManager;
   private final IOSurfaceBlitter ioSurfaceBlitter;
@@ -41,10 +49,17 @@ public class MetalWorldRenderer {
   private final List<long[]> pendingSectionKeys = new ArrayList<>();
   private int lastDrawnChunkCount;
   private long lastDiagLogMs;
+  private long outlineBufferHandle;
+
+
+  private float[] batchDrawData;
+  private float[] batchPackedData;
+  private final float[] sortTmp = new float[7];
 
   public MetalWorldRenderer() {
     this.frustumCuller = new FrustumCuller();
     this.entityRenderer = new MetalEntityRenderer();
+    this.particleRenderer = new MetalParticleRenderer();
     this.chunkMesher = new CustomChunkMesher();
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     long device =
@@ -71,8 +86,11 @@ public class MetalWorldRenderer {
       chunkMesher.initialize(renderer.getBackend().getDeviceHandle());
       entityRenderer.setDeviceAndPipeline(
           renderer.getBackend().getDeviceHandle(), 0);
+      particleRenderer.setDeviceAndPipeline(
+          renderer.getBackend().getDeviceHandle());
       renderingActive = true;
       entityRenderer.setActive(true);
+      particleRenderer.setActive(true);
       texturesReady = false;
       MetalLogger.info("Metal world rendering activated (" + w + "x" + h + ")");
     }
@@ -83,6 +101,7 @@ public class MetalWorldRenderer {
     renderingActive = false;
     texturesReady = false;
     entityRenderer.shutdown();
+    particleRenderer.shutdown();
     textureManager.destroy();
     ioSurfaceBlitter.destroy();
     chunkMesher.clear();
@@ -132,7 +151,7 @@ public class MetalWorldRenderer {
                                    (float)camera.getCameraPos().y,
                                    (float)camera.getCameraPos().z);
 
-    if (MetalRenderClient.getConfig().mesherMode == 0) {
+    if (MetalRenderClient.getConfig().enableMetalRendering) {
       pruneFarMeshes(client, camPos);
       buildPendingChunkMeshes(client);
     }
@@ -178,37 +197,88 @@ public class MetalWorldRenderer {
 
     long frameCtx = renderer.getCurrentFrameContext();
     if (frameCtx != 0) {
-      if (MetalRenderClient.getConfig().mesherMode == 0) {
+      if (MetalRenderClient.getConfig().enableMetalRendering) {
 
         long inhousePipeline = renderer.getBackend().getInhousePipelineHandle();
         if (inhousePipeline != 0) {
           NativeBridge.nSetPipelineState(frameCtx, inhousePipeline);
         }
 
-        int drawn = 0;
-        for (CustomChunkMesher.ChunkMeshData mesh :
-             chunkMesher.getAllMeshes()) {
-          if (mesh.bufferHandle == 0 || mesh.quadCount <= 0)
-            continue;
 
-          float cx = mesh.chunkX * 16.0f - camPos.x;
-          float cy = mesh.chunkY * 16.0f - camPos.y;
-          float cz = mesh.chunkZ * 16.0f - camPos.z;
+        var allMeshes = chunkMesher.getAllMeshes();
+        int capacity = allMeshes.size();
+        if (capacity == 0) {
+          lastDrawnChunkCount = 0;
+        } else {
 
-          if (!frustumCuller.testBoundingBox(cx, cy, cz, cx + 16, cy + 16,
-                                             cz + 16))
-            continue;
+          if (batchDrawData == null || batchDrawData.length < capacity * 7) {
+            batchDrawData = new float[capacity * 7];
+          }
+          int visible = 0;
+          for (CustomChunkMesher.ChunkMeshData mesh : allMeshes) {
+            if (mesh.bufferHandle == 0 || mesh.quadCount <= 0)
+              continue;
 
-          NativeBridge.nSetChunkOffset(frameCtx, cx, cy, cz);
-          NativeBridge.nDrawIndexedBuffer(frameCtx, mesh.bufferHandle,
-                                          chunkMesher.getGlobalIndexBuffer(),
-                                          mesh.quadCount * 6, 0);
-          drawn++;
-        }
-        lastDrawnChunkCount = drawn;
-        if (frameCount % 1000 == 0) {
-          MetalLogger.info("Frame " + frameCount + ": drew " + drawn +
-                           " chunks");
+            float cx = mesh.chunkX * 16.0f - camPos.x;
+            float cy = mesh.chunkY * 16.0f - camPos.y;
+            float cz = mesh.chunkZ * 16.0f - camPos.z;
+
+            if (!frustumCuller.testBoundingBox(cx, cy, cz, cx + 16, cy + 16,
+                                               cz + 16))
+              continue;
+
+            int off = visible * 7;
+
+            float mcx = cx + 8, mcy = cy + 8, mcz = cz + 8;
+            batchDrawData[off + 0] = mcx * mcx + mcy * mcy + mcz * mcz;
+
+            long h = mesh.bufferHandle;
+            batchDrawData[off + 1] = Float.intBitsToFloat((int)(h >>> 32));
+            batchDrawData[off + 2] =
+                Float.intBitsToFloat((int)(h & 0xFFFFFFFFL));
+            batchDrawData[off + 3] = cx;
+            batchDrawData[off + 4] = cy;
+            batchDrawData[off + 5] = cz;
+            batchDrawData[off + 6] = Float.intBitsToFloat(mesh.quadCount * 6);
+            visible++;
+          }
+
+
+
+          for (int i = 1; i < visible; i++) {
+            float distKey = batchDrawData[i * 7];
+            if (distKey < batchDrawData[(i - 1) * 7]) {
+
+              System.arraycopy(batchDrawData, i * 7, sortTmp, 0, 7);
+              int j = i - 1;
+              while (j >= 0 && batchDrawData[j * 7] > distKey) {
+                System.arraycopy(batchDrawData, j * 7, batchDrawData,
+                                 (j + 1) * 7, 7);
+                j--;
+              }
+              System.arraycopy(sortTmp, 0, batchDrawData, (j + 1) * 7, 7);
+            }
+          }
+
+
+          if (batchPackedData == null || batchPackedData.length < visible * 6) {
+            batchPackedData = new float[visible * 6];
+          }
+          for (int i = 0; i < visible; i++) {
+            int src = i * 7 + 1;
+            int dst = i * 6;
+            System.arraycopy(batchDrawData, src, batchPackedData, dst, 6);
+          }
+
+          long ibHandle = chunkMesher.getGlobalIndexBuffer();
+          NativeBridge.nDrawIndexedBatch(frameCtx, ibHandle, batchPackedData,
+                                         visible);
+          lastDrawnChunkCount = visible;
+
+          if (frameCount % 1000 == 0) {
+            MetalLogger.info("Frame " + frameCount + ": drew " + visible +
+                             " chunks (batched)");
+          }
         }
       }
     }
@@ -226,10 +296,83 @@ public class MetalWorldRenderer {
           renderer.getBackend() != null &&
           renderer.getBackend().getDefaultPipelineHandle() != 0;
       entityRenderer.renderCapturedEntities(frameCtx);
+      particleRenderer.renderCapturedParticles(frameCtx);
+      renderBlockOutline(frameCtx);
     }
 
     renderer.endFrame();
     frameCount++;
+  }
+
+
+  private void renderBlockOutline(long frameCtx) {
+    try {
+      MinecraftClient mc = MinecraftClient.getInstance();
+      if (mc == null || mc.crosshairTarget == null)
+        return;
+      if (mc.crosshairTarget.getType() != HitResult.Type.BLOCK)
+        return;
+
+      BlockHitResult hit = (BlockHitResult)mc.crosshairTarget;
+      BlockPos pos = hit.getBlockPos();
+
+
+      Camera cam = mc.gameRenderer.getCamera();
+      float bx = (float)(pos.getX() - cam.getCameraPos().x);
+      float by = (float)(pos.getY() - cam.getCameraPos().y);
+      float bz = (float)(pos.getZ() - cam.getCameraPos().z);
+
+
+      float e = 0.002f;
+      float x0 = bx - e, y0 = by - e, z0 = bz - e;
+      float x1 = bx + 1 + e, y1 = by + 1 + e, z1 = bz + 1 + e;
+
+
+
+      float[] lines = {
+                       x0, y0, z0, x1, y0, z0, x1, y0, z0, x1, y0, z1, x1, y0,
+                       z1, x0, y0, z1, x0, y0, z1, x0, y0, z0,
+
+                       x0, y1, z0, x1, y1, z0, x1, y1, z0, x1, y1, z1, x1, y1,
+                       z1, x0, y1, z1, x0, y1, z1, x0, y1, z0,
+
+                       x0, y0, z0, x0, y1, z0, x1, y0, z0, x1, y1, z0, x1, y0,
+                       z1, x1, y1, z1, x0, y0, z1, x0, y1, z1};
+
+      ByteBuffer buf = ByteBuffer.allocateDirect(lines.length * 4)
+                           .order(ByteOrder.nativeOrder());
+      for (float f : lines)
+        buf.putFloat(f);
+      buf.flip();
+      byte[] data = new byte[buf.remaining()];
+      buf.get(data);
+
+      MetalRenderer renderer = MetalRenderClient.getRenderer();
+      if (renderer == null)
+        return;
+      long device = renderer.getBackend().getDeviceHandle();
+
+
+      if (outlineBufferHandle == 0) {
+        outlineBufferHandle = NativeBridge.nCreateBuffer(
+            device, data.length, NativeMemory.STORAGE_MODE_SHARED);
+        MetalLogger.info("[BlockOutline] Created buffer handle: %d",
+                         outlineBufferHandle);
+      }
+      NativeBridge.nUploadBufferData(outlineBufferHandle, data, 0, data.length);
+
+
+      NativeBridge.nSetDebugColor(frameCtx, 0.0f, 0.0f, 0.0f, 1.0f);
+
+      NativeBridge.nDrawLineBuffer(frameCtx, outlineBufferHandle, 24);
+
+      if (frameCount % 300 == 0) {
+        MetalLogger.info("[BlockOutline] Drew outline at (%.1f,%.1f,%.1f)", bx,
+                         by, bz);
+      }
+    } catch (Exception e) {
+      MetalLogger.error("[BlockOutline] Exception: %s", e.getMessage());
+    }
   }
 
   private void buildPendingChunkMeshes(MinecraftClient client) {
@@ -246,6 +389,9 @@ public class MetalWorldRenderer {
 
     int playerChunkX = client.player.getChunkPos().x;
     int playerChunkZ = client.player.getChunkPos().z;
+
+    int submittedThisFrame = 0;
+    int maxSubmitsPerFrame = 32;
 
     for (int ring = 0; ring <= renderDist; ring++) {
       int startDx = -ring, endDx = ring;
@@ -277,17 +423,17 @@ public class MetalWorldRenderer {
 
             int worldY = chunk.sectionIndexToCoord(sy);
 
-            if (chunkMesher.needsLodRebuild(cx, worldY, cz, lodLevel)) {
-              chunkMesher.markDirty(cx, worldY, cz);
-            }
-
             if (chunkMesher.hasMesh(cx, worldY, cz))
               continue;
 
             if (chunkMesher.getMeshCount() >= maxMeshes)
               return;
 
+            if (submittedThisFrame >= maxSubmitsPerFrame)
+              return;
+
             chunkMesher.buildMeshFromWorld(cx, worldY, cz, lodLevel);
+            submittedThisFrame++;
           }
         }
       }
@@ -304,6 +450,10 @@ public class MetalWorldRenderer {
   public FrustumCuller getFrustumCuller() { return frustumCuller; }
 
   public MetalEntityRenderer getEntityRenderer() { return entityRenderer; }
+
+  public MetalParticleRenderer getParticleRenderer() {
+    return particleRenderer;
+  }
 
   public CustomChunkMesher getChunkMesher() { return chunkMesher; }
 
@@ -357,6 +507,42 @@ public class MetalWorldRenderer {
     ioSurfaceBlitter.blit(handle);
   }
 
+
+  public void forceBlitDepthNow(int width, int height) {
+    MetalRenderer renderer = MetalRenderClient.getRenderer();
+    if (renderer == null || !renderer.isAvailable())
+      return;
+    long handle = renderer.getHandle();
+    if (handle == 0)
+      return;
+    ioSurfaceBlitter.blitDepth(handle, width, height);
+  }
+
+
+  public boolean uploadDepthDirect(int mcDepthTexId, int width, int height) {
+    MetalRenderer renderer = MetalRenderClient.getRenderer();
+    if (renderer == null || !renderer.isAvailable())
+      return false;
+    long handle = renderer.getHandle();
+    if (handle == 0)
+      return false;
+    return ioSurfaceBlitter.uploadDepthDirect(handle, mcDepthTexId, width,
+                                              height);
+  }
+
+
+  public boolean blitDepthViaFBO(int mcDepthTexId, int mcFboId, int width,
+                                 int height) {
+    MetalRenderer renderer = MetalRenderClient.getRenderer();
+    if (renderer == null || !renderer.isAvailable())
+      return false;
+    long handle = renderer.getHandle();
+    if (handle == 0)
+      return false;
+    return ioSurfaceBlitter.blitDepthViaFBO(handle, mcDepthTexId, mcFboId,
+                                            width, height);
+  }
+
   public boolean isReady() { return worldLoaded && renderingActive; }
 
   public void renderFrame(Object viewport, Object matrices, double x, double y,
@@ -364,19 +550,12 @@ public class MetalWorldRenderer {
 
   public void scheduleSectionRebuild(int blockX, int blockY, int blockZ) {
     if (!worldLoaded || !renderingActive) {
-      MetalLogger.info(
-          "[scheduleSectionRebuild] Skipped: worldLoaded=%b renderingActive=%b",
-          worldLoaded, renderingActive);
       return;
     }
 
     int cx = blockX >> 4;
     int cy = blockY >> 4;
     int cz = blockZ >> 4;
-
-    MetalLogger.info("[scheduleSectionRebuild] Marking dirty section "
-                         + "[%d,%d,%d] for block at (%d,%d,%d)",
-                     cx, cy, cz, blockX, blockY, blockZ);
 
     chunkMesher.markDirty(cx, cy, cz);
 

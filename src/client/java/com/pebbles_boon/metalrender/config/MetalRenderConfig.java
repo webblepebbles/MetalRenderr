@@ -2,7 +2,6 @@ package com.pebbles_boon.metalrender.config;
 
 public final class MetalRenderConfig {
   public boolean enableMetalRendering = true;
-  public int mesherMode = 0;
 
   public boolean enableSimpleLighting = true;
   public boolean enableDebugOverlay = false;
@@ -12,7 +11,7 @@ public final class MetalRenderConfig {
   public float lodTransitionDistance = 0.8f;
   public int biomeTransitionDetail = 2;
   public boolean enableZone2Lod = true;
-  public int leafCullingMode = 1;
+  public int leafCullingMode = 0;
 
   public int targetFrameRate = 60;
   public int maxMemoryMB = 2048;
@@ -54,7 +53,6 @@ public final class MetalRenderConfig {
   public static MetalRenderConfig load() {
     MetalRenderConfig cfg = new MetalRenderConfig();
     cfg.enableMetalRendering = getBool("metalrender.enabled", true);
-    cfg.mesherMode = (int)getFloat("metalrender.mesherMode", 0);
     loadFromSystemProperties();
     return cfg;
   }
@@ -64,7 +62,6 @@ public final class MetalRenderConfig {
   public void save() {
     System.setProperty("metalrender.enabled",
                        String.valueOf(enableMetalRendering));
-    System.setProperty("metalrender.mesherMode", String.valueOf(mesherMode));
   }
 
   public static boolean mirrorUploads() { return mirrorUploads; }

@@ -1,38 +1,167 @@
 #include <metal_stdlib>
 using namespace metal;
-struct Aabb {
-    half3 minBounds;
-    half3 maxBounds;
+
+
+
+
+
+
+
+struct OcclusionParams {
+    float4x4 viewProjection;
+    float4   cameraPos;
+    float4   frustumPlanes[6];
+    float2   screenSize;
+    float    nearPlane;
+    uint     regionCount;
+    uint     hizMipCount;
+    uint     maxDrawCalls;
+    uint     _pad0;
+    uint     _pad1;
 };
-struct OcclusionConstants {
-    uint count;
+
+struct RegionAABB {
+    float3 minCorner;
+    float  _pad0;
+    float3 maxCorner;
+    float  _pad1;
 };
-kernel void occlusion_test(const device Aabb* aabbs [[buffer(0)]], constant float4x4& viewProj [[buffer(1)]], device uchar* results [[buffer(2)]], constant OcclusionConstants& constants [[buffer(3)]], uint id [[thread_position_in_grid]]) {
-    if (id >= constants.count) return;
-    Aabb box = aabbs[id];
-    half3 corners[8];
-    corners[0] = half3(box.minBounds.x, box.minBounds.y, box.minBounds.z);
-    corners[1] = half3(box.maxBounds.x, box.minBounds.y, box.minBounds.z);
-    corners[2] = half3(box.minBounds.x, box.maxBounds.y, box.minBounds.z);
-    corners[3] = half3(box.maxBounds.x, box.maxBounds.y, box.minBounds.z);
-    corners[4] = half3(box.minBounds.x, box.minBounds.y, box.maxBounds.z);
-    corners[5] = half3(box.maxBounds.x, box.minBounds.y, box.maxBounds.z);
-    corners[6] = half3(box.minBounds.x, box.maxBounds.y, box.maxBounds.z);
-    corners[7] = half3(box.maxBounds.x, box.maxBounds.y, box.maxBounds.z);
-    bool visible = false;
-    float minDepth = 1.0f;
-    float maxDepth = -1.0f;
-    for (uint i = 0; i < 8; ++i) {
-        float3 corner_f = float3(corners[i]);
-        float4 clip = viewProj * float4(corner_f, 1.0f);
-        if (clip.w == 0.0f) continue;
-        float3 ndc = clip.xyz / clip.w;
-        minDepth = min(minDepth, ndc.z);
-        maxDepth = max(maxDepth, ndc.z);
-        if (ndc.x >= -1.05f && ndc.x <= 1.05f && ndc.y >= -1.05f && ndc.y <= 1.05f && ndc.z >= -1.05f && ndc.z <= 1.05f) {
-            visible = true;
+
+struct IndirectIndexedArgs {
+    uint indexCount;
+    uint instanceCount;
+    uint indexStart;
+    int  baseVertex;
+    uint baseInstance;
+};
+
+struct RegionDrawInfo {
+    uint  vertexBufferIndex;
+    uint  indexBufferIndex;
+    uint  indexCount;
+    uint  baseIndex;
+    int   baseVertex;
+    uint  regionId;
+};
+
+
+float4 projectPoint(float3 p, float4x4 vp) {
+    float4 clip = vp * float4(p, 1.0);
+    if (clip.w <= 0.0) return float4(-1);
+    float3 ndc = clip.xyz / clip.w;
+    return float4(ndc, clip.w);
+}
+
+
+
+bool projectAABB(float3 minC, float3 maxC, float4x4 vp, float2 screen,
+                 thread float4& screenRect, thread float& closestDepth) {
+    float2 ssMin = float2(1e10);
+    float2 ssMax = float2(-1e10);
+    closestDepth = 1.0;
+    bool anyValid = false;
+
+
+    for (uint i = 0; i < 8; i++) {
+        float3 corner = float3(
+            (i & 1) ? maxC.x : minC.x,
+            (i & 2) ? maxC.y : minC.y,
+            (i & 4) ? maxC.z : minC.z
+        );
+        float4 proj = projectPoint(corner, vp);
+        if (proj.w <= 0.0) {
+
+            screenRect = float4(0, 0, screen.x, screen.y);
+            closestDepth = 0.0;
+            return true;
+        }
+        float2 ss = (proj.xy * 0.5 + 0.5) * screen;
+        ssMin = min(ssMin, ss);
+        ssMax = max(ssMax, ss);
+        closestDepth = min(closestDepth, proj.z * 0.5 + 0.5);
+        anyValid = true;
+    }
+
+    if (!anyValid) return false;
+
+    ssMin = clamp(ssMin, float2(0), screen);
+    ssMax = clamp(ssMax, float2(0), screen);
+    screenRect = float4(ssMin, ssMax);
+    return true;
+}
+
+kernel void occlusion_cull(
+    device const RegionAABB*      regions      [[buffer(0)]],
+    device const RegionDrawInfo*  drawInfos    [[buffer(1)]],
+    device uint*                  visibility   [[buffer(2)]],
+    device IndirectIndexedArgs*   indirectArgs [[buffer(3)]],
+    device atomic_uint*           drawCount    [[buffer(4)]],
+    constant OcclusionParams&     params       [[buffer(5)]],
+    texture2d<float>              hizPyramid   [[texture(0)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= params.regionCount) return;
+
+    RegionAABB aabb = regions[gid];
+
+
+    for (uint i = 0; i < 6; i++) {
+        float4 plane = params.frustumPlanes[i];
+        float3 pVertex;
+        pVertex.x = (plane.x > 0.0) ? aabb.maxCorner.x : aabb.minCorner.x;
+        pVertex.y = (plane.y > 0.0) ? aabb.maxCorner.y : aabb.minCorner.y;
+        pVertex.z = (plane.z > 0.0) ? aabb.maxCorner.z : aabb.minCorner.z;
+        if (dot(plane.xyz, pVertex) + plane.w < 0.0) {
+            visibility[gid] = 0;
+            return;
         }
     }
-    bool culled = !visible || minDepth > 1.02f || maxDepth < -1.02f;
-    results[id] = culled ? uchar(1) : uchar(0);
+
+
+    float3 closest = clamp(params.cameraPos.xyz, aabb.minCorner, aabb.maxCorner);
+    float distSq = dot(closest - params.cameraPos.xyz, closest - params.cameraPos.xyz);
+    float maxDist = params.screenSize.x * 32.0;
+    if (distSq > maxDist * maxDist) {
+        visibility[gid] = 0;
+        return;
+    }
+
+
+    float4 screenRect;
+    float closestDepth;
+    bool valid = projectAABB(aabb.minCorner, aabb.maxCorner, params.viewProjection,
+                             params.screenSize, screenRect, closestDepth);
+
+    if (valid) {
+
+        float2 extent = screenRect.zw - screenRect.xy;
+        float maxExtent = max(extent.x, extent.y);
+        uint mipLevel = uint(ceil(log2(max(maxExtent, 1.0))));
+        mipLevel = min(mipLevel, params.hizMipCount - 1);
+
+
+        constexpr sampler hizSampler(filter::nearest, address::clamp_to_edge);
+        float2 center = (screenRect.xy + screenRect.zw) * 0.5 / params.screenSize;
+        float hizDepth = hizPyramid.sample(hizSampler, center, level(float(mipLevel))).r;
+
+        if (closestDepth > hizDepth) {
+
+            visibility[gid] = 0;
+            return;
+        }
+    }
+
+
+    visibility[gid] = 1;
+    uint slot = atomic_fetch_add_explicit(drawCount, 1, memory_order_relaxed);
+    if (slot < params.maxDrawCalls) {
+        RegionDrawInfo info = drawInfos[gid];
+        IndirectIndexedArgs args;
+        args.indexCount    = info.indexCount;
+        args.instanceCount = 1;
+        args.indexStart    = info.baseIndex;
+        args.baseVertex    = info.baseVertex;
+        args.baseInstance  = info.regionId;
+        indirectArgs[slot] = args;
+    }
 }

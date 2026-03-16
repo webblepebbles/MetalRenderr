@@ -1,105 +1,129 @@
 #include <metal_stdlib>
 using namespace metal;
 
-struct VisBufferUniforms {
-    float4x4 viewProj;
-    float4 cameraPos;
+
+
+
+
+
+
+
+
+struct VisBufferParams {
+    float4x4 viewProjection;
+    float4   cameraPos;
+    uint     totalTriangles;
+    uint     _pad0;
+    uint     _pad1;
+    uint     _pad2;
 };
 
-struct VisBufferDrawUniforms {
-    float originX;
-    float originY;
-    float originZ;
-    uint drawId;          
+
+struct TerrainVertex {
+    packed_float3 position;
+    packed_short2 texCoord;
+    packed_uchar4 color;
+    packed_uchar4 normal;
+    packed_short2 lightUV;
 };
+
+
+
+
+
 
 struct VisBufferVertexOut {
     float4 position [[position]];
-    uint drawId [[flat]];       
-};
-struct VisBufferOutput {
-    uint visData [[color(0)]];
+    uint   triangleId;
+    uint   instanceId;
 };
 
-constant half MODEL_ORIGIN_VIS = 8.0h;
-constant half MODEL_RANGE_VIS = 32.0h;
-constant uint POSITION_MAX_VALUE_VIS = 1u << 20u;
-
-vertex VisBufferVertexOut visbuffer_vertex(
-    uint vertexId [[vertex_id]],
-    constant uint* vertexData [[buffer(0)]],
-    constant VisBufferDrawUniforms& draw [[buffer(1)]],
-    constant VisBufferUniforms& frame [[buffer(2)]]
+vertex VisBufferVertexOut vertex_visbuffer(
+    device const TerrainVertex*  vertices     [[buffer(0)]],
+    constant float4x4&           projection   [[buffer(1)]],
+    constant float4x4&           modelView    [[buffer(2)]],
+    constant float4&             chunkOffset  [[buffer(3)]],
+    uint vid [[vertex_id]],
+    uint iid [[instance_id]]
 ) {
-    uint base = vertexId * 5u;
-    
-    uint posHi = vertexData[base + 0u];
-    uint posLo = vertexData[base + 1u];
-    uint xHi = (posHi >> 0u) & 0x3FFu;
-    uint yHi = (posHi >> 10u) & 0x3FFu;
-    uint zHi = (posHi >> 20u) & 0x3FFu;
-    uint xLo = (posLo >> 0u) & 0x3FFu;
-    uint yLo = (posLo >> 10u) & 0x3FFu;
-    uint zLo = (posLo >> 20u) & 0x3FFu;
-    uint qx = (xHi << 10u) | xLo;
-    uint qy = (yHi << 10u) | yLo;
-    uint qz = (zHi << 10u) | zLo;
-    
-    float3 origin = float3(draw.originX, draw.originY, draw.originZ);
-    float x = (float(qx) / float(POSITION_MAX_VALUE_VIS)) * float(MODEL_RANGE_VIS) - float(MODEL_ORIGIN_VIS) + origin.x;
-    float y = (float(qy) / float(POSITION_MAX_VALUE_VIS)) * float(MODEL_RANGE_VIS) - float(MODEL_ORIGIN_VIS) + origin.y;
-    float z = (float(qz) / float(POSITION_MAX_VALUE_VIS)) * float(MODEL_RANGE_VIS) - float(MODEL_ORIGIN_VIS) + origin.z;
-    
-    float3 cameraRelativePos = float3(x, y, z) - frame.cameraPos.xyz;
-    
+    TerrainVertex v = vertices[vid];
     VisBufferVertexOut out;
-    out.position = frame.viewProj * float4(cameraRelativePos, 1.0);
-    out.drawId = draw.drawId;
+
+    float3 worldPos = float3(v.position) + chunkOffset.xyz;
+    float4 viewPos = modelView * float4(worldPos, 1.0);
+    out.position = projection * viewPos;
+
+
+    out.triangleId = vid / 3;
+    out.instanceId = iid;
+
     return out;
 }
 
-fragment VisBufferOutput visbuffer_fragment(
-    VisBufferVertexOut in [[stage_in]],
-    uint primitiveId [[primitive_id]]   
+
+fragment uint fragment_visbuffer(
+    VisBufferVertexOut in [[stage_in]]
 ) {
-    VisBufferOutput out;
-    out.visData = (primitiveId & 0x00FFFFFFu) | ((in.drawId & 0xFFu) << 24u);
-    return out;
+    return (in.instanceId << 20) | (in.triangleId & 0xFFFFF);
 }
 
-struct ResolveVertexOut {
+
+
+
+
+
+struct DeferredVertexOut {
     float4 position [[position]];
     float2 texCoord;
 };
 
-vertex ResolveVertexOut visbuffer_resolve_vertex(
-    uint vertexId [[vertex_id]]
-) {
-    float2 pos;
-    pos.x = (vertexId == 1) ? 3.0 : -1.0;
-    pos.y = (vertexId == 2) ? 3.0 : -1.0;
-    
-    ResolveVertexOut out;
-    out.position = float4(pos, 0.0, 1.0);
-    out.texCoord = pos * 0.5 + 0.5;
-    out.texCoord.y = 1.0 - out.texCoord.y; 
+vertex DeferredVertexOut vertex_deferred_fullscreen(uint vid [[vertex_id]]) {
+    float2 positions[3] = { float2(-1, -1), float2(3, -1), float2(-1, 3) };
+    float2 texcoords[3] = { float2(0, 1), float2(2, 1), float2(0, -1) };
+
+    DeferredVertexOut out;
+    out.position = float4(positions[vid], 0.0, 1.0);
+    out.texCoord = texcoords[vid];
     return out;
 }
 
-fragment half4 visbuffer_resolve_fragment(
-    ResolveVertexOut in [[stage_in]],
-    texture2d<uint, access::read> visBuffer [[texture(0)]],
-    texture2d<half, access::sample> atlas [[texture(1)]],
-    sampler atlasSampler [[sampler(0)]]
+fragment float4 fragment_deferred_shade(
+    DeferredVertexOut in [[stage_in]],
+    texture2d<uint>    visBuffer   [[texture(0)]],
+    texture2d<float>   blockAtlas  [[texture(1)]],
+    texture2d<float>   lightmap    [[texture(2)]],
+    device const TerrainVertex* vertices [[buffer(0)]],
+    constant float4x4& invViewProj        [[buffer(1)]]
 ) {
+    constexpr sampler nearestSampler(filter::nearest);
+    constexpr sampler atlasSampler(filter::nearest, address::clamp_to_edge);
+
     uint2 coord = uint2(in.position.xy);
-    uint visData = visBuffer.read(coord).r;
-    
-    if (visData == 0u) {
-        discard_fragment();
-    }
-    
-    uint drawId = (visData >> 24u) & 0xFFu;
-    half hue = half(drawId) / 255.0h;
-    return half4(hue, 1.0h - hue, 0.5h, 1.0h);
+    uint packedVis = visBuffer.read(coord).r;
+
+    if (packedVis == 0) discard_fragment();
+
+    uint triId = packedVis & 0xFFFFF;
+
+
+
+    uint baseVid = triId * 3;
+    TerrainVertex v0 = vertices[baseVid + 0];
+
+
+
+
+
+    float2 uv = float2(v0.texCoord) / 65535.0;
+    float4 color = float4(v0.color) / 255.0;
+    float2 lightUV = float2(v0.lightUV) / 256.0;
+
+    float4 texColor = blockAtlas.sample(atlasSampler, uv);
+    if (texColor.a < 0.004) discard_fragment();
+
+    float4 baseColor = texColor * color;
+    float4 light = lightmap.sample(nearestSampler, lightUV);
+    baseColor.rgb *= light.rgb;
+
+    return float4(baseColor.rgb, 1.0);
 }

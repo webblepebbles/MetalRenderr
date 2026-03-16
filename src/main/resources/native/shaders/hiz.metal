@@ -1,118 +1,110 @@
 #include <metal_stdlib>
 using namespace metal;
 
-namespace {
-constant uint kThreadgroupWidth = 8;
-constant uint kThreadgroupHeight = 8;
-constant uint kMaxReduceStep = 4;
-constant uint kDownsampleStep = 2;
 
-static inline uint clamp_coord(uint value, uint upperBound) {
-    return upperBound == 0u ? 0u : min(value, upperBound - 1u);
-}
-}
+
+
+
+
+
 
 struct HiZParams {
-    uint srcWidth;
-    uint srcHeight;
-    uint dstWidth;
-    uint dstHeight;
-    uint scaleShift;
+    uint2  srcSize;
+    uint2  dstSize;
+    uint   mipLevel;
+    uint   _pad0;
+    uint   _pad1;
+    uint   _pad2;
 };
 
-struct HiZMipParams {
-    uint srcWidth;
-    uint srcHeight;
-    uint dstWidth;
-    uint dstHeight;
-};
 
-kernel void reduce_level(texture2d<half, access::write> dst [[texture(0)]],
-                         texture2d<float, access::read> depth [[texture(1)]],
-                         constant HiZParams &params [[buffer(0)]],
-                         uint2 gid [[thread_position_in_grid]],
-                         uint2 tid [[thread_position_in_threadgroup]],
-                         uint2 groupId [[threadgroup_position_in_grid]],
-                         uint simd_lane [[thread_index_in_simdgroup]],
-                         uint simd_group [[simdgroup_index_in_threadgroup]]) {
-    if (params.srcWidth == 0u || params.srcHeight == 0u ||
-        params.dstWidth == 0u || params.dstHeight == 0u) {
-        return;
-    }
+kernel void hiz_downsample(
+    texture2d<float, access::read>  srcDepth [[texture(0)]],
+    texture2d<float, access::write> dstDepth [[texture(1)]],
+    constant HiZParams&             params   [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (gid.x >= params.dstSize.x || gid.y >= params.dstSize.y) return;
 
-    uint step = max(1u, min(kMaxReduceStep, 1u << params.scaleShift));
-    uint2 groupOrigin = groupId * uint2(kThreadgroupWidth, kThreadgroupHeight);
+    uint2 srcBase = gid * 2;
 
-    uint scaledGroupX = groupOrigin.x * step;
-    uint scaledGroupY = groupOrigin.y * step;
 
-    float localMin = 1.0f;
-    uint localBaseX = tid.x * step;
-    uint localBaseY = tid.y * step;
-    for (uint y = 0; y < step; ++y) {
-        uint srcY = clamp_coord(scaledGroupY + localBaseY + y, params.srcHeight);
-        for (uint x = 0; x < step; ++x) {
-            uint srcX = clamp_coord(scaledGroupX + localBaseX + x, params.srcWidth);
-            localMin = fmin(localMin, depth.read(uint2(srcX, srcY)).x);
-        }
-    }
+    float d00 = srcDepth.read(min(srcBase + uint2(0, 0), params.srcSize - 1)).r;
+    float d10 = srcDepth.read(min(srcBase + uint2(1, 0), params.srcSize - 1)).r;
+    float d01 = srcDepth.read(min(srcBase + uint2(0, 1), params.srcSize - 1)).r;
+    float d11 = srcDepth.read(min(srcBase + uint2(1, 1), params.srcSize - 1)).r;
 
-    if (gid.x >= params.dstWidth || gid.y >= params.dstHeight) {
-        return;
-    }
 
-    dst.write(half(localMin), gid);
+    float maxDepth = max(max(d00, d10), max(d01, d11));
+
+    dstDepth.write(float4(maxDepth), gid);
 }
 
-kernel void downsample_level(texture2d<half, access::read> src [[texture(0)]],
-                             texture2d<half, access::write> dst [[texture(1)]],
-                             constant HiZMipParams &params [[buffer(0)]],
-                             uint2 gid [[thread_position_in_grid]],
-                             uint2 tid [[thread_position_in_threadgroup]],
-                             uint2 groupId [[threadgroup_position_in_grid]],
-                             uint simd_lane [[thread_index_in_simdgroup]]) {
-    if (params.srcWidth == 0u || params.srcHeight == 0u ||
-        params.dstWidth == 0u || params.dstHeight == 0u) {
-        return;
+
+
+kernel void hiz_downsample_multi(
+    texture2d<float, access::read>  mip0    [[texture(0)]],
+    texture2d<float, access::write> mip1    [[texture(1)]],
+    texture2d<float, access::write> mip2    [[texture(2)]],
+    texture2d<float, access::write> mip3    [[texture(3)]],
+    texture2d<float, access::write> mip4    [[texture(4)]],
+    constant HiZParams&             params  [[buffer(0)]],
+    uint2 gid  [[thread_position_in_grid]],
+    uint2 lid  [[thread_position_in_threadgroup]],
+    uint2 tgid [[threadgroup_position_in_grid]]
+) {
+
+    threadgroup float sharedDepth[16][16];
+
+
+    uint2 srcCoord = tgid * 16 + lid;
+    float d = 0.0;
+    if (all(srcCoord < params.srcSize)) {
+        uint2 base = srcCoord * 2;
+        float d00 = mip0.read(min(base + uint2(0,0), params.srcSize * 2 - 1)).r;
+        float d10 = mip0.read(min(base + uint2(1,0), params.srcSize * 2 - 1)).r;
+        float d01 = mip0.read(min(base + uint2(0,1), params.srcSize * 2 - 1)).r;
+        float d11 = mip0.read(min(base + uint2(1,1), params.srcSize * 2 - 1)).r;
+        d = max(max(d00, d10), max(d01, d11));
+        mip1.write(float4(d), srcCoord);
     }
+    sharedDepth[lid.y][lid.x] = d;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    uint2 groupOrigin = groupId * uint2(kThreadgroupWidth, kThreadgroupHeight);
-    uint scaledGroupX = groupOrigin.x * kDownsampleStep;
-    uint scaledGroupY = groupOrigin.y * kDownsampleStep;
 
-    uint localBaseX = tid.x * kDownsampleStep;
-    uint localBaseY = tid.y * kDownsampleStep;
-
-    float minDepth = 1.0f;
-    for (uint y = 0; y < kDownsampleStep; ++y) {
-        uint srcY = clamp_coord(scaledGroupY + localBaseY + y, params.srcHeight);
-        for (uint x = 0; x < kDownsampleStep; ++x) {
-            uint srcX = clamp_coord(scaledGroupX + localBaseX + x, params.srcWidth);
-            minDepth = fmin(minDepth, float(src.read(uint2(srcX, srcY)).x));
-        }
+    if (lid.x < 8 && lid.y < 8) {
+        float a = sharedDepth[lid.y * 2    ][lid.x * 2    ];
+        float b = sharedDepth[lid.y * 2    ][lid.x * 2 + 1];
+        float c = sharedDepth[lid.y * 2 + 1][lid.x * 2    ];
+        float e = sharedDepth[lid.y * 2 + 1][lid.x * 2 + 1];
+        d = max(max(a, b), max(c, e));
+        uint2 dst = tgid * 8 + lid;
+        mip2.write(float4(d), dst);
+        sharedDepth[lid.y][lid.x] = d;
     }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    if (gid.x >= params.dstWidth || gid.y >= params.dstHeight) {
-        return;
+
+    if (lid.x < 4 && lid.y < 4) {
+        float a = sharedDepth[lid.y * 2    ][lid.x * 2    ];
+        float b = sharedDepth[lid.y * 2    ][lid.x * 2 + 1];
+        float c = sharedDepth[lid.y * 2 + 1][lid.x * 2    ];
+        float e = sharedDepth[lid.y * 2 + 1][lid.x * 2 + 1];
+        d = max(max(a, b), max(c, e));
+        uint2 dst = tgid * 4 + lid;
+        mip3.write(float4(d), dst);
+        sharedDepth[lid.y][lid.x] = d;
     }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    dst.write(half(minDepth), gid);
-}
 
-kernel void downsample_level_simd(texture2d<half, access::read> src [[texture(0)]],
-                                   texture2d<half, access::write> dst [[texture(1)]],
-                                   constant HiZMipParams &params [[buffer(0)]],
-                                   uint2 gid [[thread_position_in_grid]]) {
-    if (gid.x >= params.dstWidth || gid.y >= params.dstHeight) {
-        return;
+    if (lid.x < 2 && lid.y < 2) {
+        float a = sharedDepth[lid.y * 2    ][lid.x * 2    ];
+        float b = sharedDepth[lid.y * 2    ][lid.x * 2 + 1];
+        float c = sharedDepth[lid.y * 2 + 1][lid.x * 2    ];
+        float e = sharedDepth[lid.y * 2 + 1][lid.x * 2 + 1];
+        d = max(max(a, b), max(c, e));
+        uint2 dst = tgid * 2 + lid;
+        mip4.write(float4(d), dst);
     }
-
-    uint2 srcBase = gid * 2u;
-    float d0 = float(src.read(uint2(min(srcBase.x,     params.srcWidth - 1u), min(srcBase.y,     params.srcHeight - 1u))).x);
-    float d1 = float(src.read(uint2(min(srcBase.x + 1u, params.srcWidth - 1u), min(srcBase.y,     params.srcHeight - 1u))).x);
-    float d2 = float(src.read(uint2(min(srcBase.x,     params.srcWidth - 1u), min(srcBase.y + 1u, params.srcHeight - 1u))).x);
-    float d3 = float(src.read(uint2(min(srcBase.x + 1u, params.srcWidth - 1u), min(srcBase.y + 1u, params.srcHeight - 1u))).x);
-
-    float minDepth = fmin(fmin(d0, d1), fmin(d2, d3));
-    dst.write(half(minDepth), gid);
 }

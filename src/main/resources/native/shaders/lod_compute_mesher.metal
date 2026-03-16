@@ -1,171 +1,219 @@
 #include <metal_stdlib>
 using namespace metal;
 
-constant uint SECTION_SIZE = 16u;
-constant uint BLOCKS_PER_SECTION = 4096u;  
-constant uint MAX_FACES_PER_SECTION = 4096u * 6u;
-constant uint VERTS_PER_FACE = 6u; 
 
-struct CompactVertexGPU {
-    uint word0;
-    uint word1;
+
+
+
+
+
+
+struct LodMesherParams {
+    uint3  chunkOrigin;
+    uint   lodLevel;
+    uint   maxOutputQuads;
+    float  texScale;
+    uint   _pad0;
+    uint   _pad1;
 };
 
-struct MeshUniforms {
-    float originX;
-    float originY;
-    float originZ;
-    uint  sectionIndex;
-    uint  outputBaseVertex; 
-    uint  maxOutputVerts;   
+struct LodMeshVertex {
+    packed_float3  position;
+    packed_short2  texCoord;
+    packed_uchar4  color;
+    packed_uchar4  normal;
+    uchar          packedLight;
+    uchar          lodFlags;
+    short          _pad;
 };
 
-struct MeshCounters {
+struct LodDrawArgs {
     atomic_uint vertexCount;
-    atomic_uint faceCount;
+    uint instanceCount;
+    uint firstVertex;
+    uint firstInstance;
 };
 
-constant int3 faceNormals[6] = {
-    int3( 0, -1,  0), 
-    int3( 0,  1,  0), 
-    int3( 0,  0, -1), 
-    int3( 0,  0,  1),
+
+constant float3 kNormals[6] = {
+    float3( 1,  0,  0),
+    float3(-1,  0,  0),
+    float3( 0,  1,  0),
+    float3( 0, -1,  0),
+    float3( 0,  0,  1),
+    float3( 0,  0, -1)
+};
+
+constant int3 kOffsets[6] = {
+    int3( 1,  0,  0),
     int3(-1,  0,  0),
-    int3( 1,  0,  0),  
+    int3( 0,  1,  0),
+    int3( 0, -1,  0),
+    int3( 0,  0,  1),
+    int3( 0,  0, -1)
 };
 
-constant half3 faceCorners[6][4] = {
-    { half3(0,0,0), half3(1,0,0), half3(1,0,1), half3(0,0,1) },
-    { half3(0,1,0), half3(0,1,1), half3(1,1,1), half3(1,1,0) },
-    { half3(0,0,0), half3(0,1,0), half3(1,1,0), half3(1,0,0) },
-    { half3(0,0,1), half3(1,0,1), half3(1,1,1), half3(0,1,1) },
-    { half3(0,0,0), half3(0,0,1), half3(0,1,1), half3(0,1,0) },
-    { half3(1,0,0), half3(1,1,0), half3(1,1,1), half3(1,0,1) },
-};
-
-constant uint triIndices[6] = { 0, 1, 2, 0, 2, 3 };
-
-inline uint blockIndex(uint x, uint y, uint z) {
-    return (y << 8u) | (z << 4u) | x;
+uchar4 encodeNormal(float3 n) {
+    return uchar4(
+        uchar((n.x * 0.5 + 0.5) * 255.0),
+        uchar((n.y * 0.5 + 0.5) * 255.0),
+        uchar((n.z * 0.5 + 0.5) * 255.0),
+        255
+    );
 }
 
-inline ushort floatToHalf(float v) {
-    return as_type<ushort>(half(v));
+bool isBlockAir(uint id) { return id == 0; }
+
+bool neighborOccluding(device const uint* blocks, int3 pos, uint sectionSize) {
+    if (any(pos < 0) || any(pos >= int3(sectionSize))) return false;
+    uint idx = uint(pos.y * sectionSize * sectionSize + pos.z * sectionSize + pos.x);
+    uint id = blocks[idx];
+    return id != 0 && (id & 0x80000000u) == 0;
 }
 
-kernel void lod_compute_count_faces(
-    device const uint* blockStates          [[buffer(0)]],
-    device atomic_uint* totalFaceCount      [[buffer(1)]],
-    device uint* perBlockFaceMask           [[buffer(2)]], 
-    constant uint& blockCount               [[buffer(3)]],
-    uint tid [[thread_position_in_grid]]
+
+
+kernel void lod_compute_mesh(
+    device const uint*     blockStates   [[buffer(0)]],
+    device const uchar4*   blockColors   [[buffer(1)]],
+    device const uint*     blockTexIds   [[buffer(2)]],
+    device const uchar*    lightData     [[buffer(3)]],
+    device LodMeshVertex*  vertices      [[buffer(4)]],
+    device LodDrawArgs*    drawArgs      [[buffer(5)]],
+    constant LodMesherParams& params     [[buffer(6)]],
+    uint3 gid [[thread_position_in_grid]]
 ) {
-    if (tid >= blockCount) return;
+    uint step = 1u << params.lodLevel;
+    uint sectionSize = 16;
 
-    uint blockId = blockStates[tid];
-    if (blockId == 0u) {
-        perBlockFaceMask[tid] = 0u;
-        return;
+
+    uint3 blockBase = gid * step;
+    if (any(blockBase >= uint3(sectionSize))) return;
+
+
+    bool hasBlock = false;
+    uchar4 avgColor = uchar4(0);
+    uint colorR = 0, colorG = 0, colorB = 0, colorA = 0;
+    uint texId = 0;
+    uchar maxLight = 0;
+    uint blockCount = 0;
+
+    for (uint dy = 0; dy < step && (blockBase.y + dy) < sectionSize; dy++) {
+        for (uint dz = 0; dz < step && (blockBase.z + dz) < sectionSize; dz++) {
+            for (uint dx = 0; dx < step && (blockBase.x + dx) < sectionSize; dx++) {
+                uint3 pos = blockBase + uint3(dx, dy, dz);
+                uint idx = pos.y * 256 + pos.z * 16 + pos.x;
+                uint id = blockStates[idx];
+                if (!isBlockAir(id)) {
+                    hasBlock = true;
+                    uchar4 c = blockColors[idx];
+                    colorR += uint(c.r);
+                    colorG += uint(c.g);
+                    colorB += uint(c.b);
+                    colorA += uint(c.a);
+                    texId = blockTexIds[idx];
+                    maxLight = max(maxLight, lightData[idx]);
+                    blockCount++;
+                }
+            }
+        }
     }
 
-    uint y = tid >> 8u;
-    uint z = (tid >> 4u) & 0xFu;
-    uint x = tid & 0xFu;
+    if (!hasBlock) return;
 
-    uint faceMask = 0u;
 
-    for (uint face = 0u; face < 6u; face++) {
-        int3 n = faceNormals[face];
-        int nx = int(x) + n.x;
-        int ny = int(y) + n.y;
-        int nz = int(z) + n.z;
-        if (nx < 0 || nx >= 16 || ny < 0 || ny >= 16 || nz < 0 || nz >= 16) {
-            faceMask |= (1u << face);
-            continue;
-        }
-
-        uint neighborIdx = blockIndex(uint(nx), uint(ny), uint(nz));
-        if (blockStates[neighborIdx] == 0u) {
-            faceMask |= (1u << face);
-        }
+    if (blockCount > 0) {
+        avgColor = uchar4(
+            uchar(colorR / blockCount),
+            uchar(colorG / blockCount),
+            uchar(colorB / blockCount),
+            uchar(colorA / blockCount)
+        );
     }
 
-    perBlockFaceMask[tid] = faceMask;
+    float blockSize = float(step);
+    float3 basePos = float3(blockBase) + float3(params.chunkOrigin);
 
-    uint faceCount = popcount(faceMask);
-    if (faceCount > 0u) {
-        atomic_fetch_add_explicit(totalFaceCount, faceCount, memory_order_relaxed);
-    }
-}
+    float texU = float(texId & 0xFFFFu) * params.texScale;
+    float texV = float(texId >> 16)      * params.texScale;
 
-kernel void lod_compute_emit_faces(
-    device const uint* blockStates          [[buffer(0)]],
-    device const uchar* packedLight         [[buffer(1)]],
-    device const uint* perBlockFaceMask     [[buffer(2)]],
-    device CompactVertexGPU* outputVertices [[buffer(3)]],
-    device MeshCounters* counters           [[buffer(4)]],
-    constant MeshUniforms& uniforms         [[buffer(5)]],
-    constant uint& blockCount               [[buffer(6)]],
-    uint tid [[thread_position_in_grid]]
-) {
-    if (tid >= blockCount) return;
 
-    uint faceMask = perBlockFaceMask[tid];
-    if (faceMask == 0u) return;
+    for (uint face = 0; face < 6; face++) {
+        int3 neighborPos = int3(blockBase) + kOffsets[face] * int(step);
 
-    uint blockId = blockStates[tid];
-    if (blockId == 0u) return;
 
-    uint y = tid >> 8u;
-    uint z = (tid >> 4u) & 0xFu;
-    uint x = tid & 0xFu;
-    uchar light = packedLight[tid];
-    uint skyLight = (uint(light) >> 4u) & 0xFu;
-    uint ao = 15u; 
+        bool occluded = true;
+        if (any(neighborPos < 0) || any(neighborPos >= int3(sectionSize))) {
+            occluded = false;
+        } else {
 
-    uint skyAo = (skyLight << 4u) | ao;
-    uint colorIdx = blockId & 0xFFu;
+            for (uint d1 = 0; d1 < step && occluded; d1++) {
+                for (uint d2 = 0; d2 < step && occluded; d2++) {
+                    int3 checkPos = neighborPos;
+                    if (face < 2) { checkPos.y += int(d1); checkPos.z += int(d2); }
+                    else if (face < 4) { checkPos.x += int(d1); checkPos.z += int(d2); }
+                    else { checkPos.x += int(d1); checkPos.y += int(d2); }
 
-    float bx = float(x);
-    float by = float(y);
-    float bz = float(z);
-
-    for (uint face = 0u; face < 6u; face++) {
-        if ((faceMask & (1u << face)) == 0u) continue;
-        uint baseVertex = atomic_fetch_add_explicit(&counters->vertexCount,
-                                                     VERTS_PER_FACE,
-                                                     memory_order_relaxed);
-
-        if (baseVertex + VERTS_PER_FACE > uniforms.maxOutputVerts) {
-            return; 
+                    if (any(checkPos < 0) || any(checkPos >= int3(sectionSize))) {
+                        occluded = false;
+                    } else {
+                        uint nIdx = uint(checkPos.y * 256 + checkPos.z * 16 + checkPos.x);
+                        if (isBlockAir(blockStates[nIdx])) occluded = false;
+                    }
+                }
+            }
         }
 
-        uint outputBase = uniforms.outputBaseVertex + baseVertex;
+        if (occluded) continue;
 
-        for (uint ti = 0u; ti < VERTS_PER_FACE; ti++) {
-            uint cornerIdx = triIndices[ti];
-            half3 corner = faceCorners[face][cornerIdx];
 
-            float vx = bx + float(corner.x);
-            float vy = by + float(corner.y);
-            float vz = bz + float(corner.z);
+        uint base = atomic_fetch_add_explicit(&drawArgs->vertexCount, 4, memory_order_relaxed);
+        if (base + 4 > params.maxOutputQuads * 4) return;
 
-            CompactVertexGPU vtx;
-            vtx.word0 = uint(floatToHalf(vx)) | (uint(floatToHalf(vy)) << 16u);
-            vtx.word1 = uint(floatToHalf(vz)) | (colorIdx << 16u) | (skyAo << 24u);
+        float3 n = kNormals[face];
+        uchar4 packedN = encodeNormal(n);
 
-            outputVertices[outputBase + ti] = vtx;
+        float3 center = basePos + n * blockSize * 0.5;
+        float3 up, right;
+
+        if (abs(n.y) > 0.5) {
+            right = float3(blockSize, 0, 0);
+            up    = float3(0, 0, blockSize);
+        } else if (abs(n.x) > 0.5) {
+            right = float3(0, 0, blockSize);
+            up    = float3(0, blockSize, 0);
+        } else {
+            right = float3(blockSize, 0, 0);
+            up    = float3(0, blockSize, 0);
         }
 
-        atomic_fetch_add_explicit(&counters->faceCount, 1u, memory_order_relaxed);
-    }
-}
-kernel void lod_compute_clear_counters(
-    device MeshCounters* counters [[buffer(0)]],
-    uint tid [[thread_position_in_grid]]
-) {
-    if (tid == 0u) {
-        atomic_store_explicit(&counters->vertexCount, 0u, memory_order_relaxed);
-        atomic_store_explicit(&counters->faceCount, 0u, memory_order_relaxed);
+        float3 p0 = center - right * 0.5 - up * 0.5;
+        float3 p1 = center + right * 0.5 - up * 0.5;
+        float3 p2 = center + right * 0.5 + up * 0.5;
+        float3 p3 = center - right * 0.5 + up * 0.5;
+
+        float2 uv0 = float2(texU,                   texV);
+        float2 uv1 = float2(texU + params.texScale, texV);
+        float2 uv2 = float2(texU + params.texScale, texV + params.texScale);
+        float2 uv3 = float2(texU,                   texV + params.texScale);
+
+        LodMeshVertex mv;
+        mv.color = avgColor;
+        mv.normal = packedN;
+        mv.packedLight = maxLight;
+        mv.lodFlags = 0;
+        mv._pad = 0;
+
+        mv.position = p0; mv.texCoord = short2(short(uv0.x * 65535.0), short(uv0.y * 65535.0));
+        vertices[base + 0] = mv;
+
+        mv.position = p1; mv.texCoord = short2(short(uv1.x * 65535.0), short(uv1.y * 65535.0));
+        vertices[base + 1] = mv;
+
+        mv.position = p2; mv.texCoord = short2(short(uv2.x * 65535.0), short(uv2.y * 65535.0));
+        vertices[base + 2] = mv;
+
+        mv.position = p3; mv.texCoord = short2(short(uv3.x * 65535.0), short(uv3.y * 65535.0));
+        vertices[base + 3] = mv;
     }
 }

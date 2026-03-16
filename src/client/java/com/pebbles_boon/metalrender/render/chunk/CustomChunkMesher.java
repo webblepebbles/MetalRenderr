@@ -1,12 +1,16 @@
 package com.pebbles_boon.metalrender.render.chunk;
 
+import com.pebbles_boon.metalrender.MetalRenderClient;
+import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.nativebridge.NativeMemory;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Collection;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -34,6 +38,14 @@ public class CustomChunkMesher {
   private static final int SECTION_SIZE = 16;
   private static final int MAX_QUADS =
       SECTION_SIZE * SECTION_SIZE * SECTION_SIZE * 6;
+  private static final int VERTEX_BUF_SIZE = MAX_QUADS * 4 * VERTEX_STRIDE;
+
+
+
+  private static final ThreadLocal<ByteBuffer> VERTEX_BUF_POOL =
+      ThreadLocal.withInitial(()
+                                  -> ByteBuffer.allocateDirect(VERTEX_BUF_SIZE)
+                                         .order(ByteOrder.nativeOrder()));
 
   private final ConcurrentHashMap<Long, ChunkMeshData> meshCache;
   private final Set<Long> pendingKeys = ConcurrentHashMap.newKeySet();
@@ -70,7 +82,8 @@ public class CustomChunkMesher {
     this.builderPool =
         Executors.newFixedThreadPool(Math.max(2, processors - 1));
 
-    this.dirtyRebuildPool = Executors.newFixedThreadPool(2);
+    this.dirtyRebuildPool =
+        Executors.newFixedThreadPool(Math.max(2, processors / 2));
   }
 
   public long getGlobalIndexBuffer() { return globalIndexBufferHandle; }
@@ -112,7 +125,8 @@ public class CustomChunkMesher {
         (z & 0x3FFFFF);
   }
 
-  private boolean isTransparent(int[] states, int x, int y, int z) {
+  private boolean isTransparent(int[] states, int x, int y, int z,
+                                int leafMode) {
     if (x < 0 || x >= 16 || y < 0 || y >= 16 || z < 0 || z >= 16)
       return true;
     int idx = y * 256 + z * 16 + x;
@@ -125,6 +139,16 @@ public class CustomChunkMesher {
       BlockState state = Block.getStateFromRawId(stateId);
       if (state.isAir())
         return true;
+
+      Block block = state.getBlock();
+
+
+
+      if (isLeafBlock(block)) {
+
+
+        return leafMode == 1;
+      }
 
       return !state.isOpaqueFullCube();
     } catch (Exception e) {
@@ -153,9 +177,10 @@ public class CustomChunkMesher {
     long key = packChunkKey(cx, cy, cz);
     dirtyKeys.add(key);
     pendingKeys.remove(key);
-    MetalLogger.info("[markDirty] Section [%d,%d,%d] dirty=%d pending=%d", cx,
-                     cy, cz, dirtyKeys.size(), pendingKeys.size());
   }
+
+
+  public void markAllDirty() { dirtyKeys.addAll(meshCache.keySet()); }
 
   private static final Direction[] ALL_DIRECTIONS = Direction.values();
 
@@ -192,6 +217,11 @@ public class CustomChunkMesher {
     if (state.getFluidState() != null && !state.getFluidState().isEmpty())
       return true;
 
+
+    if (isLeafBlock(state.getBlock())) {
+      return true;
+    }
+
     boolean isOpaqueFull = state.isOpaqueFullCube();
     boolean isSolid = state.isSolid();
 
@@ -225,21 +255,32 @@ public class CustomChunkMesher {
     return true;
   }
 
+  private static volatile int leafDebugFrames = 0;
+
   private void doMeshBuild(int chunkX, int chunkY, int chunkZ,
                            int[] blockStates, byte[] lightData, long key,
                            int lodLevel) {
     try {
-      ByteBuffer vertexBuffer =
-          ByteBuffer.allocateDirect(MAX_QUADS * 4 * VERTEX_STRIDE)
-              .order(ByteOrder.nativeOrder());
+
+      ByteBuffer vertexBuffer = VERTEX_BUF_POOL.get();
+      vertexBuffer.clear();
 
       int quadCount = 0;
+      int leafBlocksFound = 0;
+      int leafQuadsEmitted = 0;
+      int leafFallbackQuads = 0;
+      int bakedQuadBlocks = 0;
+      int fallbackBlocks = 0;
 
       MinecraftClient mc = MinecraftClient.getInstance();
       BlockModels blockModels = null;
       if (mc != null && mc.getBlockRenderManager() != null) {
         blockModels = mc.getBlockRenderManager().getModels();
       }
+
+
+      MetalRenderConfig leafCfg = MetalRenderClient.getConfig();
+      int leafMode = (leafCfg != null) ? leafCfg.leafCullingMode : 0;
 
       for (int y = 0; y < SECTION_SIZE; y++) {
         for (int z = 0; z < SECTION_SIZE; z++) {
@@ -271,6 +312,12 @@ public class CustomChunkMesher {
             byte tintG = (byte)((tintColor >> 8) & 0xFF);
             byte tintB = (byte)(tintColor & 0xFF);
 
+            boolean isLeaf = isLeafBlock(blockState.getBlock());
+            if (isLeaf)
+              leafBlocksFound++;
+
+            boolean forceOpaque = isLeaf && leafMode == 0;
+
             if (blockModels != null) {
               try {
                 BlockStateModel model = blockModels.getModel(blockState);
@@ -282,12 +329,13 @@ public class CustomChunkMesher {
 
                   int quadsThisBlock = 0;
                   List<BlockModelPart> parts = model.getParts(rand);
+
                   for (BlockModelPart part : parts) {
                     for (Direction dir : ALL_DIRECTIONS) {
                       int nx = x + dir.getOffsetX();
                       int ny = y + dir.getOffsetY();
                       int nz = z + dir.getOffsetZ();
-                      if (!isTransparent(blockStates, nx, ny, nz))
+                      if (!isTransparent(blockStates, nx, ny, nz, leafMode))
                         continue;
 
                       List<BakedQuad> quads = part.getQuads(dir);
@@ -295,9 +343,9 @@ public class CustomChunkMesher {
                         for (BakedQuad quad : quads) {
                           if (quadCount >= MAX_QUADS)
                             break;
-                          quadCount +=
-                              emitBakedQuad(vertexBuffer, quad, x, y, z,
-                                            packedLight, tintR, tintG, tintB);
+                          quadCount += emitBakedQuad(vertexBuffer, quad, x, y,
+                                                     z, packedLight, tintR,
+                                                     tintG, tintB, forceOpaque);
                           quadsThisBlock++;
                         }
                       }
@@ -308,19 +356,24 @@ public class CustomChunkMesher {
                       for (BakedQuad quad : nonDirQuads) {
                         if (quadCount >= MAX_QUADS)
                           break;
-                        quadCount +=
-                            emitBakedQuad(vertexBuffer, quad, x, y, z,
-                                          packedLight, tintR, tintG, tintB);
+                        quadCount += emitBakedQuad(vertexBuffer, quad, x, y, z,
+                                                   packedLight, tintR, tintG,
+                                                   tintB, forceOpaque);
                         quadsThisBlock++;
                       }
                     }
                   }
-                  if (quadsThisBlock > 0)
+                  if (quadsThisBlock > 0) {
+                    if (isLeaf)
+                      leafQuadsEmitted += quadsThisBlock;
+                    bakedQuadBlocks++;
                     continue;
+                  }
                 }
               } catch (Exception e) {
               }
             }
+            fallbackBlocks++;
 
             Sprite sprite = null;
             try {
@@ -332,26 +385,37 @@ public class CustomChunkMesher {
             } catch (Exception ignored) {
             }
 
-            if (isTransparent(blockStates, x, y + 1, z))
+            int fallbackBefore = quadCount;
+            if (isTransparent(blockStates, x, y + 1, z, leafMode))
               quadCount += emitFace(vertexBuffer, x, y, z, 1, sprite,
                                     packedLight, tintR, tintG, tintB);
-            if (isTransparent(blockStates, x, y - 1, z))
+            if (isTransparent(blockStates, x, y - 1, z, leafMode))
               quadCount += emitFace(vertexBuffer, x, y, z, 0, sprite,
                                     packedLight, tintR, tintG, tintB);
-            if (isTransparent(blockStates, x, y, z + 1))
+            if (isTransparent(blockStates, x, y, z + 1, leafMode))
               quadCount += emitFace(vertexBuffer, x, y, z, 3, sprite,
                                     packedLight, tintR, tintG, tintB);
-            if (isTransparent(blockStates, x, y, z - 1))
+            if (isTransparent(blockStates, x, y, z - 1, leafMode))
               quadCount += emitFace(vertexBuffer, x, y, z, 2, sprite,
                                     packedLight, tintR, tintG, tintB);
-            if (isTransparent(blockStates, x + 1, y, z))
+            if (isTransparent(blockStates, x + 1, y, z, leafMode))
               quadCount += emitFace(vertexBuffer, x, y, z, 5, sprite,
                                     packedLight, tintR, tintG, tintB);
-            if (isTransparent(blockStates, x - 1, y, z))
+            if (isTransparent(blockStates, x - 1, y, z, leafMode))
               quadCount += emitFace(vertexBuffer, x, y, z, 4, sprite,
                                     packedLight, tintR, tintG, tintB);
+            if (isLeaf)
+              leafFallbackQuads += (quadCount - fallbackBefore);
           }
         }
+      }
+
+      if (leafBlocksFound > 0 && leafDebugFrames < 3) {
+        leafDebugFrames++;
+        MetalLogger.info("[LEAF SUMMARY] chunk[%d,%d,%d] lod=%d: found=%d "
+                             + "bakedQuads=%d fallbackQuads=%d totalQuads=%d",
+                         chunkX, chunkY, chunkZ, lodLevel, leafBlocksFound,
+                         leafQuadsEmitted, leafFallbackQuads, quadCount);
       }
 
       if (quadCount == 0) {
@@ -362,20 +426,18 @@ public class CustomChunkMesher {
       }
 
       vertexBuffer.flip();
-      byte[] data = new byte[quadCount * 4 * VERTEX_STRIDE];
-      vertexBuffer.get(data);
+      int dataLen = quadCount * 4 * VERTEX_STRIDE;
 
       long bufferHandle = NativeBridge.nCreateBuffer(
-          deviceHandle, data.length, NativeMemory.STORAGE_MODE_SHARED);
-      NativeBridge.nUploadBufferData(bufferHandle, data, 0, data.length);
+          deviceHandle, dataLen, NativeMemory.STORAGE_MODE_SHARED);
+
+      NativeBridge.nUploadBufferDataDirect(bufferHandle, vertexBuffer, 0,
+                                           dataLen);
 
       ChunkMeshData mesh = new ChunkMeshData(bufferHandle, quadCount, chunkX,
                                              chunkY, chunkZ, lodLevel);
       ChunkMeshData old = meshCache.put(key, mesh);
       if (old != null) {
-        MetalLogger.info("[doMeshBuild] Replaced mesh [%d,%d,%d]: old=%d "
-                             + "quads → new=%d quads",
-                         chunkX, chunkY, chunkZ, old.quadCount, quadCount);
         NativeBridge.nDestroyBuffer(old.bufferHandle);
       }
       dirtyKeys.remove(key);
@@ -404,16 +466,8 @@ public class CustomChunkMesher {
     long key = packChunkKey(chunkX, chunkY, chunkZ);
     boolean wasDirty = dirtyKeys.contains(key);
     if (!pendingKeys.add(key)) {
-      if (wasDirty)
-        MetalLogger.info("[buildMeshFromWorld] Section [%d,%d,%d] was dirty "
-                             + "but already pending — skipped",
-                         chunkX, chunkY, chunkZ);
       return;
     }
-    if (wasDirty)
-      MetalLogger.info(
-          "[buildMeshFromWorld] Rebuilding dirty section [%d,%d,%d]", chunkX,
-          chunkY, chunkZ);
 
     ExecutorService pool = wasDirty ? dirtyRebuildPool : builderPool;
     pool.submit(() -> {
@@ -476,7 +530,8 @@ public class CustomChunkMesher {
 
   private int emitBakedQuad(ByteBuffer buf, BakedQuad quad, int blockX,
                             int blockY, int blockZ, byte packedLight,
-                            byte tintR, byte tintG, byte tintB) {
+                            byte tintR, byte tintG, byte tintB,
+                            boolean forceOpaque) {
     Direction face = quad.face();
     byte normalIndex = dirToNormalIndex(face);
 
@@ -525,7 +580,7 @@ public class CustomChunkMesher {
       buf.put(sr);
       buf.put(sg);
       buf.put(sb);
-      buf.put((byte)255);
+      buf.put(forceOpaque ? (byte)254 : (byte)255);
 
       buf.put(light);
       buf.put(normalIndex);
@@ -610,112 +665,105 @@ public class CustomChunkMesher {
     return 1;
   }
 
+  private static boolean isLeafBlock(Block block) {
+    return block == Blocks.OAK_LEAVES || block == Blocks.BIRCH_LEAVES ||
+        block == Blocks.SPRUCE_LEAVES || block == Blocks.JUNGLE_LEAVES ||
+        block == Blocks.ACACIA_LEAVES || block == Blocks.DARK_OAK_LEAVES ||
+        block == Blocks.AZALEA_LEAVES ||
+        block == Blocks.FLOWERING_AZALEA_LEAVES ||
+        block == Blocks.MANGROVE_LEAVES || block == Blocks.CHERRY_LEAVES;
+  }
+
+
+  private static final Map<Block, Integer> BLOCK_COLORS =
+      new IdentityHashMap<>();
+  private static final int DEFAULT_BLOCK_COLOR = 0xB0B0B0;
+
+  static {
+    BLOCK_COLORS.put(Blocks.GRASS_BLOCK, 0x7CBE3F);
+    BLOCK_COLORS.put(Blocks.DIRT, 0x866043);
+    BLOCK_COLORS.put(Blocks.COARSE_DIRT, 0x866043);
+    BLOCK_COLORS.put(Blocks.ROOTED_DIRT, 0x866043);
+    BLOCK_COLORS.put(Blocks.STONE, 0x7D7D7D);
+    BLOCK_COLORS.put(Blocks.SMOOTH_STONE, 0x7D7D7D);
+    BLOCK_COLORS.put(Blocks.COBBLESTONE, 0x7A7A7A);
+    BLOCK_COLORS.put(Blocks.MOSSY_COBBLESTONE, 0x7A7A7A);
+    BLOCK_COLORS.put(Blocks.GRANITE, 0x9A6B53);
+    BLOCK_COLORS.put(Blocks.DIORITE, 0xBFBFBF);
+    BLOCK_COLORS.put(Blocks.ANDESITE, 0x888888);
+    BLOCK_COLORS.put(Blocks.DEEPSLATE, 0x505050);
+    BLOCK_COLORS.put(Blocks.COBBLED_DEEPSLATE, 0x505050);
+    BLOCK_COLORS.put(Blocks.TUFF, 0x6B6B5E);
+    BLOCK_COLORS.put(Blocks.BEDROCK, 0x3A3A3A);
+    BLOCK_COLORS.put(Blocks.SAND, 0xDCCD82);
+    BLOCK_COLORS.put(Blocks.SANDSTONE, 0xDCCD82);
+    BLOCK_COLORS.put(Blocks.RED_SAND, 0xBE6621);
+    BLOCK_COLORS.put(Blocks.RED_SANDSTONE, 0xBE6621);
+    BLOCK_COLORS.put(Blocks.GRAVEL, 0x857E79);
+    BLOCK_COLORS.put(Blocks.CLAY, 0x9EA4B0);
+    BLOCK_COLORS.put(Blocks.COAL_ORE, 0x4A4A4A);
+    BLOCK_COLORS.put(Blocks.DEEPSLATE_COAL_ORE, 0x4A4A4A);
+    BLOCK_COLORS.put(Blocks.IRON_ORE, 0xB08D63);
+    BLOCK_COLORS.put(Blocks.DEEPSLATE_IRON_ORE, 0xB08D63);
+    BLOCK_COLORS.put(Blocks.GOLD_ORE, 0xDBCD34);
+    BLOCK_COLORS.put(Blocks.DEEPSLATE_GOLD_ORE, 0xDBCD34);
+    BLOCK_COLORS.put(Blocks.DIAMOND_ORE, 0x5DDCD3);
+    BLOCK_COLORS.put(Blocks.DEEPSLATE_DIAMOND_ORE, 0x5DDCD3);
+    BLOCK_COLORS.put(Blocks.COPPER_ORE, 0xA86340);
+    BLOCK_COLORS.put(Blocks.DEEPSLATE_COPPER_ORE, 0xA86340);
+    BLOCK_COLORS.put(Blocks.LAPIS_ORE, 0x3450AB);
+    BLOCK_COLORS.put(Blocks.DEEPSLATE_LAPIS_ORE, 0x3450AB);
+    BLOCK_COLORS.put(Blocks.REDSTONE_ORE, 0xAA0000);
+    BLOCK_COLORS.put(Blocks.DEEPSLATE_REDSTONE_ORE, 0xAA0000);
+    BLOCK_COLORS.put(Blocks.EMERALD_ORE, 0x17DD62);
+    BLOCK_COLORS.put(Blocks.DEEPSLATE_EMERALD_ORE, 0x17DD62);
+    BLOCK_COLORS.put(Blocks.OAK_LOG, 0x6B5534);
+    BLOCK_COLORS.put(Blocks.OAK_WOOD, 0x6B5534);
+    BLOCK_COLORS.put(Blocks.OAK_PLANKS, 0xAF8F55);
+    BLOCK_COLORS.put(Blocks.BIRCH_LOG, 0xD5CB93);
+    BLOCK_COLORS.put(Blocks.BIRCH_WOOD, 0xD5CB93);
+    BLOCK_COLORS.put(Blocks.BIRCH_PLANKS, 0xC5B77B);
+    BLOCK_COLORS.put(Blocks.SPRUCE_LOG, 0x3D2813);
+    BLOCK_COLORS.put(Blocks.SPRUCE_WOOD, 0x3D2813);
+    BLOCK_COLORS.put(Blocks.SPRUCE_PLANKS, 0x674B2B);
+    BLOCK_COLORS.put(Blocks.DARK_OAK_LOG, 0x372814);
+    BLOCK_COLORS.put(Blocks.DARK_OAK_WOOD, 0x372814);
+    BLOCK_COLORS.put(Blocks.DARK_OAK_PLANKS, 0x422C14);
+    BLOCK_COLORS.put(Blocks.JUNGLE_LOG, 0x554A2F);
+    BLOCK_COLORS.put(Blocks.JUNGLE_WOOD, 0x554A2F);
+    BLOCK_COLORS.put(Blocks.ACACIA_LOG, 0x676157);
+    BLOCK_COLORS.put(Blocks.ACACIA_WOOD, 0x676157);
+    BLOCK_COLORS.put(Blocks.OAK_LEAVES, 0x4BA836);
+    BLOCK_COLORS.put(Blocks.JUNGLE_LEAVES, 0x4BA836);
+    BLOCK_COLORS.put(Blocks.ACACIA_LEAVES, 0x4BA836);
+    BLOCK_COLORS.put(Blocks.DARK_OAK_LEAVES, 0x4BA836);
+    BLOCK_COLORS.put(Blocks.BIRCH_LEAVES, 0x6B9940);
+    BLOCK_COLORS.put(Blocks.SPRUCE_LEAVES, 0x3B6126);
+    BLOCK_COLORS.put(Blocks.MANGROVE_LEAVES, 0x6A9B2D);
+    BLOCK_COLORS.put(Blocks.CHERRY_LEAVES, 0xE8A5C8);
+    BLOCK_COLORS.put(Blocks.AZALEA_LEAVES, 0x4BA836);
+    BLOCK_COLORS.put(Blocks.FLOWERING_AZALEA_LEAVES, 0x4BA836);
+    BLOCK_COLORS.put(Blocks.WATER, 0x3F76E4);
+    BLOCK_COLORS.put(Blocks.ICE, 0x8DB3E2);
+    BLOCK_COLORS.put(Blocks.PACKED_ICE, 0x8DB3E2);
+    BLOCK_COLORS.put(Blocks.BLUE_ICE, 0x8DB3E2);
+    BLOCK_COLORS.put(Blocks.SNOW_BLOCK, 0xF0F0F0);
+    BLOCK_COLORS.put(Blocks.SNOW, 0xF0F0F0);
+    BLOCK_COLORS.put(Blocks.POWDER_SNOW, 0xF0F0F0);
+    BLOCK_COLORS.put(Blocks.NETHERRACK, 0x6B3430);
+    BLOCK_COLORS.put(Blocks.SOUL_SAND, 0x513F32);
+    BLOCK_COLORS.put(Blocks.SOUL_SOIL, 0x513F32);
+    BLOCK_COLORS.put(Blocks.BASALT, 0x4B4B4F);
+    BLOCK_COLORS.put(Blocks.SMOOTH_BASALT, 0x4B4B4F);
+    BLOCK_COLORS.put(Blocks.BLACKSTONE, 0x2C2630);
+    BLOCK_COLORS.put(Blocks.GLOWSTONE, 0xAB8048);
+    BLOCK_COLORS.put(Blocks.GLASS, 0xFFFFFF);
+  }
+
   private static int getBlockColor(BlockState state) {
     if (state == null)
       return 0xC8C8C8;
-    Block block = state.getBlock();
-
-    if (block == Blocks.GRASS_BLOCK)
-      return 0x7CBE3F;
-    if (block == Blocks.DIRT || block == Blocks.COARSE_DIRT ||
-        block == Blocks.ROOTED_DIRT)
-      return 0x866043;
-    if (block == Blocks.STONE || block == Blocks.SMOOTH_STONE)
-      return 0x7D7D7D;
-    if (block == Blocks.COBBLESTONE || block == Blocks.MOSSY_COBBLESTONE)
-      return 0x7A7A7A;
-    if (block == Blocks.GRANITE)
-      return 0x9A6B53;
-    if (block == Blocks.DIORITE)
-      return 0xBFBFBF;
-    if (block == Blocks.ANDESITE)
-      return 0x888888;
-    if (block == Blocks.DEEPSLATE || block == Blocks.COBBLED_DEEPSLATE)
-      return 0x505050;
-    if (block == Blocks.TUFF)
-      return 0x6B6B5E;
-    if (block == Blocks.BEDROCK)
-      return 0x3A3A3A;
-    if (block == Blocks.SAND || block == Blocks.SANDSTONE)
-      return 0xDCCD82;
-    if (block == Blocks.RED_SAND || block == Blocks.RED_SANDSTONE)
-      return 0xBE6621;
-    if (block == Blocks.GRAVEL)
-      return 0x857E79;
-    if (block == Blocks.CLAY)
-      return 0x9EA4B0;
-
-    if (block == Blocks.COAL_ORE || block == Blocks.DEEPSLATE_COAL_ORE)
-      return 0x4A4A4A;
-    if (block == Blocks.IRON_ORE || block == Blocks.DEEPSLATE_IRON_ORE)
-      return 0xB08D63;
-    if (block == Blocks.GOLD_ORE || block == Blocks.DEEPSLATE_GOLD_ORE)
-      return 0xDBCD34;
-    if (block == Blocks.DIAMOND_ORE || block == Blocks.DEEPSLATE_DIAMOND_ORE)
-      return 0x5DDCD3;
-    if (block == Blocks.COPPER_ORE || block == Blocks.DEEPSLATE_COPPER_ORE)
-      return 0xA86340;
-    if (block == Blocks.LAPIS_ORE || block == Blocks.DEEPSLATE_LAPIS_ORE)
-      return 0x3450AB;
-    if (block == Blocks.REDSTONE_ORE || block == Blocks.DEEPSLATE_REDSTONE_ORE)
-      return 0xAA0000;
-    if (block == Blocks.EMERALD_ORE || block == Blocks.DEEPSLATE_EMERALD_ORE)
-      return 0x17DD62;
-
-    if (block == Blocks.OAK_LOG || block == Blocks.OAK_WOOD)
-      return 0x6B5534;
-    if (block == Blocks.OAK_PLANKS)
-      return 0xAF8F55;
-    if (block == Blocks.BIRCH_LOG || block == Blocks.BIRCH_WOOD)
-      return 0xD5CB93;
-    if (block == Blocks.BIRCH_PLANKS)
-      return 0xC5B77B;
-    if (block == Blocks.SPRUCE_LOG || block == Blocks.SPRUCE_WOOD)
-      return 0x3D2813;
-    if (block == Blocks.SPRUCE_PLANKS)
-      return 0x674B2B;
-    if (block == Blocks.DARK_OAK_LOG || block == Blocks.DARK_OAK_WOOD)
-      return 0x372814;
-    if (block == Blocks.DARK_OAK_PLANKS)
-      return 0x422C14;
-    if (block == Blocks.JUNGLE_LOG || block == Blocks.JUNGLE_WOOD)
-      return 0x554A2F;
-    if (block == Blocks.ACACIA_LOG || block == Blocks.ACACIA_WOOD)
-      return 0x676157;
-
-    if (block == Blocks.OAK_LEAVES || block == Blocks.JUNGLE_LEAVES ||
-        block == Blocks.ACACIA_LEAVES || block == Blocks.DARK_OAK_LEAVES)
-      return 0x4BA836;
-    if (block == Blocks.BIRCH_LEAVES)
-      return 0x6B9940;
-    if (block == Blocks.SPRUCE_LEAVES)
-      return 0x3B6126;
-
-    if (block == Blocks.WATER)
-      return 0x3F76E4;
-    if (block == Blocks.ICE || block == Blocks.PACKED_ICE ||
-        block == Blocks.BLUE_ICE)
-      return 0x8DB3E2;
-    if (block == Blocks.SNOW_BLOCK || block == Blocks.SNOW)
-      return 0xF0F0F0;
-    if (block == Blocks.POWDER_SNOW)
-      return 0xF0F0F0;
-
-    if (block == Blocks.NETHERRACK)
-      return 0x6B3430;
-    if (block == Blocks.SOUL_SAND || block == Blocks.SOUL_SOIL)
-      return 0x513F32;
-    if (block == Blocks.BASALT || block == Blocks.SMOOTH_BASALT)
-      return 0x4B4B4F;
-    if (block == Blocks.BLACKSTONE)
-      return 0x2C2630;
-    if (block == Blocks.GLOWSTONE)
-      return 0xAB8048;
-
-    if (block == Blocks.GLASS)
-      return 0xFFFFFF;
-
-    return 0xB0B0B0;
+    return BLOCK_COLORS.getOrDefault(state.getBlock(), DEFAULT_BLOCK_COLOR);
   }
 
   private short[][] getFaceVertices(int x, int y, int z, int normalIndex) {

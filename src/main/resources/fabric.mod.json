@@ -3,20 +3,24 @@
   "id": "metalrender",
   "version": "0.1.7",
   "license": "Apache-2.0",
-  "authors": ["pebbles_boon"],
+  "authors": [
+    "pebbles_boon"
+  ],
   "name": "MetalRender",
   "description": "Experimental Metal-based renderer for Minecraft on macOS.",
-  "icon": "assets/metalrender/icon.png",
   "environment": "client",
   "entrypoints": {
-    "client": ["com.metalrender.MetalRenderClient"],
-    "sodium:config_api_user": ["com.metalrender.config.gui.MetalRenderSodiumConfig"]
+    "client": [
+      "com.pebbles_boon.metalrender.MetalRenderClient"
+    ]
   },
-  "mixins": ["metalrender.mixins.json", "gl2metal.mixins.json"],
+  "mixins": ["metalrender.mixins.json"],
   "depends": {
     "fabricloader": ">=0.17.1",
-    "minecraft": ">=1.21.10",
-    "fabric": "*",
-    "sodium": ">=0.6.0"
+    "minecraft": ">=1.21.11",
+    "fabric": "*"
+  },
+  "suggests": {
+    "sodium": ">=0.8.0"
   }
 }

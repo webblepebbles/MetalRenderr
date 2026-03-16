@@ -4,6 +4,7 @@ import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.gui.components.MetalOptionSlider;
 import com.pebbles_boon.metalrender.nativebridge.MetalHardwareChecker;
+import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.MinecraftClient;
@@ -337,6 +338,11 @@ public class MetalRenderSettingsScreen extends Screen {
   public void close() {
     applyStagedNumericOptions();
     config.save();
+
+    MetalWorldRenderer wr = MetalWorldRenderer.getInstance();
+    if (wr != null && wr.getChunkMesher() != null) {
+      wr.getChunkMesher().markAllDirty();
+    }
     if (client != null) {
       client.setScreen(parent);
     }
@@ -596,12 +602,6 @@ public class MetalRenderSettingsScreen extends Screen {
         "Debug Overlay", config.enableDebugOverlay ? "Enabled" : "Disabled",
         () -> config.enableDebugOverlay = !config.enableDebugOverlay));
 
-    currentRows.add(SettingRow.header("Chunk Mesher"));
-    currentRows.add(SettingRow.cycle(
-        "Mesher Mode",
-        config.mesherMode == 0 ? "In-House (Metal)" : "Sodium (Hook)",
-        () -> config.mesherMode = config.mesherMode == 0 ? 1 : 0));
-
     currentRows.add(SettingRow.header("Status"));
     currentRows.add(
         SettingRow.info("GPU", MetalHardwareChecker.getDeviceName()));
@@ -631,10 +631,10 @@ public class MetalRenderSettingsScreen extends Screen {
 
     currentRows.add(SettingRow.header("Culling"));
     currentRows.add(SettingRow.cycle(
-        "Leaf Culling Mode", leafCullingModeName(config.leafCullingMode),
+        "Leaves Mode", leafCullingModeName(config.leafCullingMode),
         ()
             -> config.leafCullingMode =
-                   cycleValue(config.leafCullingMode, 0, 2, 1)));
+                   cycleValue(config.leafCullingMode, 0, 1, 1)));
   }
 
   private void buildPerformancePage() {
@@ -780,9 +780,8 @@ public class MetalRenderSettingsScreen extends Screen {
 
   private String leafCullingModeName(int mode) {
     return switch (mode) {
-      case 0 -> "Off";
-      case 1 -> "Fast";
-      case 2 -> "Full";
+      case 0 -> "Fast";
+      case 1 -> "Fancy";
       default -> "Unknown";
     };
   }

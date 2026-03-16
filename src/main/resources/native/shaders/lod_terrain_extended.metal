@@ -1,252 +1,177 @@
 #include <metal_stdlib>
 using namespace metal;
-constant uint LOD_LEVEL [[function_constant(0)]];
-constant bool USE_TEXTURED_FORMAT [[function_constant(1)]];  
-constant bool ENABLE_TEXTURE [[function_constant(2)]];       
-constant bool ENABLE_FOG [[function_constant(3)]];
-constant bool ENABLE_STOCHASTIC_ALPHA [[function_constant(4)]]; 
-constant bool IS_DEPTH_PRIME [[function_constant(5)]];       
 
-struct ExtendedDrawUniforms {
-    float originX;      
-    float originY;
-    float originZ;
-    float padding;
+
+
+
+
+
+
+struct LodTerrainParams {
+    float4x4 projection;
+    float4x4 modelView;
+    float4   cameraPos;
+    float4   chunkOffset;
+    float4   fogColor;
+    float    fogStart;
+    float    fogEnd;
+    uint     lodLevel;
+    float    lodBlendFactor;
+    float    biomeBlendRadius;
+    uint     _pad0;
+    uint     _pad1;
 };
 
-struct ExtendedFrameUniforms {
-    float4x4 viewProj;       
-    float4 cameraPos;        
-    float4 fogColor;
-    float4 fogParams;        
-    float4 lightParams;      
+
+struct LodTerrainVertex {
+    packed_float3 position;
+    packed_short2 texCoord;
+    packed_uchar4 color;
+    packed_uchar4 normal;
+    packed_uchar4 biomeColor2;
+    uchar         packedLight;
+    uchar         lodFlags;
+    short         _pad;
 };
 
-struct ExtLodVertexOut {
+struct LodVertexOut {
+    float4 position  [[position]];
+    float2 texCoord;
+    float4 color;
+    float3 normal;
+    float2 lightUV;
+    float  fogFactor;
+    float  lodBlend;
+    float4 biomeBlend;
+};
+
+vertex LodVertexOut vertex_lod_terrain(
+    device const LodTerrainVertex* vertices   [[buffer(0)]],
+    constant LodTerrainParams&     params     [[buffer(1)]],
+    uint vid [[vertex_id]]
+) {
+    LodTerrainVertex v = vertices[vid];
+    LodVertexOut out;
+
+    float3 localPos = float3(v.position);
+    float3 worldPos = localPos + params.chunkOffset.xyz;
+
+    float4 viewPos = params.modelView * float4(worldPos, 1.0);
+    out.position   = params.projection * viewPos;
+
+    out.texCoord = float2(v.texCoord) / 65535.0;
+    out.color    = float4(v.color) / 255.0;
+    out.normal   = normalize(float3(v.normal.xyz) / 127.0 - 1.0);
+
+    float blockLight = float(v.packedLight & 0xF) / 15.0;
+    float skyLight   = float(v.packedLight >> 4) / 15.0;
+    out.lightUV = float2(blockLight, skyLight);
+
+
+    float dist = length(viewPos.xyz);
+    out.fogFactor = saturate((params.fogEnd - dist) / max(params.fogEnd - params.fogStart, 0.001));
+
+
+    float camDist = length(worldPos - params.cameraPos.xyz);
+    out.lodBlend  = params.lodBlendFactor;
+
+
+    float4 biome2 = float4(v.biomeColor2) / 255.0;
+    float blendDist = clamp(camDist / max(params.biomeBlendRadius * 16.0, 1.0), 0.0, 1.0);
+    out.biomeBlend = float4(biome2.rgb, blendDist * 0.5);
+
+    return out;
+}
+
+fragment float4 fragment_lod_terrain(
+    LodVertexOut in [[stage_in]],
+    texture2d<float> blockAtlas [[texture(0)]],
+    texture2d<float> lightmap   [[texture(1)]],
+    constant LodTerrainParams& params [[buffer(1)]]
+) {
+    constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
+
+    float4 texColor = blockAtlas.sample(texSampler, in.texCoord);
+    if (texColor.a < 0.004) discard_fragment();
+
+
+    float4 vertColor = in.color;
+    if (in.biomeBlend.a > 0.01) {
+        vertColor.rgb = mix(vertColor.rgb, in.biomeBlend.rgb, in.biomeBlend.a);
+    }
+
+    float4 baseColor = texColor * vertColor;
+
+
+    float3 lightDir = normalize(float3(0.2, 1.0, 0.5));
+    float nDotL = max(dot(in.normal, lightDir), 0.0);
+    float lightFactor = 0.3 + 0.7 * nDotL;
+    baseColor.rgb *= lightFactor;
+
+
+    float4 light = lightmap.sample(texSampler, in.lightUV);
+    baseColor.rgb *= light.rgb;
+
+
+    baseColor.rgb = mix(params.fogColor.rgb, baseColor.rgb, in.fogFactor);
+
+
+    float alpha = mix(1.0, baseColor.a, in.lodBlend);
+    if (alpha < 0.01) discard_fragment();
+
+    return float4(baseColor.rgb, 1.0);
+}
+
+
+
+
+
+struct FarLodVertex {
+    packed_float3 position;
+    packed_uchar4 color;
+    packed_uchar4 normal;
+    uchar packedLight;
+    uchar _pad0;
+    short _pad1;
+};
+
+struct FarLodVertexOut {
     float4 position [[position]];
-    half2 texCoord;
-    half4 color;
-    half light;              
-    half distance;           
+    float4 color;
+    float3 normal;
+    float  fogFactor;
 };
 
-struct DepthOnlyOut {
-    float4 position [[position]];
-};
-
-struct PaletteBuffer {
-    uint colors[256]; 
-};
-half decodeHalf(ushort bits) {
-    return as_type<half>(bits);
-}
-
-struct TexturedVertex {
-    float3 position;
-    half2 texCoord;
-    half4 color;
-    half light;
-};
-
-TexturedVertex decodeTexturedVertex(constant uint* data, uint vertexId, float3 origin) {
-    uint base = vertexId * 3u; 
-
-    uint packedPos = data[base + 0u];
-    uint packedUV = data[base + 1u];
-    uint packedColorLight = data[base + 2u];
-    float x = float((packedPos >> 0u) & 0x3FFu) / 64.0f;  
-    float y = float((packedPos >> 10u) & 0x3FFu) / 64.0f;
-    float z = float((packedPos >> 20u) & 0x3FFu) / 64.0f;
-    float3 worldPos = float3(x, y, z) + origin;
-    half u = decodeHalf(ushort(packedUV & 0xFFFFu));
-    half v = decodeHalf(ushort((packedUV >> 16u) & 0xFFFFu));
-    half r = half((packedColorLight >> 0u) & 0xFFu) / 255.0h;
-    half g = half((packedColorLight >> 8u) & 0xFFu) / 255.0h;
-    half b = half((packedColorLight >> 16u) & 0xFFu) / 255.0h;
-    half light = half((packedColorLight >> 24u) & 0xFFu) / 255.0h;
-
-    TexturedVertex vtx;
-    vtx.position = worldPos;
-    vtx.texCoord = half2(u, v);
-    vtx.color = half4(r, g, b, 1.0h);
-    vtx.light = light;
-    return vtx;
-}
-
-struct CompactVertex {
-    float3 position;
-    uint colorIndex;
-    half skyLight;
-    half ao;
-};
-
-CompactVertex decodeCompactVertex(constant uint* data, uint vertexId, float3 origin) {
-    uint base = vertexId * 2u; 
-
-    uint word0 = data[base + 0u];
-    uint word1 = data[base + 1u];
-    half hx = decodeHalf(ushort(word0 & 0xFFFFu));
-    half hy = decodeHalf(ushort((word0 >> 16u) & 0xFFFFu));
-    half hz = decodeHalf(ushort(word1 & 0xFFFFu));
-    float3 worldPos = float3(float(hx), float(hy), float(hz)) + origin;
-
-    uint colorIdx = (word1 >> 16u) & 0xFFu;
-    uint skyAo = (word1 >> 24u) & 0xFFu;
-
-    CompactVertex vtx;
-    vtx.position = worldPos;
-    vtx.colorIndex = colorIdx;
-    vtx.skyLight = half((skyAo >> 4u) & 0xFu) / 15.0h;
-    vtx.ao = half(skyAo & 0xFu) / 15.0h;
-    return vtx;
-}
-
-half computeExtendedLighting(half skyLight, half dayBrightness, half ambientLight) {
-    half moonlight = 0.15h;
-    half effectiveSky = fast::max(dayBrightness, moonlight);
-    half brightness = skyLight * effectiveSky;
-    brightness = brightness * brightness * fast::fma(-2.0h, brightness, 3.0h);
-    return fast::max(brightness, ambientLight);
-}
-
-half4 applyExtendedFog(half4 color, half dist, float4 fogColor, float4 fogParams) {
-    if (!ENABLE_FOG) return color;
-
-    half fogStart = half(fogParams.x);
-    half fogEnd = half(fogParams.y);
-    if (fogEnd <= fogStart) return color;
-
-    half fogFactor = fast::clamp((dist - fogStart) / (fogEnd - fogStart), 0.0h, 1.0h);
-    fogFactor = fogFactor * fogFactor;
-    return mix(color, half4(fogColor), fogFactor);
-}
-
-constant half bayerMatrix[16] = {
-     0.0h/16.0h,  8.0h/16.0h,  2.0h/16.0h, 10.0h/16.0h,
-    12.0h/16.0h,  4.0h/16.0h, 14.0h/16.0h,  6.0h/16.0h,
-     3.0h/16.0h, 11.0h/16.0h,  1.0h/16.0h,  9.0h/16.0h,
-    15.0h/16.0h,  7.0h/16.0h, 13.0h/16.0h,  5.0h/16.0h
-};
-
-half getBayerDither(float4 pos) {
-    uint px = uint(pos.x) & 3u;
-    uint py = uint(pos.y) & 3u;
-    return bayerMatrix[py * 4u + px];
-}
-
-vertex DepthOnlyOut ext_lod_depth_vertex(
-    uint vertexId [[vertex_id]],
-    constant uint* vertexData [[buffer(0)]],
-    constant ExtendedDrawUniforms& draw [[buffer(1)]],
-    constant ExtendedFrameUniforms& frame [[buffer(2)]]
+vertex FarLodVertexOut vertex_lod_terrain_far(
+    device const FarLodVertex* vertices [[buffer(0)]],
+    constant LodTerrainParams& params   [[buffer(1)]],
+    uint vid [[vertex_id]]
 ) {
-    float3 origin = float3(draw.originX, draw.originY, draw.originZ);
-    float3 worldPos;
+    FarLodVertex v = vertices[vid];
+    FarLodVertexOut out;
 
-    if (USE_TEXTURED_FORMAT) {
-        uint base = vertexId * 3u;
-        uint packedPos = vertexData[base + 0u];
-        float x = float((packedPos >> 0u) & 0x3FFu) / 64.0f;
-        float y = float((packedPos >> 10u) & 0x3FFu) / 64.0f;
-        float z = float((packedPos >> 20u) & 0x3FFu) / 64.0f;
-        worldPos = float3(x, y, z) + origin;
-    } else {
-        uint base = vertexId * 2u;
-        uint word0 = vertexData[base + 0u];
-        uint word1 = vertexData[base + 1u];
-        half hx = decodeHalf(ushort(word0 & 0xFFFFu));
-        half hy = decodeHalf(ushort((word0 >> 16u) & 0xFFFFu));
-        half hz = decodeHalf(ushort(word1 & 0xFFFFu));
-        worldPos = float3(float(hx), float(hy), float(hz)) + origin;
-    }
+    float3 worldPos = float3(v.position) + params.chunkOffset.xyz;
+    float4 viewPos  = params.modelView * float4(worldPos, 1.0);
+    out.position    = params.projection * viewPos;
+    out.color       = float4(v.color) / 255.0;
+    out.normal      = normalize(float3(v.normal.xyz) / 127.0 - 1.0);
 
-    float3 cameraRelative = worldPos - frame.cameraPos.xyz;
+    float dist     = length(viewPos.xyz);
+    out.fogFactor  = saturate((params.fogEnd - dist) / max(params.fogEnd - params.fogStart, 0.001));
 
-    DepthOnlyOut out;
-    out.position = frame.viewProj * float4(cameraRelative, 1.0f);
-    return out;
-}
-fragment void ext_lod_depth_fragment() {
-}
-
-vertex ExtLodVertexOut ext_lod_textured_vertex(
-    uint vertexId [[vertex_id]],
-    constant uint* vertexData [[buffer(0)]],
-    constant ExtendedDrawUniforms& draw [[buffer(1)]],
-    constant ExtendedFrameUniforms& frame [[buffer(2)]]
-) {
-    float3 origin = float3(draw.originX, draw.originY, draw.originZ);
-    TexturedVertex v = decodeTexturedVertex(vertexData, vertexId, origin);
-
-    float3 cameraRelative = v.position - frame.cameraPos.xyz;
-
-    ExtLodVertexOut out;
-    out.position = frame.viewProj * float4(cameraRelative, 1.0f);
-    out.texCoord = v.texCoord;
-    out.color = v.color;
-    out.light = v.light;
-    out.distance = half(fast::clamp(fast::length(cameraRelative), 0.0f, 8192.0f));
     return out;
 }
 
-vertex ExtLodVertexOut ext_lod_compact_vertex(
-    uint vertexId [[vertex_id]],
-    constant uint* vertexData [[buffer(0)]],
-    constant ExtendedDrawUniforms& draw [[buffer(1)]],
-    constant ExtendedFrameUniforms& frame [[buffer(2)]],
-    constant PaletteBuffer& palette [[buffer(3)]]
+fragment float4 fragment_lod_terrain_far(
+    FarLodVertexOut in [[stage_in]],
+    constant LodTerrainParams& params [[buffer(1)]]
 ) {
-    float3 origin = float3(draw.originX, draw.originY, draw.originZ);
-    CompactVertex v = decodeCompactVertex(vertexData, vertexId, origin);
+    float3 lightDir = normalize(float3(0.2, 1.0, 0.5));
+    float nDotL = max(dot(in.normal, lightDir), 0.0);
+    float lightFactor = 0.35 + 0.65 * nDotL;
 
-    float3 cameraRelative = v.position - frame.cameraPos.xyz;
-    uint packedColor = palette.colors[v.colorIndex];
-    half r = half((packedColor >> 16u) & 0xFFu) / 255.0h;
-    half g = half((packedColor >> 8u) & 0xFFu) / 255.0h;
-    half b = half(packedColor & 0xFFu) / 255.0h;
-    half aoFactor = fast::fma(v.ao, 0.6h, 0.4h); 
+    float3 color = in.color.rgb * lightFactor;
+    color = mix(params.fogColor.rgb, color, in.fogFactor);
 
-    ExtLodVertexOut out;
-    out.position = frame.viewProj * float4(cameraRelative, 1.0f);
-    out.texCoord = half2(0.0h, 0.0h); 
-    out.color = half4(r * aoFactor, g * aoFactor, b * aoFactor, 1.0h);
-    out.light = v.skyLight;
-    out.distance = half(fast::clamp(fast::length(cameraRelative), 0.0f, 8192.0f));
-    return out;
-}
-
-fragment half4 ext_lod_color_fragment(
-    ExtLodVertexOut in [[stage_in]],
-    texture2d<half, access::sample> atlas [[texture(0), function_constant(ENABLE_TEXTURE)]],
-    constant ExtendedFrameUniforms& frame [[buffer(2)]]
-) {
-    half4 baseColor;
-
-    if (ENABLE_TEXTURE) {
-        constexpr sampler lodSampler(coord::normalized,
-                                      address::repeat,
-                                      filter::nearest,
-                                      mip_filter::nearest);
-        baseColor = atlas.sample(lodSampler, float2(in.texCoord));
-        if (baseColor.a < 0.5h) {
-            discard_fragment();
-        }
-    } else {
-        baseColor = half4(1.0h, 1.0h, 1.0h, 1.0h);
-    }
-    half4 finalColor = baseColor * in.color;
-    half dayBrightness = half(frame.lightParams.x);
-    half ambientLight = half(frame.lightParams.y);
-    half lightLevel = computeExtendedLighting(in.light, dayBrightness, ambientLight);
-    finalColor.rgb *= lightLevel;
-    if (ENABLE_STOCHASTIC_ALPHA) {
-        half dither = getBayerDither(in.position);
-        if (finalColor.a < dither) {
-            discard_fragment();
-        }
-        finalColor.a = 1.0h; 
-    }
-    finalColor = applyExtendedFog(finalColor, in.distance, frame.fogColor, frame.fogParams);
-
-    return finalColor;
+    return float4(color, 1.0);
 }
