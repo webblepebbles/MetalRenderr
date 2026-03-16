@@ -338,7 +338,6 @@ public class MetalRenderSettingsScreen extends Screen {
   public void close() {
     applyStagedNumericOptions();
     config.save();
-
     MetalWorldRenderer wr = MetalWorldRenderer.getInstance();
     if (wr != null && wr.getChunkMesher() != null) {
       wr.getChunkMesher().markAllDirty();
@@ -609,8 +608,8 @@ public class MetalRenderSettingsScreen extends Screen {
         SettingRow.info("Metal Available",
                         MetalRenderClient.isMetalAvailable() ? "Yes" : "No"));
     currentRows.add(SettingRow.info("Sodium", MetalRenderClient.isSodiumLoaded()
-                                                  ? "Detected"
-                                                  : "Not Installed"));
+                                                  ? "isInstaled"
+                                                  : "isNotInstalled"));
     currentRows.add(SettingRow.info(
         "Apple Silicon", MetalHardwareChecker.isAppleSilicon() ? "Yes" : "No"));
   }
@@ -642,19 +641,18 @@ public class MetalRenderSettingsScreen extends Screen {
     targetFpsRow = currentRows.size();
     currentRows.add(SettingRow.info("Target FPS", ""));
     currentRows.add(SettingRow.toggle(
-        "Triple Buffering",
-        config.enableTripleBuffering ? "Enabled" : "Disabled",
+        "Triple Buffering", config.enableTripleBuffering ? "yes" : "no",
         () -> config.enableTripleBuffering = !config.enableTripleBuffering));
 
     currentRows.add(SettingRow.header("Memory"));
     maxMemoryRow = currentRows.size();
     currentRows.add(SettingRow.info("Max GPU Memory", ""));
-    currentRows.add(SettingRow.toggle(
-        "Memory Pressure Fallback",
-        config.enableMemoryPressureFallback ? "Enabled" : "Disabled",
-        ()
-            -> config.enableMemoryPressureFallback =
-                   !config.enableMemoryPressureFallback));
+    currentRows.add(
+        SettingRow.toggle("Memory Pressure Fallback",
+                          config.enableMemoryPressureFallback ? "yes" : "no",
+                          ()
+                              -> config.enableMemoryPressureFallback =
+                                     !config.enableMemoryPressureFallback));
 
     currentRows.add(SettingRow.header("Runtime Info"));
     Runtime rt = Runtime.getRuntime();
@@ -667,27 +665,25 @@ public class MetalRenderSettingsScreen extends Screen {
   private void buildAdvancedPage() {
     currentRows.add(SettingRow.header("Metal Features"));
     currentRows.add(SettingRow.toggle(
-        "Mesh Shaders", config.enableMeshShaders ? "Enabled" : "Disabled",
+        "Mesh Shaders", config.enableMeshShaders ? "yes" : "no",
         () -> config.enableMeshShaders = !config.enableMeshShaders));
     currentRows.add(SettingRow.toggle(
-        "Argument Buffers",
-        config.enableArgumentBuffers ? "Enabled" : "Disabled",
+        "Argument Buffers", config.enableArgumentBuffers ? "yes" : "no",
         () -> config.enableArgumentBuffers = !config.enableArgumentBuffers));
+    currentRows.add(
+        SettingRow.toggle("Programmable Blending",
+                          config.enableProgrammableBlending ? "yes" : "no",
+                          ()
+                              -> config.enableProgrammableBlending =
+                                     !config.enableProgrammableBlending));
+    currentRows.add(
+        SettingRow.toggle("Indirect CMD Buffers",
+                          config.enableIndirectCommandBuffers ? "yes" : "no",
+                          ()
+                              -> config.enableIndirectCommandBuffers =
+                                     !config.enableIndirectCommandBuffers));
     currentRows.add(SettingRow.toggle(
-        "Programmable Blending",
-        config.enableProgrammableBlending ? "Enabled" : "Disabled",
-        ()
-            -> config.enableProgrammableBlending =
-                   !config.enableProgrammableBlending));
-    currentRows.add(SettingRow.toggle(
-        "Indirect CMD Buffers",
-        config.enableIndirectCommandBuffers ? "Enabled" : "Disabled",
-        ()
-            -> config.enableIndirectCommandBuffers =
-                   !config.enableIndirectCommandBuffers));
-    currentRows.add(SettingRow.toggle(
-        "Memoryless Targets",
-        config.enableMemorylessTargets ? "Enabled" : "Disabled",
+        "Memoryless Targets", config.enableMemorylessTargets ? "yes" : "no",
         ()
             -> config.enableMemorylessTargets =
                    !config.enableMemorylessTargets));
@@ -705,9 +701,9 @@ public class MetalRenderSettingsScreen extends Screen {
 
   private void buildLodPage() {
     currentRows.add(SettingRow.header("Level of Detail"));
-    currentRows.add(SettingRow.toggle(
-        "LOD System", pendingLodEnabled ? "Enabled" : "Disabled",
-        () -> { pendingLodEnabled = !pendingLodEnabled; }));
+    currentRows.add(
+        SettingRow.toggle("LOD System", pendingLodEnabled ? "yes" : "no",
+                          () -> { pendingLodEnabled = !pendingLodEnabled; }));
     currentRows.add(
         SettingRow.info("LOD 0", "Full detail (always near player)"));
 
