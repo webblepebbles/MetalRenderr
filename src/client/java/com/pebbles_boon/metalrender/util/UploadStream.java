@@ -1,4 +1,3 @@
-
 package com.pebbles_boon.metalrender.util;
 import java.nio.ByteBuffer;
 public class UploadStream {

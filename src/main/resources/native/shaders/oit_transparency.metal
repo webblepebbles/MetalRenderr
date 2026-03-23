@@ -8,10 +8,9 @@ struct OitParams {
     float4   fogColor;
     float    fogStart;
     float    fogEnd;
-    float    _pad0;
+    float    translucentCullDist;
     float    _pad1;
 };
-
 struct TranslucentVertex {
     packed_float3 position;
     packed_short2 texCoord;
@@ -19,12 +18,11 @@ struct TranslucentVertex {
     packed_uchar4 normal;
     packed_short2 lightUV;
 };
-
 struct TranslucentVertexOut {
     float4 position [[position]];
-    float2 texCoord;
-    float4 color;
-    float2 lightUV;
+    half2  texCoord;
+    half4  color;
+    half2  lightUV;
     float  viewDepth;
 };
 vertex TranslucentVertexOut vertex_oit(
@@ -34,44 +32,41 @@ vertex TranslucentVertexOut vertex_oit(
 ) {
     TranslucentVertex v = vertices[vid];
     TranslucentVertexOut out;
-
     float3 worldPos = float3(v.position) + params.chunkOffset.xyz;
     float4 viewPos  = params.modelView * float4(worldPos, 1.0);
     out.position    = params.projection * viewPos;
-    out.texCoord    = float2(v.texCoord) / 65535.0;
-    out.color       = float4(v.color) / 255.0;
-    out.lightUV     = float2(v.lightUV) / 256.0;
+    out.texCoord    = half2(float2(v.texCoord) / 65535.0);
+    out.color       = half4(float4(v.color) / 255.0);
+    out.lightUV     = half2(float2(v.lightUV) / 256.0);
     out.viewDepth   = -viewPos.z;
-
     return out;
 }
-
 struct OitAccumOutput {
-    float4 accumColor [[color(0)]];
-    float  revealage  [[color(1)]];
+    half4  accumColor [[color(0)]];
+    half   revealage  [[color(1)]];
 };
-
 fragment OitAccumOutput fragment_oit_accum(
     TranslucentVertexOut in [[stage_in]],
-    texture2d<float> blockAtlas [[texture(0)]],
-    texture2d<float> lightmap   [[texture(1)]],
+    texture2d<half> blockAtlas [[texture(0)]],
+    texture2d<half> lightmap   [[texture(1)]],
     constant OitParams& params  [[buffer(1)]]
 ) {
     constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
-    float4 texColor = blockAtlas.sample(texSampler, in.texCoord);
-    if (texColor.a < 0.004) discard_fragment();
-    float4 baseColor = texColor * in.color;
-    float4 light = lightmap.sample(texSampler, in.lightUV);
+    half4 texColor = blockAtlas.sample(texSampler, float2(in.texCoord));
+    if (texColor.a < half(0.004)) discard_fragment();
+    half4 baseColor = texColor * in.color;
+    half4 light = lightmap.sample(texSampler, float2(in.lightUV));
     baseColor.rgb *= light.rgb;
     float fogFactor = saturate((params.fogEnd - in.viewDepth) /
-                               max(params.fogEnd - params.fogStart, 0.001));
-    baseColor.rgb = mix(params.fogColor.rgb, baseColor.rgb, fogFactor);
-    float alpha = baseColor.a;
+                               max(params.fogEnd - params.fogStart, 0.001f));
+    baseColor.rgb = mix(half3(params.fogColor.rgb), baseColor.rgb, half(fogFactor));
+    half alpha = baseColor.a;
     float linearDepth = in.viewDepth;
-    float weight = alpha * max(1e-2,
-        min(3e3, 10.0 / (1e-5 + pow(linearDepth / 200.0, 4.0))));
+    float w = float(alpha) * max(1e-2f,
+        min(3e3f, 10.0f / (1e-5f + pow(linearDepth / 200.0f, 4.0f))));
+    half weight = half(w);
     OitAccumOutput out;
-    out.accumColor = float4(baseColor.rgb * alpha * weight, alpha * weight);
+    out.accumColor = half4(baseColor.rgb * alpha * weight, alpha * weight);
     out.revealage  = alpha;
     return out;
 }
@@ -87,18 +82,18 @@ vertex CompositeVertexOut vertex_oit_composite(uint vid [[vertex_id]]) {
     out.texCoord = texcoords[vid];
     return out;
 }
-fragment float4 fragment_oit_composite(
+fragment half4 fragment_oit_composite(
     CompositeVertexOut in [[stage_in]],
-    texture2d<float> accumTexture     [[texture(0)]],
-    texture2d<float> revealageTexture [[texture(1)]],
-    texture2d<float> opaqueColor      [[texture(2)]]
+    texture2d<half>  accumTexture     [[texture(0)]],
+    texture2d<half>  revealageTexture [[texture(1)]],
+    texture2d<half>  opaqueColor      [[texture(2)]]
 ) {
     uint2 coord = uint2(in.position.xy);
-    float4 accum = accumTexture.read(coord);
-    float revealage = revealageTexture.read(coord).r;
-    float4 opaque = opaqueColor.read(coord);
-    if (accum.a < 1e-4) return opaque;
-    float3 avgColor = accum.rgb / max(accum.a, 1e-4);
-    float3 result = avgColor * (1.0 - revealage) + opaque.rgb * revealage;
-    return float4(result, 1.0);
+    half4 accum = accumTexture.read(coord);
+    half revealage = revealageTexture.read(coord).r;
+    half4 opaque = opaqueColor.read(coord);
+    if (accum.a < half(1e-4)) return opaque;
+    half3 avgColor = accum.rgb / max(accum.a, half(1e-4));
+    half3 result = avgColor * (half(1.0) - revealage) + opaque.rgb * revealage;
+    return half4(result, half(1.0));
 }

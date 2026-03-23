@@ -1,5 +1,4 @@
 package com.pebbles_boon.metalrender.gui;
-
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.gui.components.MetalOptionSlider;
@@ -15,9 +14,7 @@ import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.option.GameOptions;
 import net.minecraft.client.option.SimpleOption;
 import net.minecraft.text.Text;
-
 public class MetalRenderSettingsScreen extends Screen {
-
   private static final int BG_DARK = 0x40000000;
   private static final int PANEL_BG = 0x66000000;
   private static final int PANEL_BORDER = 0x88FFFFFF;
@@ -35,14 +32,12 @@ public class MetalRenderSettingsScreen extends Screen {
   private static final int HEADER_COLOR = 0xFFFFFFFF;
   private static final int SCROLLBAR_BG = 0x44FFFFFF;
   private static final int SCROLLBAR_FG = 0x88FFFFFF;
-
   private static final int TAB_WIDTH = 140;
   private static final int TAB_HEIGHT = 36;
   private static final int ROW_HEIGHT = 36;
   private static final int HEADER_HEIGHT = 45;
   private static final int PAD = 16;
   private static final int FOOTER_HEIGHT = 40;
-
   private final Screen parent;
   private MetalRenderConfig config;
   private int selectedPage;
@@ -86,7 +81,6 @@ public class MetalRenderSettingsScreen extends Screen {
   private MetalOptionSlider lod2DistanceSlider;
   private MetalOptionSlider lod3DistanceSlider;
   private MetalOptionSlider lod4DistanceSlider;
-
   private int renderDistanceRow = -1;
   private int simulationDistanceRow = -1;
   private int maxFpsRow = -1;
@@ -105,25 +99,20 @@ public class MetalRenderSettingsScreen extends Screen {
   private int lod2DistanceRow = -1;
   private int lod3DistanceRow = -1;
   private int lod4DistanceRow = -1;
-
   private final String[] pages = {"Video",       "MetalRender", "Quality",
                                   "Performance", "Advanced",    "LOD"};
-
   private final List<SettingRow> currentRows = new ArrayList<>();
-
   public MetalRenderSettingsScreen(Screen parent) {
     super(Text.literal("MetalRender Settings"));
     this.parent = parent;
     this.selectedPage = 0;
     this.scrollOffset = 0;
   }
-
   @Override
   protected void init() {
     config = MetalRenderClient.getConfig();
     if (config == null)
       config = MetalRenderConfig.load();
-
     GameOptions options = MinecraftClient.getInstance().options;
     pendingRenderDistance = options.getViewDistance().getValue();
     pendingSimulationDistance = options.getSimulationDistance().getValue();
@@ -146,26 +135,21 @@ public class MetalRenderSettingsScreen extends Screen {
     pendingLodEnabled = MetalRenderConfig.lodEnabled();
     rebuildRows();
   }
-
   @Override
   public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
     renderInGameBackground(ctx);
     ctx.fillGradient(0, 0, width, height, 0x88000000, 0xFF000000);
     ctx.fillGradient(0, 0, width, height, 0x88000000, 0xFF000000);
     ctx.fillGradient(0, 0, width, height, 0x88000000, 0xFF000000);
-
     ctx.drawCenteredTextWithShadow(textRenderer,
                                    Text.literal("MetalRender Settings"),
                                    width / 2, 8, TEXT_BRIGHT);
-
     int tabX = PAD;
     int tabY = HEADER_HEIGHT;
     int tabPanelH = height - HEADER_HEIGHT - FOOTER_HEIGHT;
-
     ctx.fill(tabX - 1, tabY - 1, tabX + TAB_WIDTH + 1, tabY + tabPanelH + 1,
              PANEL_BORDER);
     ctx.fill(tabX, tabY, tabX + TAB_WIDTH, tabY + tabPanelH, PANEL_BG);
-
     for (int i = 0; i < pages.length; i++) {
       int ty = tabY + i * TAB_HEIGHT;
       boolean selected = (i == selectedPage);
@@ -181,33 +165,26 @@ public class MetalRenderSettingsScreen extends Screen {
                              ty + (TAB_HEIGHT - 9) / 2,
                              selected ? TEXT_BRIGHT : TEXT_DIM);
     }
-
     int optX = tabX + TAB_WIDTH + PAD;
     int optY = tabY;
     int optW = width - optX - PAD;
     int optH = tabPanelH;
-
     updateSliderPositions(optX, optY, optW, optH);
-
     ctx.fill(optX - 1, optY - 1, optX + optW + 1, optY + optH + 1,
              PANEL_BORDER);
     ctx.fill(optX, optY, optX + optW, optY + optH, PANEL_BG);
-
     int contentH = currentRows.size() * ROW_HEIGHT;
     maxScroll = Math.max(0, contentH - optH);
     scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
-
     ctx.enableScissor(optX, optY, optX + optW, optY + optH);
     for (int i = 0; i < currentRows.size(); i++) {
       int ry = optY + i * ROW_HEIGHT - scrollOffset;
       if (ry + ROW_HEIGHT < optY || ry > optY + optH)
         continue;
-
       SettingRow row = currentRows.get(i);
       boolean rowHover = mouseX >= optX && mouseX <= optX + optW &&
                          mouseY >= Math.max(ry, optY) &&
                          mouseY < Math.min(ry + ROW_HEIGHT, optY + optH);
-
       if (row.type == RowType.HEADER) {
         ctx.drawTextWithShadow(textRenderer, Text.literal(row.label), optX + 8,
                                ry + (ROW_HEIGHT - 9) / 2, HEADER_COLOR);
@@ -223,10 +200,8 @@ public class MetalRenderSettingsScreen extends Screen {
         int rowBg =
             rowHover ? ROW_HOVER : (i % 2 == 0 ? ROW_BG_EVEN : ROW_BG_ODD);
         ctx.fill(optX + 4, ry + 1, optX + optW - 4, ry + ROW_HEIGHT - 1, rowBg);
-
         ctx.drawText(textRenderer, Text.literal(row.label), optX + 12,
                      ry + (ROW_HEIGHT - 9) / 2, TEXT_BRIGHT, false);
-
         String valStr = row.value;
         int valColor = ACCENT;
         if ("Enabled".equals(valStr) || "ON".equals(valStr) ||
@@ -245,7 +220,6 @@ public class MetalRenderSettingsScreen extends Screen {
       }
     }
     ctx.disableScissor();
-
     if (maxScroll > 0) {
       int sbX = optX + optW - 6;
       int sbH = optH;
@@ -253,11 +227,9 @@ public class MetalRenderSettingsScreen extends Screen {
       int thumbH = Math.max(20, (int)(sbH * thumbRatio));
       int thumbY =
           optY + (int)((float)scrollOffset / maxScroll * (sbH - thumbH));
-
       ctx.fill(sbX, optY, sbX + 4, optY + sbH, SCROLLBAR_BG);
       ctx.fill(sbX, thumbY, sbX + 4, thumbY + thumbH, SCROLLBAR_FG);
     }
-
     String version = "v0.1.7";
     String gpuStr = MetalHardwareChecker.getDeviceName();
     if (gpuStr == null || gpuStr.isEmpty())
@@ -269,15 +241,12 @@ public class MetalRenderSettingsScreen extends Screen {
       gpuStr = gpuStr.substring(0, Math.min(gpuStr.length(), 14)) + "…";
     ctx.drawText(textRenderer, Text.literal(gpuStr), tabX + 6,
                  tabY + tabPanelH - 11, TEXT_DIM, false);
-
     super.render(ctx, mouseX, mouseY, delta);
   }
-
   @Override
   public boolean mouseClicked(Click click, boolean bl) {
     double mouseX = click.x();
     double mouseY = click.y();
-
     int tabX = PAD;
     int tabY = HEADER_HEIGHT;
     if (mouseX >= tabX && mouseX <= tabX + TAB_WIDTH) {
@@ -293,12 +262,10 @@ public class MetalRenderSettingsScreen extends Screen {
         }
       }
     }
-
     int optX = tabX + TAB_WIDTH + PAD;
     int optY = tabY;
     int optW = width - optX - PAD;
     int optH = height - HEADER_HEIGHT - FOOTER_HEIGHT;
-
     if (mouseX >= optX && mouseX <= optX + optW && mouseY >= optY &&
         mouseY <= optY + optH) {
       int relY = (int)mouseY - optY + scrollOffset;
@@ -315,17 +282,14 @@ public class MetalRenderSettingsScreen extends Screen {
           return true;
         } else if (sr.type == RowType.VANILLA_OPTION &&
                    sr.vanillaOption != null) {
-
           cycleVanillaOption(sr.vanillaOption);
           rebuildRows();
           return true;
         }
       }
     }
-
     return super.mouseClicked(click, bl);
   }
-
   @Override
   public boolean mouseScrolled(double mouseX, double mouseY, double hAmount,
                                double vAmount) {
@@ -333,7 +297,6 @@ public class MetalRenderSettingsScreen extends Screen {
     scrollOffset = Math.max(0, Math.min(scrollOffset, maxScroll));
     return true;
   }
-
   @Override
   public void close() {
     applyStagedNumericOptions();
@@ -346,7 +309,6 @@ public class MetalRenderSettingsScreen extends Screen {
       client.setScreen(parent);
     }
   }
-
   private void applyStagedNumericOptions() {
     GameOptions options = MinecraftClient.getInstance().options;
     options.getViewDistance().setValue(pendingRenderDistance);
@@ -369,7 +331,6 @@ public class MetalRenderSettingsScreen extends Screen {
     MetalRenderConfig.setLod3Distance(pendingLod3Distance);
     MetalRenderConfig.setLod4Distance(pendingLod4Distance);
   }
-
   private void rebuildRows() {
     clearChildren();
     addFooterButtons();
@@ -403,14 +364,12 @@ public class MetalRenderSettingsScreen extends Screen {
     }
     addPageSliders();
   }
-
   private void addFooterButtons() {
     int btnW = 110;
     int btnGap = 10;
     int totalBtnW = btnW * 2 + btnGap;
     int btnX = width / 2 - totalBtnW / 2;
     int btnY = height - 30;
-
     addDrawableChild(ButtonWidget
                          .builder(Text.literal("Reset"),
                                   btn -> {
@@ -419,13 +378,11 @@ public class MetalRenderSettingsScreen extends Screen {
                                   })
                          .dimensions(btnX, btnY, btnW, 20)
                          .build());
-
     addDrawableChild(
         ButtonWidget.builder(Text.literal("Done"), btn -> { close(); })
             .dimensions(btnX + btnW + btnGap, btnY, btnW, 20)
             .build());
   }
-
   private void clearSliders() {
     renderDistanceSlider = null;
     simulationDistanceSlider = null;
@@ -446,7 +403,6 @@ public class MetalRenderSettingsScreen extends Screen {
     lod3DistanceSlider = null;
     lod4DistanceSlider = null;
   }
-
   private void addPageSliders() {
     if (selectedPage == 0) {
       maxFpsSlider = addDrawableChild(new MetalOptionSlider(
@@ -474,25 +430,20 @@ public class MetalRenderSettingsScreen extends Screen {
           0, 0, 100, 12, Text.literal(""), 0.0f, 1.0f, 0.05f,
           (float)pendingFovEffects, v -> pendingFovEffects = v));
     }
-
     if (selectedPage == 2) {
       zone1RadiusSlider = addDrawableChild(new MetalOptionSlider(
           0, 0, 100, 12, Text.literal(""), 8, 64, 8, pendingZone1Radius,
           v -> pendingZone1Radius = (int)(float)v));
-
       zone2RadiusSlider = addDrawableChild(new MetalOptionSlider(
           0, 0, 100, 12, Text.literal(""), 32, 256, 32, pendingZone2Radius,
           v -> pendingZone2Radius = (int)(float)v));
-
       lodTransitionSlider = addDrawableChild(new MetalOptionSlider(
           0, 0, 100, 12, Text.literal(""), 0.5f, 1.0f, 0.05f,
           pendingLodTransition, v -> pendingLodTransition = v));
-
       biomeDetailSlider = addDrawableChild(new MetalOptionSlider(
           0, 0, 100, 12, Text.literal(""), 0, 4, 1, pendingBiomeDetail,
           v -> pendingBiomeDetail = (int)(float)v));
     }
-
     if (selectedPage == 5) {
       lod1DistanceSlider = addDrawableChild(new MetalOptionSlider(
           0, 0, 100, 12, Text.literal(""), 1, 32, 1, pendingLod1Distance,
@@ -507,7 +458,6 @@ public class MetalRenderSettingsScreen extends Screen {
           0, 0, 100, 12, Text.literal(""), 4, 32, 1, pendingLod4Distance,
           v -> pendingLod4Distance = (int)(float)v));
     }
-
     if (selectedPage == 3) {
       targetFpsSlider = addDrawableChild(new MetalOptionSlider(
           0, 0, 100, 12, Text.literal(""), 30, 240, 30, pendingTargetFps,
@@ -517,7 +467,6 @@ public class MetalRenderSettingsScreen extends Screen {
           v -> pendingMaxMemoryMb = (int)(float)v));
     }
   }
-
   private void updateSliderPositions(int optX, int optY, int optW, int optH) {
     positionSlider(maxFpsSlider, maxFpsRow, optX, optY, optW, optH);
     positionSlider(guiScaleSlider, guiScaleRow, optX, optY, optW, optH);
@@ -540,7 +489,6 @@ public class MetalRenderSettingsScreen extends Screen {
     positionSlider(lod3DistanceSlider, lod3DistanceRow, optX, optY, optW, optH);
     positionSlider(lod4DistanceSlider, lod4DistanceRow, optX, optY, optW, optH);
   }
-
   private void positionSlider(MetalOptionSlider slider, int rowIndex, int optX,
                               int optY, int optW, int optH) {
     if (slider == null || rowIndex < 0) {
@@ -553,12 +501,10 @@ public class MetalRenderSettingsScreen extends Screen {
     slider.visible = visible;
     slider.active = visible;
   }
-
   private void buildVideoPage() {
     if (client == null)
       return;
     GameOptions opts = client.options;
-
     currentRows.add(SettingRow.header("Display"));
     addVanillaOption("Fullscreen", opts.getFullscreen());
     addVanillaOption("VSync", opts.getEnableVsync());
@@ -566,7 +512,6 @@ public class MetalRenderSettingsScreen extends Screen {
     currentRows.add(SettingRow.info("Max FPS", ""));
     guiScaleRow = currentRows.size();
     currentRows.add(SettingRow.info("GUI Scale", ""));
-
     currentRows.add(SettingRow.header("Quality"));
     addVanillaOption("Graphics", opts.getPreset());
     renderDistanceRow = currentRows.size();
@@ -577,7 +522,6 @@ public class MetalRenderSettingsScreen extends Screen {
     currentRows.add(SettingRow.info("Brightness", ""));
     addVanillaOption("Smooth Lighting", opts.getAo());
     addVanillaOption("Chunk Builder", opts.getChunkBuilderMode());
-
     currentRows.add(SettingRow.header("Interface"));
     addVanillaOption("View Bobbing", opts.getBobView());
     addVanillaOption("Entity Shadows", opts.getEntityShadows());
@@ -588,7 +532,6 @@ public class MetalRenderSettingsScreen extends Screen {
     fovEffectsRow = currentRows.size();
     currentRows.add(SettingRow.info("FOV Effects", ""));
   }
-
   private void buildMetalRenderPage() {
     currentRows.add(SettingRow.header("Metal Rendering"));
     currentRows.add(SettingRow.toggle(
@@ -600,7 +543,6 @@ public class MetalRenderSettingsScreen extends Screen {
     currentRows.add(SettingRow.toggle(
         "Debug Overlay", config.enableDebugOverlay ? "Enabled" : "Disabled",
         () -> config.enableDebugOverlay = !config.enableDebugOverlay));
-
     currentRows.add(SettingRow.header("Status"));
     currentRows.add(
         SettingRow.info("GPU", MetalHardwareChecker.getDeviceName()));
@@ -613,7 +555,6 @@ public class MetalRenderSettingsScreen extends Screen {
     currentRows.add(SettingRow.info(
         "Apple Silicon", MetalHardwareChecker.isAppleSilicon() ? "Yes" : "No"));
   }
-
   private void buildQualityPage() {
     currentRows.add(SettingRow.header("LOD Settings"));
     zone1Row = currentRows.size();
@@ -627,7 +568,6 @@ public class MetalRenderSettingsScreen extends Screen {
         () -> config.enableZone2Lod = !config.enableZone2Lod));
     biomeDetailRow = currentRows.size();
     currentRows.add(SettingRow.info("Biome Transition Detail", ""));
-
     currentRows.add(SettingRow.header("Culling"));
     currentRows.add(SettingRow.cycle(
         "Leaves Mode", leafCullingModeName(config.leafCullingMode),
@@ -635,7 +575,6 @@ public class MetalRenderSettingsScreen extends Screen {
             -> config.leafCullingMode =
                    cycleValue(config.leafCullingMode, 0, 1, 1)));
   }
-
   private void buildPerformancePage() {
     currentRows.add(SettingRow.header("Frame Pacing"));
     targetFpsRow = currentRows.size();
@@ -643,7 +582,6 @@ public class MetalRenderSettingsScreen extends Screen {
     currentRows.add(SettingRow.toggle(
         "Triple Buffering", config.enableTripleBuffering ? "yes" : "no",
         () -> config.enableTripleBuffering = !config.enableTripleBuffering));
-
     currentRows.add(SettingRow.header("Memory"));
     maxMemoryRow = currentRows.size();
     currentRows.add(SettingRow.info("Max GPU Memory", ""));
@@ -653,7 +591,6 @@ public class MetalRenderSettingsScreen extends Screen {
                           ()
                               -> config.enableMemoryPressureFallback =
                                      !config.enableMemoryPressureFallback));
-
     currentRows.add(SettingRow.header("Runtime Info"));
     Runtime rt = Runtime.getRuntime();
     long usedMB = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
@@ -661,7 +598,6 @@ public class MetalRenderSettingsScreen extends Screen {
     currentRows.add(
         SettingRow.info("Heap Usage", usedMB + " / " + maxMB + " MB"));
   }
-
   private void buildAdvancedPage() {
     currentRows.add(SettingRow.header("Metal Features"));
     currentRows.add(SettingRow.toggle(
@@ -687,7 +623,6 @@ public class MetalRenderSettingsScreen extends Screen {
         ()
             -> config.enableMemorylessTargets =
                    !config.enableMemorylessTargets));
-
     currentRows.add(SettingRow.header("Hardware Capabilities"));
     currentRows.add(SettingRow.info("Mesh Shader HW",
                                     MetalHardwareChecker.supportsMeshShaders()
@@ -698,7 +633,6 @@ public class MetalRenderSettingsScreen extends Screen {
     currentRows.add(
         SettingRow.info("GPU", MetalHardwareChecker.getDeviceName()));
   }
-
   private void buildLodPage() {
     currentRows.add(SettingRow.header("Level of Detail"));
     currentRows.add(
@@ -706,7 +640,6 @@ public class MetalRenderSettingsScreen extends Screen {
                           () -> { pendingLodEnabled = !pendingLodEnabled; }));
     currentRows.add(
         SettingRow.info("LOD 0", "Full detail (always near player)"));
-
     currentRows.add(SettingRow.header("LOD Distances (chunks)"));
     lod1DistanceRow = currentRows.size();
     currentRows.add(SettingRow.info("LOD 1 Distance",
@@ -723,7 +656,6 @@ public class MetalRenderSettingsScreen extends Screen {
     lod4DistanceRow = currentRows.size();
     currentRows.add(SettingRow.info(
         "LOD 4 Distance", pendingLod4Distance + " chunks — full cubes only"));
-
     currentRows.add(SettingRow.header("LOD Level Descriptions"));
     currentRows.add(SettingRow.info("LOD 0", "All blocks rendered"));
     currentRows.add(
@@ -734,12 +666,10 @@ public class MetalRenderSettingsScreen extends Screen {
         SettingRow.info("LOD 3", "Also remove slabs, stairs, trapdoors"));
     currentRows.add(SettingRow.info("LOD 4", "Only render full cube blocks"));
   }
-
   private void addVanillaOption(String name, SimpleOption<?> option) {
     currentRows.add(
         SettingRow.vanilla(name, formatVanillaValue(option), option));
   }
-
   private String formatVanillaValue(SimpleOption<?> option) {
     Object val = option.getValue();
     if (val instanceof Boolean b)
@@ -753,27 +683,22 @@ public class MetalRenderSettingsScreen extends Screen {
     }
     return val.toString();
   }
-
   @SuppressWarnings({"unchecked", "rawtypes"})
   private void cycleVanillaOption(SimpleOption option) {
-
     Object val = option.getValue();
     if (val instanceof Boolean b) {
       option.setValue(!b);
       return;
     }
   }
-
   private int cycleValue(int current, int min, int max, int step) {
     int next = current + step;
     return next > max ? min : next;
   }
-
   private float cycleFloat(float current, float min, float max, float step) {
     float next = current + step;
     return next > max + 0.001f ? min : Math.round(next * 100f) / 100f;
   }
-
   private String leafCullingModeName(int mode) {
     return switch (mode) {
       case 0 -> "Fast";
@@ -781,23 +706,19 @@ public class MetalRenderSettingsScreen extends Screen {
       default -> "Unknown";
     };
   }
-
   private void drawSlightRoundedRect(DrawContext ctx, int x1, int y1, int x2,
                                      int y2, int color) {
     ctx.fill(x1 + 3, y1, x2 - 3, y2, color);
     ctx.fill(x1 + 1, y1 + 1, x2 - 1, y2 - 1, color);
     ctx.fill(x1, y1 + 3, x2, y2 - 3, color);
   }
-
   private enum RowType { HEADER, TOGGLE, CYCLE, INFO, VANILLA_OPTION }
-
   private static class SettingRow {
     final RowType type;
     final String label;
     final String value;
     final Runnable action;
     final SimpleOption<?> vanillaOption;
-
     SettingRow(RowType type, String label, String value, Runnable action,
                SimpleOption<?> vanillaOption) {
       this.type = type;
@@ -806,23 +727,18 @@ public class MetalRenderSettingsScreen extends Screen {
       this.action = action;
       this.vanillaOption = vanillaOption;
     }
-
     static SettingRow header(String label) {
       return new SettingRow(RowType.HEADER, label, "", null, null);
     }
-
     static SettingRow toggle(String label, String value, Runnable action) {
       return new SettingRow(RowType.TOGGLE, label, value, action, null);
     }
-
     static SettingRow cycle(String label, String value, Runnable action) {
       return new SettingRow(RowType.CYCLE, label, value, action, null);
     }
-
     static SettingRow info(String label, String value) {
       return new SettingRow(RowType.INFO, label, value, null, null);
     }
-
     static SettingRow vanilla(String label, String value,
                               SimpleOption<?> option) {
       return new SettingRow(RowType.VANILLA_OPTION, label, value, null, option);

@@ -24,6 +24,7 @@
     "InGameHudMixin",
     "ClientWorldMixin",
     "OptionsScreenMixin",
+    "ChunkLoadMixin",
     "accessor.BillboardParticleAccessor",
     "accessor.ParticleAccessor",
     "accessor.ParticleManagerAccessor"

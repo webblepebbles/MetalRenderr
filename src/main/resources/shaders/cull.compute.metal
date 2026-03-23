@@ -8,14 +8,12 @@ struct CullParams {
     uint     regionCount;
     uint     maxDrawCalls;
 };
-
 struct RegionAABB {
     float3 minCorner;
     float  _pad0;
     float3 maxCorner;
     float  _pad1;
 };
-
 struct IndirectIndexedArgs {
     uint indexCount;
     uint instanceCount;
@@ -23,7 +21,6 @@ struct IndirectIndexedArgs {
     int  baseVertex;
     uint baseInstance;
 };
-
 struct RegionDrawInfo {
     uint  vertexBufferIndex;
     uint  indexBufferIndex;
@@ -32,7 +29,6 @@ struct RegionDrawInfo {
     int   baseVertex;
     uint  regionId;
 };
-
 bool aabbOutsidePlane(float3 minC, float3 maxC, float4 plane) {
     float3 pVertex;
     pVertex.x = (plane.x > 0.0) ? maxC.x : minC.x;
@@ -40,15 +36,12 @@ bool aabbOutsidePlane(float3 minC, float3 maxC, float4 plane) {
     pVertex.z = (plane.z > 0.0) ? maxC.z : minC.z;
     return (dot(plane.xyz, pVertex) + plane.w) < 0.0;
 }
-
-
 bool isInsideFrustum(float3 minC, float3 maxC, constant float4* planes) {
     for (uint i = 0; i < 6; i++) {
         if (aabbOutsidePlane(minC, maxC, planes[i])) return false;
     }
     return true;
 }
-
 kernel void cull_pass(
     device const RegionAABB*     regions      [[buffer(0)]],
     device const RegionDrawInfo* drawInfos    [[buffer(1)]],
@@ -59,15 +52,10 @@ kernel void cull_pass(
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= params.regionCount) return;
-
     RegionAABB aabb = regions[gid];
     float3 minC = aabb.minCorner;
     float3 maxC = aabb.maxCorner;
-
-
     bool visible = isInsideFrustum(minC, maxC, params.frustumPlanes);
-
-
     if (visible) {
         float3 closest = clamp(params.cameraPos.xyz, minC, maxC);
         float3 diff = closest - params.cameraPos.xyz;
@@ -76,10 +64,7 @@ kernel void cull_pass(
             visible = false;
         }
     }
-
     visibility[gid] = visible ? 1u : 0u;
-
-
     if (visible) {
         uint outIdx = atomic_fetch_add_explicit(drawCount, 1, memory_order_relaxed);
         if (outIdx < params.maxDrawCalls) {
@@ -94,11 +79,6 @@ kernel void cull_pass(
         }
     }
 }
-
-
-
-
-
 kernel void cull_frustum_only(
     device const RegionAABB* regions    [[buffer(0)]],
     device uint*             visibility [[buffer(1)]],
@@ -106,16 +86,13 @@ kernel void cull_frustum_only(
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= params.regionCount) return;
-
     RegionAABB aabb = regions[gid];
     bool visible = isInsideFrustum(aabb.minCorner, aabb.maxCorner, params.frustumPlanes);
-
     if (visible) {
         float3 closest = clamp(params.cameraPos.xyz, aabb.minCorner, aabb.maxCorner);
         float3 diff = closest - params.cameraPos.xyz;
         float distSq = dot(diff, diff);
         if (distSq > params.maxDrawDist) visible = false;
     }
-
     visibility[gid] = visible ? 1u : 0u;
 }

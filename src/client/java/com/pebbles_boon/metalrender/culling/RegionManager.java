@@ -1,4 +1,3 @@
-
 package com.pebbles_boon.metalrender.culling;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;

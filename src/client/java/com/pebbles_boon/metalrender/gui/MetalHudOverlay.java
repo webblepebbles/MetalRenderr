@@ -1,16 +1,13 @@
 package com.pebbles_boon.metalrender.gui;
-
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.RenderTickCounter;
-
 @SuppressWarnings("deprecation")
 public final class MetalHudOverlay implements HudRenderCallback {
   private static final int COLOR = 0xFFFF00FF;
   private static final String LABEL = "MetalRender ACTIVE";
-
   @Override
   public void onHudRender(DrawContext context, RenderTickCounter tickCounter) {
     if (!MetalRenderClient.isEnabled() ||
@@ -23,7 +20,6 @@ public final class MetalHudOverlay implements HudRenderCallback {
     int y = 10;
     context.drawTextWithShadow(textRenderer, LABEL, x, y, COLOR);
   }
-
   public static void register() {
     HudRenderCallback.EVENT.register(new MetalHudOverlay());
   }

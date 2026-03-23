@@ -1,6 +1,5 @@
 #include <metal_stdlib>
 using namespace metal;
-
 struct CullParams {
     float4x4 viewProjection;
     float4   cameraPos;
@@ -10,14 +9,12 @@ struct CullParams {
     uint     maxDrawCalls;
     uint     _pad;
 };
-
 struct RegionAABB {
     float3 minCorner;
     float  _pad0;
     float3 maxCorner;
     float  _pad1;
 };
-
 struct IndirectIndexedArgs {
     uint indexCount;
     uint instanceCount;
@@ -25,7 +22,6 @@ struct IndirectIndexedArgs {
     int  baseVertex;
     uint baseInstance;
 };
-
 struct RegionDrawInfo {
     uint  vertexBufferIndex;
     uint  indexBufferIndex;
@@ -34,7 +30,6 @@ struct RegionDrawInfo {
     int   baseVertex;
     uint  regionId;
 };
-
 bool aabbBehindPlane(float3 minC, float3 maxC, float4 plane) {
     float3 pVertex;
     pVertex.x = (plane.x > 0.0) ? maxC.x : minC.x;
@@ -42,20 +37,17 @@ bool aabbBehindPlane(float3 minC, float3 maxC, float4 plane) {
     pVertex.z = (plane.z > 0.0) ? maxC.z : minC.z;
     return (dot(plane.xyz, pVertex) + plane.w) < 0.0;
 }
-
 bool frustumTest(float3 minC, float3 maxC, constant float4* planes) {
     for (uint i = 0; i < 6; i++) {
         if (aabbBehindPlane(minC, maxC, planes[i])) return false;
     }
     return true;
 }
-
 float distanceSqToAABB(float3 pt, float3 minC, float3 maxC) {
     float3 clamped = clamp(pt, minC, maxC);
     float3 d = clamped - pt;
     return dot(d, d);
 }
-
 kernel void cull_regions(
     device const RegionAABB*      regions      [[buffer(0)]],
     device const RegionDrawInfo*  drawInfos    [[buffer(1)]],
@@ -66,17 +58,13 @@ kernel void cull_regions(
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= params.regionCount) return;
-
     RegionAABB aabb = regions[gid];
     bool vis = frustumTest(aabb.minCorner, aabb.maxCorner, params.frustumPlanes);
-
     if (vis) {
         float dSq = distanceSqToAABB(params.cameraPos.xyz, aabb.minCorner, aabb.maxCorner);
         if (dSq > params.maxDrawDistSq) vis = false;
     }
-
     visibility[gid] = vis ? 1u : 0u;
-
     if (vis) {
         uint slot = atomic_fetch_add_explicit(drawCount, 1, memory_order_relaxed);
         if (slot < params.maxDrawCalls) {

@@ -14,7 +14,9 @@
       "com.pebbles_boon.metalrender.MetalRenderClient"
     ]
   },
-  "mixins": ["metalrender.mixins.json"],
+  "mixins": [
+    "metalrender.mixins.json"
+  ],
   "depends": {
     "fabricloader": ">=0.17.1",
     "minecraft": ">=1.21.11",

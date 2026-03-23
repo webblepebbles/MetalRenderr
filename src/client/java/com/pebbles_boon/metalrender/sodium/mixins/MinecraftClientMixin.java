@@ -1,5 +1,4 @@
 package com.pebbles_boon.metalrender.sodium.mixins;
-
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.performance.PerformanceController;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
@@ -12,21 +11,16 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-
 @Mixin(MinecraftClient.class)
 public class MinecraftClientMixin {
-
   @Unique private boolean metalrender$worldWasLoaded = false;
   @Unique private int metalrender$debugCounter = 0;
-
   @Inject(method = "render", at = @At("HEAD"))
   private void metalrender$startFrame(boolean tick, CallbackInfo ci) {
     if (MetalRenderClient.isEnabled()) {
       PerformanceController.startFrame();
-
       MinecraftClient client = (MinecraftClient)(Object)this;
       ClientWorld world = client.world;
-
       metalrender$debugCounter++;
       if (metalrender$debugCounter % 600 == 1) {
         MetalLogger.info(
@@ -36,7 +30,6 @@ public class MinecraftClientMixin {
             (MetalRenderClient.getWorldRenderer() != null ? "present"
                                                           : "null"));
       }
-
       if (world != null && !metalrender$worldWasLoaded) {
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
         MetalLogger.info("[MinecraftClientMixin] World detected! wr=" +
@@ -58,7 +51,6 @@ public class MinecraftClientMixin {
         }
         metalrender$worldWasLoaded = false;
       }
-
       if (world != null) {
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
         if (wr != null && wr.shouldRenderWithMetal()) {
@@ -67,7 +59,6 @@ public class MinecraftClientMixin {
       }
     }
   }
-
   @Inject(method = "render", at = @At("TAIL"))
   private void metalrender$endFrame(boolean tick, CallbackInfo ci) {
     if (MetalRenderClient.isEnabled()) {

@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 cd "$(dirname "$0")"
-
 JAVA_HOME=${JAVA_HOME:-$(/usr/libexec/java_home -v 21)}
-
 mkdir -p build/native
 clang++ -fobjc-arc -shared \
   -o build/native/libmetalrender.dylib \
@@ -14,5 +11,4 @@ clang++ -fobjc-arc -shared \
   -I"$JAVA_HOME/include" \
   -I"$JAVA_HOME/include/darwin" \
   -MJ ../resources/native/compile_commands.json
-
 cp build/native/libmetalrender.dylib ../resources/

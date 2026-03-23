@@ -1,4 +1,3 @@
-
 package com.pebbles_boon.metalrender.nativebridge;
 public final class MetalBackend {
   private MetalBackend() {}

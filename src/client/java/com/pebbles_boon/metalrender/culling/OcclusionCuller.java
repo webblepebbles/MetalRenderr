@@ -1,4 +1,3 @@
-
 package com.pebbles_boon.metalrender.culling;
 import net.minecraft.client.render.Camera;
 import net.minecraft.util.math.BlockPos;
